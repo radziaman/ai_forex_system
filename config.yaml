@@ -1,0 +1,111 @@
+# Institutional Forex AI Moneybot Configuration
+# cTrader Credentials (Demo Mode)
+ctrader:
+  app_id: "15217_h8WxunXX70m6O6qsnIx9ZO3GZraTdO0wnLjL3dTKyYG6fkbUca"
+  app_secret: "Zb8tEW4Axzq0AJqCNS8ubniYzsgp2kxuRkYBRD9XXOcLAj5aOT"
+  access_token: ""  # Will be generated via OAuth or provided
+  account_id: "9698970"
+  demo: true  # FORCE DEMO MODE
+  host: "demo.ctrader.com"
+  port: 5035
+  use_websocket: true
+  symbols:
+    1: "EURUSD"
+    2: "GBPUSD"
+    3: "USDJPY"
+    4: "XAUUSD"
+    5: "BTCUSD"
+
+# Trading Parameters
+trading:
+  max_risk_per_trade: 0.02
+  max_drawdown: 0.10
+  max_margin_usage: 0.80
+  min_win_rate_live: 0.55
+  min_win_rate_paper: 0.45
+  base_lot_size: 0.01
+  max_positions: 5
+  slippage_pips: 0.5
+  commission_per_lot: 7.0
+
+# AI Brain (PPO RL Agent)
+ai:
+  algorithm: "PPO"
+  device: "auto"
+  policy: "MlpPolicy"
+  policy_kwargs:
+    net_arch: [1024, 512, 256, 128]
+    activation_fn: "tanh"
+  learning_rate: 3.0e-4
+  n_steps: 2048
+  batch_size: 64
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.01
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  total_timesteps: 1000000
+  eval_freq: 10000
+  save_freq: 50000
+  online_finetune: true
+  finetune_freq: 100
+
+# Feature Engineering
+features:
+  timeframes:
+    - "1m"
+    - "5m"
+    - "15m"
+    - "1h"
+    - "4h"
+  technical:
+    - "open" - "high" - "low" - "close" - "volume"
+    - "atr" - "rsi" - "macd" - "bollinger"
+    - "stochastic" - "adx" - "cci" - "mfi" - "obv"
+  order_flow:
+    - "cvd" - "bid_ask_imbalance"
+    - "aggressive_buy_ratio" - "aggressive_sell_ratio"
+    - "large_trade_zscore" - "absorption" - "exhaustion"
+  smc:
+    - "order_blocks" - "fair_value_gaps"
+    - "bos" - "choch" - "liquidity_levels"
+  regime:
+    - "hurst_exponent" - "volatility" - "trend_strength"
+
+# Risk Management
+risk:
+  kelly_fraction: 0.25
+  confidence_multiplier: true
+  volatility_adjustment: true
+  sl_atr_multiplier: 2.0
+  tp_atr_multiplier: 4.0
+  trailing_activation_rr: 1.0
+  trailing_distance_rr: 0.5
+  max_consecutive_losses: 5
+  max_daily_loss: 0.05
+  max_position_hold_time: 86400
+
+# Dashboard
+dashboard:
+  host: "0.0.0.0"
+  port: 8000
+  websocket_ping_interval: 20
+  websocket_ping_timeout: 20
+  update_interval_ms: 1000
+
+# Data
+data:
+  redis_url: "redis://localhost:6379"
+  historical_path: "data/historical"
+  models_path: "models"
+  logs_path: "data/logs"
+  trades_path: "data/trades"
+
+# Logging
+logging:
+  level: "INFO"
+  format: "{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}"
+  rotation: "100 MB"
+  retention: "30 days"
