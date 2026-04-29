@@ -2,7 +2,7 @@ name: Deploy Dashboard to GitHub Pages
 
 on:
   push:
-    branches: [main, gh-pages]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -11,27 +11,13 @@ permissions:
   id-token: write
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.9'
-      
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install fastapi uvicorn
       
       - name: Prepare dashboard for GitHub Pages
         run: |
@@ -63,14 +49,21 @@ jobs:
           echo "Dashboard HTML size:"
           wc -l dashboard.html index.html
       
-      - name: Setup GitHub Pages
+      - name: Setup Pages
         uses: actions/configure-pages@v4
+        id: pages_url
       
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: '.'  # Upload entire repo (dashboard.html is in root)
+          path: '.'
       
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+        with:
+          artifact_name: github-pages
+      
+      - name: Output deployment URL
+        run: |
+          echo "Dashboard deployed to: ${{ steps.deployment.outputs.page_url }}"
