@@ -25,27 +25,27 @@ ctrader_client: Optional[object] = None
 
 
 def init_ctrader():
-    """Initialize cTrader manager - tries real connection, falls back to simulation."""
+    """Initialize cTrader client with proper IC Markets connection."""
     global ctrader_client
     try:
-        from api.ctrader_manager import CtraderManager
-        # Force simulation mode for now (network blocked on macOS)
-        # To try real connection: force_simulation=False
-        ctrader_client = CtraderManager(
-            demo=True,
-            force_simulation=True,  # Set to False when network allows
-        )
+        # Use the proper cTrader client with correct endpoints
+        from api.ctrader_icmarkets import FixedCtraderClient
+        ctrader_client = FixedCtraderClient(demo=True)
+        
+        # Try to connect (will fail on macOS due to network blocking)
         success = ctrader_client.start()
-        if success:
-            if ctrader_client.is_real_connection():
-                logger.info("✓ cTrader REAL connection established!")
-            else:
-                logger.info("✓ cTrader initialized (simulation mode)")
-                logger.info("  Note: Real connection blocked by network/SSL")
-                logger.info("  To get real data: fix network or deploy to Linux")
+        
+        if success and ctrader_client.is_connected():
+            logger.info("✓ cTrader REAL connection established!")
+            logger.info("  Account data will be pulled from IC Markets")
         else:
-            logger.error("✗ Failed to initialize cTrader client")
+            logger.warning("✗ cTrader connection failed (network blocked on macOS)")
+            logger.info("  System will use simulation mode for testing")
+            logger.info("  To get real data, deploy to Linux server or use Docker")
             ctrader_client = None
+    except Exception as e:
+        logger.error(f"Failed to initialize cTrader client: {e}")
+        ctrader_client = None
     except Exception as e:
         logger.error(f"Failed to initialize cTrader: {e}")
         ctrader_client = None
