@@ -25,21 +25,29 @@ ctrader_client: Optional[object] = None
 
 
 def init_ctrader():
-    """Initialize cTrader client with all data pulling capabilities."""
+    """Initialize cTrader manager - tries real connection, falls back to simulation."""
     global ctrader_client
     try:
-        from api.ctrader_client import CtraderClient
-        ctrader_client = CtraderClient(
-            app_id="15217_h8WxunXX70m6O6qsnIx9ZO3GZraTdO0wnLjL3dTKyYG6fkbUca",
-            app_secret="Zb8tEW4Axzq0AJqCNS8ubniYzsgp2kxuRkYBRD9XXOcLAj5aOT",
-            access_token="7d574e0bbcf30419cc752a4ea17bd627f8b46bdf79b5a3f34cf38db8285ce17f43592d3cb5bbd067ca3d2d",
-            account_id="6100830",
+        from api.ctrader_manager import CtraderManager
+        # Force simulation mode for now (network blocked on macOS)
+        # To try real connection: force_simulation=False
+        ctrader_client = CtraderManager(
             demo=True,
+            force_simulation=True,  # Set to False when network allows
         )
-        ctrader_client.start()
-        logger.info("✓ cTrader client initialized with full data access")
+        success = ctrader_client.start()
+        if success:
+            if ctrader_client.is_real_connection():
+                logger.info("✓ cTrader REAL connection established!")
+            else:
+                logger.info("✓ cTrader initialized (simulation mode)")
+                logger.info("  Note: Real connection blocked by network/SSL")
+                logger.info("  To get real data: fix network or deploy to Linux")
+        else:
+            logger.error("✗ Failed to initialize cTrader client")
+            ctrader_client = None
     except Exception as e:
-        logger.error(f"Failed to initialize cTrader client: {e}")
+        logger.error(f"Failed to initialize cTrader: {e}")
         ctrader_client = None
 
 
