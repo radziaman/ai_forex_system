@@ -1,0 +1,76 @@
+name: Deploy Dashboard to GitHub Pages
+
+on:
+  push:
+    branches: [main, gh-pages]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install fastapi uvicorn
+      
+      - name: Prepare dashboard for GitHub Pages
+        run: |
+          echo "Preparing dashboard for GitHub Pages..."
+          
+          # Create _config.yml for Jekyll (disable if not needed)
+          echo "" > _config.yml
+          
+          # Copy dashboard.html to index.html for root access
+          cp dashboard.html index.html
+          
+          # Create 404 page that redirects to main dashboard
+          cat > 404.html << 'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <meta http-equiv="refresh" content="0;url=/ai_forex_system/">
+          </head>
+          <body>
+              <p>Redirecting to dashboard...</p>
+          </body>
+          </html>
+          EOF
+          
+          # List files for debugging
+          echo "Files in repository:"
+          ls -la
+          echo "---"
+          echo "Dashboard HTML size:"
+          wc -l dashboard.html index.html
+      
+      - name: Setup GitHub Pages
+        uses: actions/configure-pages@v4
+      
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'  # Upload entire repo (dashboard.html is in root)
+      
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
