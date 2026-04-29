@@ -1,13 +1,34 @@
 """
-cTrader IC Markets - WORKING SOLUTION FOR MACOS
-Uses: Standard ssl module (LibreSSL 2.8.3) + Length-prefixed Protobuf
-Verified: SSL connection works, App Auth works, need valid access token with account access
+cTrader IC Markets - FINAL WORKING SOLUTION
+macOS Compatible: Standard ssl (LibreSSL 2.8.3) + Protobuf
+======================================================================
+
+STATUS:
+✓ SSL connection works (TLSv1.2)
+✓ Length-prefixed protobuf works on port 5035
+✓ Application authentication works
+⚠️  Need valid access token with account permissions
+
+TO GET WORKING TOKENS:
+1. Visit: https://id.ctrader.com/my/settings/openapi/grantingaccess/
+   ?client_id=15217_h8WxunXX70m6O6qsnIx9ZO3GZraTdO0wnLjL3dTKyYG6fkbUca
+   &redirect_uri=https://spotware.com
+   &scope=trading
+   &product=web
+
+2. Login with your cTID and authorize the app
+
+3. Copy the 'code' from: https://spotware.com/?code=YOUR_CODE_HERE
+
+4. Exchange code for tokens:
+   curl -X GET 'https://openapi.ctrader.com/apps/token?grant_type=authorization_code&code=YOUR_CODE&redirect_uri=https://spotware.com&client_id=15217_h8WxunXX70m6O6qsnIx9ZO3GZraTdO0wnLjL3dTKyYG6fkbUca&client_secret=Zb8tEW4Axzq0AJqCNS8ubniYzsgp2kxuRkYBRD9XXOcLAj5aOT' -H 'Accept: application/json'
+
+5. Use the new accessToken below and run: python ctrader_final.py
 """
 
 import ssl
 import socket
 import sys
-from typing import Optional, Dict, Any
 
 # Add path for protobuf messages
 sys.path.insert(0, '/Users/radziaman/Antigravity/ai_forex_system/venv/lib/python3.9/site-packages')
@@ -22,21 +43,20 @@ from ctrader_open_api.messages.OpenApiMessages_pb2 import (
 )
 
 
-class cTraderClient:
-    """macOS-compatible cTrader client using standard ssl + protobuf"""
+class cTraderICMarkets:
+    """macOS-compatible cTrader client"""
     
-    def __init__(self, host: str = "demo.ctraderapi.com", port: int = 5035):
+    def __init__(self, host='demo.ctraderapi.com', port=5035):
         self.host = host
         self.port = port
         self.ssl_socket = None
         self.tcp_socket = None
         
-    def connect(self) -> bool:
-        """Connect using standard ssl (verified working on macOS)"""
+    def connect(self):
+        """Connect using standard ssl (works on macOS LibreSSL)"""
         try:
             context = ssl.create_default_context()
             context.minimum_version = ssl.TLSVersion.TLSv1_2
-            
             self.tcp_socket = socket.create_connection((self.host, self.port), timeout=10)
             self.ssl_socket = context.wrap_socket(self.tcp_socket, server_hostname=self.host)
             return True
@@ -44,26 +64,24 @@ class cTraderClient:
             print(f"Connection failed: {e}")
             return False
     
-    def send_msg(self, payload_type: int, payload_obj) -> bool:
+    def send_msg(self, payload_type, payload_obj):
         """Send length-prefixed protobuf message"""
         try:
             proto_msg = ProtoMessage()
             proto_msg.payloadType = payload_type
             proto_msg.payload = payload_obj.SerializeToString()
             data = proto_msg.SerializeToString()
-            length_prefix = len(data).to_bytes(4, byteorder='big')
+            length_prefix = len(data).to_bytes(4, 'big')
             self.ssl_socket.sendall(length_prefix + data)
             return True
         except Exception as e:
             print(f"Send failed: {e}")
             return False
     
-    def recv_msg(self, timeout: int = 15):
+    def recv_msg(self, timeout=15):
         """Receive length-prefixed protobuf message"""
         try:
             self.ssl_socket.settimeout(timeout)
-            
-            # Read 4-byte length prefix
             length_bytes = b""
             while len(length_bytes) < 4:
                 chunk = self.ssl_socket.recv(4 - len(length_bytes))
@@ -71,9 +89,7 @@ class cTraderClient:
                     return None
                 length_bytes += chunk
             
-            msg_length = int.from_bytes(length_bytes, byteorder='big')
-            
-            # Read exact message length
+            msg_length = int.from_bytes(length_bytes, 'big')
             data = b""
             while len(data) < msg_length:
                 chunk = self.ssl_socket.recv(msg_length - len(data))
@@ -88,7 +104,7 @@ class cTraderClient:
             print(f"Receive failed: {e}")
             return None
     
-    def auth_application(self, client_id: str, client_secret: str) -> bool:
+    def auth_application(self, client_id, client_secret):
         """Authenticate application"""
         auth_req = ProtoOAApplicationAuthReq()
         auth_req.clientId = client_id
@@ -100,7 +116,7 @@ class cTraderClient:
         response = self.recv_msg()
         return response and response.payloadType == 2101  # PROTO_OA_APPLICATION_AUTH_RES
     
-    def auth_account(self, account_id: int, access_token: str) -> bool:
+    def auth_account(self, account_id, access_token):
         """Authenticate account"""
         acc_auth = ProtoOAAccountAuthReq()
         acc_auth.ctidTraderAccountId = account_id
@@ -110,9 +126,15 @@ class cTraderClient:
             return False
         
         response = self.recv_msg()
-        return response and response.payloadType == 2103  # PROTO_OA_ACCOUNT_AUTH_RES
+        if response and response.payloadType == 2103:  # PROTO_OA_ACCOUNT_AUTH_RES
+            return True
+        elif response and response.payloadType == 2142:  # ERROR
+            error = ProtoOAErrorRes()
+            error.ParseFromString(response.payload)
+            print(f"  Error: {error.errorCode} - {error.description}")
+        return False
     
-    def get_account_info(self, account_id: int) -> Optional[Dict[str, Any]]:
+    def get_account_info(self, account_id):
         """Get real account data"""
         trader_req = ProtoOATraderReq()
         trader_req.ctidTraderAccountId = account_id
@@ -124,16 +146,15 @@ class cTraderClient:
         if response and response.payloadType == 202:  # PROTO_OA_TRADER_RES
             trader_res = ProtoOATraderRes()
             trader_res.ParseFromString(response.payload)
-            
             return {
-                "account_id": account_id,
-                "balance": trader_res.balance / 100,
-                "equity": trader_res.equity / 100,
-                "margin": trader_res.margin / 100,
-                "free_margin": trader_res.freeMargin / 100,
-                "margin_level": trader_res.marginLevel,
-                "unrealized_pnl": trader_res.unrealizedPnL / 100,
-                "leverage": f"1:{int(trader_res.leverageInCents / 100)}" if trader_res.leverageInCents else "N/A",
+                'account_id': account_id,
+                'balance': trader_res.balance / 100,
+                'equity': trader_res.equity / 100,
+                'margin': trader_res.margin / 100,
+                'free_margin': trader_res.freeMargin / 100,
+                'margin_level': trader_res.marginLevel,
+                'unrealized_pnl': trader_res.unrealizedPnL / 100,
+                'leverage': f"1:{int(trader_res.leverageInCents / 100)}" if trader_res.leverageInCents else "N/A",
             }
         return None
     
@@ -145,43 +166,7 @@ class cTraderClient:
             self.tcp_socket.close()
 
 
-def print_instructions():
-    """Print OAuth instructions"""
-    print("=" * 70)
-    print("cTrader IC Markets - INSTRUCTIONS TO GET WORKING TOKENS")
-    print("=" * 70)
-    print()
-    print("1. Open this URL in your browser:")
-    print()
-    print("   https://id.ctrader.com/my/settings/openapi/grantingaccess/")
-    print("   ?client_id=15217_h8WxunXX70m6O6qsnIx9ZO3GZraTdO0wnLjL3dTKyYG6fkbUca")
-    print("   &redirect_uri=https://spotware.com")
-    print("   &scope=trading")
-    print("   &product=web")
-    print()
-    print("2. Login with your cTID and authorize the app")
-    print()
-    print("3. You'll be redirected to: https://spotware.com/?code=YOUR_CODE_HERE")
-    print("   Copy the 'code' value")
-    print()
-    print("4. Run this curl command (in terminal) to exchange code for tokens:")
-    print()
-    print("""   curl -X GET 'https://openapi.ctrader.com/apps/token?""")
-    print("""   grant_type=authorization_code""")
-    print("""   &code=YOUR_CODE_HERE""")
-    print("""   &redirect_uri=https://spotware.com""")
-    print("""   &client_id=15217_h8WxunXX70m6O6qsnIx9ZO3GZraTdO0wnLjL3dTKyYG6fkbUca""")
-    print("""   &client_secret=Zb8tEW4Axzq0AJqCNS8ubniYzsgp2kxuRkYBRD9XXOcLAj5aOT'""")
-    print("""   -H 'Accept: application/json'""")
-    print()
-    print("5. The response will contain 'accessToken' and 'refreshToken'")
-    print()
-    print("6. Update the credentials below and run: python ctrader_working.py")
-    print("=" * 70)
-
-
 def main():
-    """Main function - update tokens and run"""
     print("=" * 70)
     print("cTrader IC Markets - GET REAL ACCOUNT DATA")
     print("=" * 70)
@@ -195,10 +180,13 @@ def main():
     
     if ACCESS_TOKEN == "PASTE_NEW_ACCESS_TOKEN_HERE":
         print("⚠️  ACCESS TOKEN NOT SET!")
-        print_instructions()
+        print()
+        print("1. Complete OAuth flow (instructions at top of file)")
+        print("2. Paste new access token in ACCESS_TOKEN variable")
+        print("3. Run: python ctrader_final.py")
         return
     
-    client = cTraderClient()
+    client = cTraderICMarkets()
     
     try:
         # Connect
@@ -208,7 +196,7 @@ def main():
         print("✓ Connected via TLSv1.2")
         print()
         
-        # Step 1: Auth Application
+        # Step 1: App Auth
         print("Step 1: Authenticating application...")
         if not client.auth_application(CLIENT_ID, CLIENT_SECRET):
             print("✗ Application auth failed")
@@ -216,11 +204,11 @@ def main():
         print("✓ Application authenticated!")
         print()
         
-        # Step 2: Auth Account
+        # Step 2: Account Auth
         print(f"Step 2: Authenticating account {ACCOUNT_ID}...")
         if not client.auth_account(ACCOUNT_ID, ACCESS_TOKEN):
             print("✗ Account auth failed")
-            print("  The access token may not have permission for this account")
+            print("  Make sure you completed the OAuth flow with 'trading' scope")
             return
         print(f"✓ Account {ACCOUNT_ID} authenticated!")
         print()
@@ -245,6 +233,7 @@ def main():
             print("=" * 70)
             print()
             print("✓ macOS SSL (LibreSSL 2.8.3) WORKS with cTrader!")
+            print("  Standard ssl module + length-prefixed protobuf = SUCCESS")
         else:
             print("✗ Failed to get account info")
             
