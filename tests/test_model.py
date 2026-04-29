@@ -36,7 +36,7 @@ class TestLSTMCNNHybrid:
         model_wrapper = LSTMCNNHybrid(lookback=30, n_features=51)
         model_wrapper.build()
 
-        save_path = str(tmp_path / "test_model.h5")
+        save_path = str(tmp_path / "test_model.keras")
         model_wrapper.save(save_path)
 
         loaded = LSTMCNNHybrid.load(save_path)

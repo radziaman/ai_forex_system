@@ -30,18 +30,22 @@ class AITrader:
         self.timeframe = timeframe
 
         self.feature_engineer = FeatureEngineer(lookback=30)
-        self.n_features = None  # Will be set after seeing data
-        self.model = None
-        self.classifier = None
+        self.n_features: Optional[int] = None
+        self.model: Optional[LSTMCNNHybrid] = None
+        self.classifier: Optional[ProfitabilityClassifier] = None
         self.risk_manager = RiskManager(account_balance=initial_balance)
         self.trailing_manager = TrailingStopManager()
 
         self.data_fetcher = DataFetcher(source="yfinance")
         self.preprocessor = DataPreprocessor(lookback=30)
 
+        # cTrader client (initialized when needed)
+        self.ctrader_client: Optional[object] = None
+        self.use_ctrader: bool = False
+
         self.positions: List[Dict] = []
         self.closed_positions: List[Dict] = []
-        self.model_trained = False
+        self.model_trained: bool = False
 
     def train_models(self, symbol: str = "EURUSD=X", start: str = "2015-01-01"):
         """Train LSTM-CNN hybrid model (25-year training like Zenox)"""
@@ -89,8 +93,12 @@ class AITrader:
 
     def generate_signal(self, features_window: pd.DataFrame) -> Dict[str, float]:
         """Generate trading signal (buy/sell/hold) with confidence"""
-        if not self.model_trained:
+        if not self.model_trained or not self.model or not self.classifier:
             raise ValueError("Model not trained. Call train_models() first.")
+
+        assert self.n_features is not None
+        assert self.model is not None
+        assert self.classifier is not None
 
         prediction = self.model.predict(features_window.values.reshape(1, 30, self.n_features))[0][0]
         confidence = self.classifier.predict_proba(
