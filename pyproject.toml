@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai_forex_system"
+version = "3.0"
+description = "AI-powered Forex trading system"
+requires-python = ">=3.9"
+dependencies = [
+    "pandas>=2.3.0",
+    "numpy>=2.0.0",
+    "scikit-learn>=1.6.0",
+    "matplotlib>=3.9.0",
+    "seaborn>=0.13.0",
+    "ta-lib>=0.6.0",
+    "yfinance>=1.2.0",
+    "ccxt>=4.5.0",
+]
+
+[tool.black]
+line-length = 88
+
+[tool.flake8]
+max-line-length = 88
+ignore = ["E203", "W503"]
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
