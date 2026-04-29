@@ -43,7 +43,7 @@ def setup_ctrader_config():
     # Save config
     config_path = Path("config/ctrader_config.json")
     config_path.parent.mkdir(exist_ok=True)
-    
+
     with open(config_path, "w") as f:
         json.dump(config, f, indent=2)
     
