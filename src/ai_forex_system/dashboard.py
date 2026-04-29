@@ -45,7 +45,10 @@ class TradingDashboard:
 
     def log_trade(self, trade: Dict[str, float]):
         """Log trade information"""
-        log_entry: Dict[str, float] = {"timestamp": datetime.now().isoformat(), "trade": trade}
+        log_entry: Dict[str, float] = {
+            "timestamp": datetime.now().isoformat(),
+            "trade": trade,
+        }
         self.logs.append(log_entry)
 
     def export_logs(self, filepath: str):

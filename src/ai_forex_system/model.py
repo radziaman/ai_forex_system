@@ -105,6 +105,9 @@ class LSTMCNNHybrid:
 
     def save(self, path: str):
         if self.model:
+            # Save in newer Keras format to avoid loading issues
+            if path.endswith('.h5'):
+                path = path.replace('.h5', '.keras')
             self.model.save(path)
 
     @classmethod

@@ -12,6 +12,7 @@ from ai_forex_system.features import FeatureEngineer
 
 from ai_forex_system.features import FeatureEngineer
 
+
 class TestFeatureEngineer:
     """Test feature engineering functionality"""
 

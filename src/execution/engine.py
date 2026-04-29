@@ -34,7 +34,9 @@ class ExecutionEngine:
         self.client.on_order_update = self._on_order_update
         logger.info("ExecutionEngine initialized")
 
-    async def open_position(self, symbol, direction, volume, sl, tp, reason="AI signal"):
+    async def open_position(
+        self, symbol, direction, volume, sl, tp, reason="AI signal"
+    ):
         if self.risk.kill_switch_triggered:
             logger.warning("Kill switch triggered")
             return None
@@ -46,24 +48,36 @@ class ExecutionEngine:
         price = snapshot.bid if direction == "SELL" else snapshot.ask
         symbol_id = self._get_symbol_id(symbol)
         order = TradeOrder(
-            symbol=symbol, symbol_id=symbol_id,
+            symbol=symbol,
+            symbol_id=symbol_id,
             side="BUY" if direction == "BUY" else "SELL",
-            order_type="MARKET", volume=int(volume*100000),
-            price=price, sl=sl, tp=tp
+            order_type="MARKET",
+            volume=int(volume * 100000),
+            price=price,
+            sl=sl,
+            tp=tp,
         )
         try:
             result = await self.client.place_order(order)
             if result and result.status == "FILLED":
                 self._position_counter += 1
                 trade = TradeRecord(
-                    timestamp=time.time(), symbol=symbol, direction=direction,
-                    volume=volume, entry_price=result.filled_price or price,
-                    sl=sl, tp=tp, status="OPEN", reason=reason,
-                    position_id=self._position_counter
+                    timestamp=time.time(),
+                    symbol=symbol,
+                    direction=direction,
+                    volume=volume,
+                    entry_price=result.filled_price or price,
+                    sl=sl,
+                    tp=tp,
+                    status="OPEN",
+                    reason=reason,
+                    position_id=self._position_counter,
                 )
                 self.open_positions[trade.position_id] = trade
                 self.total_trades += 1
-                logger.success(f"OPENED: {direction} {volume} {symbol} @ {trade.entry_price:.5f}")
+                logger.success(
+                    f"OPENED: {direction} {volume} {symbol} @ {trade.entry_price:.5f}"
+                )
                 return trade
         except Exception as e:
             logger.error(f"Order error: {e}")
@@ -71,12 +85,23 @@ class ExecutionEngine:
 
     def _simulate_open(self, symbol, direction, volume, sl, tp, reason):
         snapshot = self.data.latest_snapshot
-        price = snapshot.bid if direction == "SELL" else snapshot.ask if snapshot else 1.1200
+        price = (
+            snapshot.bid
+            if direction == "SELL"
+            else snapshot.ask if snapshot else 1.1200
+        )
         self._position_counter += 1
         trade = TradeRecord(
-            timestamp=time.time(), symbol=symbol, direction=direction,
-            volume=volume, entry_price=price, sl=sl, tp=tp,
-            status="OPEN", reason=reason, position_id=self._position_counter
+            timestamp=time.time(),
+            symbol=symbol,
+            direction=direction,
+            volume=volume,
+            entry_price=price,
+            sl=sl,
+            tp=tp,
+            status="OPEN",
+            reason=reason,
+            position_id=self._position_counter,
         )
         self.open_positions[trade.position_id] = trade
         self.total_trades += 1
@@ -91,14 +116,21 @@ class ExecutionEngine:
             return self._simulate_close(trade, reason)
         symbol_id = self._get_symbol_id(trade.symbol)
         close_side = "SELL" if trade.direction == "BUY" else "BUY"
-        order = TradeOrder(symbol=trade.symbol, symbol_id=symbol_id,
-                         side=close_side, order_type="MARKET",
-                         volume=int(trade.volume*100000), position_id=position_id)
+        order = TradeOrder(
+            symbol=trade.symbol,
+            symbol_id=symbol_id,
+            side=close_side,
+            order_type="MARKET",
+            volume=int(trade.volume * 100000),
+            position_id=position_id,
+        )
         try:
             result = await self.client.place_order(order)
             if result and result.status == "FILLED":
                 snapshot = self.data.latest_snapshot
-                exit_price = result.filled_price or (snapshot.bid if snapshot else trade.entry_price)
+                exit_price = result.filled_price or (
+                    snapshot.bid if snapshot else trade.entry_price
+                )
                 pnl = self._calculate_pnl(trade, exit_price)
                 trade.exit_price = exit_price
                 trade.pnl = pnl
@@ -114,7 +146,11 @@ class ExecutionEngine:
 
     def _simulate_close(self, trade, reason):
         snapshot = self.data.latest_snapshot
-        exit_price = snapshot.bid if trade.direction == "BUY" else snapshot.ask if snapshot else trade.entry_price
+        exit_price = (
+            snapshot.bid
+            if trade.direction == "BUY"
+            else snapshot.ask if snapshot else trade.entry_price
+        )
         pnl = self._calculate_pnl(trade, exit_price)
         trade.exit_price = exit_price
         trade.pnl = pnl
@@ -137,7 +173,9 @@ class ExecutionEngine:
         return round(pips * trade.volume * 10, 2)
 
     def _get_symbol_id(self, symbol):
-        return {"EURUSD":1,"GBPUSD":2,"USDJPY":3,"XAUUSD":4,"BTCUSD":5}.get(symbol.upper(),1)
+        return {"EURUSD": 1, "GBPUSD": 2, "USDJPY": 3, "XAUUSD": 4, "BTCUSD": 5}.get(
+            symbol.upper(), 1
+        )
 
     def _on_market_data(self, depth):
         prices = {depth.symbol: depth.bid}
@@ -164,18 +202,55 @@ class ExecutionEngine:
     def get_account_info(self):
         acc = self.client.get_account_info()
         if acc:
-            return {'balance':acc.balance,'equity':acc.equity,'margin':acc.margin,
-                    'free_margin':acc.free_margin,'currency':acc.currency}
-        return {'balance':100000,'equity':100000,'margin':0,'free_margin':100000,'currency':'USD'}
+            return {
+                "balance": acc.balance,
+                "equity": acc.equity,
+                "margin": acc.margin,
+                "free_margin": acc.free_margin,
+                "currency": acc.currency,
+            }
+        return {
+            "balance": 100000,
+            "equity": 100000,
+            "margin": 0,
+            "free_margin": 100000,
+            "currency": "USD",
+        }
 
     def get_open_positions(self):
-        return [{'position_id':t.position_id,'symbol':t.symbol,'direction':t.direction,
-                 'volume':t.volume,'entry_price':t.entry_price,'sl':t.sl,'tp':t.tp,
-                 'unrealized_pnl':self._calculate_pnl(t, self.data.latest_snapshot.bid if self.data.latest_snapshot else t.entry_price)}
-                for t in self.open_positions.values()]
+        return [
+            {
+                "position_id": t.position_id,
+                "symbol": t.symbol,
+                "direction": t.direction,
+                "volume": t.volume,
+                "entry_price": t.entry_price,
+                "sl": t.sl,
+                "tp": t.tp,
+                "unrealized_pnl": self._calculate_pnl(
+                    t,
+                    (
+                        self.data.latest_snapshot.bid
+                        if self.data.latest_snapshot
+                        else t.entry_price
+                    ),
+                ),
+            }
+            for t in self.open_positions.values()
+        ]
 
     def get_trade_history(self, limit=100):
-        return [{'timestamp':t.timestamp,'symbol':t.symbol,'direction':t.direction,
-                 'volume':t.volume,'entry':t.entry_price,'exit':t.exit_price,
-                 'pnl':t.pnl,'status':t.status,'reason':t.reason}
-                for t in self.trade_history[-limit:]]
+        return [
+            {
+                "timestamp": t.timestamp,
+                "symbol": t.symbol,
+                "direction": t.direction,
+                "volume": t.volume,
+                "entry": t.entry_price,
+                "exit": t.exit_price,
+                "pnl": t.pnl,
+                "status": t.status,
+                "reason": t.reason,
+            }
+            for t in self.trade_history[-limit:]
+        ]

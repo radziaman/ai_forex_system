@@ -4,6 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
+import tensorflow as tf
 from ai_forex_system.backtest import BacktestEngine
 from ai_forex_system.dashboard import TradingDashboard
 from ai_forex_system.data import DataFetcher
@@ -30,13 +31,29 @@ def train_model(args):
 
 def run_backtest(args):
     """Run backtest with out-of-sample validation"""
+
     print("Initializing Backtest Engine...")
-    trader = AITrader(initial_balance=args.initial_balance)
-    trader.train_models(start="2015-01-01")
+    trader = AITrader(initial_balance=args.initial_balance, timeframe=args.timeframe)
+
+    print("Loading trained model...")
+    try:
+        # Try loading the newer .keras format first
+        trader.model = tf.keras.models.load_model("models/lstm_cnn_model.keras")
+        trader.model_trained = True
+        print("Model loaded successfully from models/lstm_cnn_model.keras")
+    except Exception:
+        print("No .keras model found, trying .h5...")
+        try:
+            trader.model = tf.keras.models.load_model("models/lstm_cnn_model.h5")
+            trader.model_trained = True
+            print("Model loaded successfully from models/lstm_cnn_model.h5")
+        except Exception:
+            print("No trained model found, training new model...")
+            trader.train_models(symbol=args.symbol, start="2015-01-01")
 
     backtest = BacktestEngine(initial_balance=args.initial_balance, commission=0.0001)
 
-    print("Fetching data...")
+    print(f"Fetching data for {args.symbol}...")
     data_fetcher = DataFetcher(source="yfinance")
     df = data_fetcher.fetch_ohlcv(args.symbol, args.timeframe, "2015-01-01")
 

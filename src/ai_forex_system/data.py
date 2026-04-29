@@ -135,14 +135,13 @@ class DataPreprocessor:
     def normalize_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """Normalize features for neural network"""
         normalized = df.copy()
-        exclude_cols = ["open", "high", "low", "close", "volume"]
 
         for col in df.columns:
-            if col not in exclude_cols:
-                normalized[col] = (df[col] - df[col].mean()) / df[col].std()
-
-        for col in ["open", "high", "low", "close"]:
-            if col in normalized.columns:
-                normalized[col] = (df[col] - df[col].mean()) / df[col].std()
+            mean = normalized[col].mean()
+            std = normalized[col].std()
+            if std > 0:
+                normalized[col] = (normalized[col] - mean) / std
+            else:
+                normalized[col] = 0
 
         return normalized

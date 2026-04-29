@@ -30,8 +30,9 @@ class AITrader:
         self.timeframe = timeframe
 
         self.feature_engineer = FeatureEngineer(lookback=30)
-        self.model = LSTMCNNHybrid(lookback=30, n_features=51)
-        self.classifier = ProfitabilityClassifier(lookback=30, n_features=51)
+        self.n_features = None  # Will be set after seeing data
+        self.model = None
+        self.classifier = None
         self.risk_manager = RiskManager(account_balance=initial_balance)
         self.trailing_manager = TrailingStopManager()
 
@@ -47,8 +48,11 @@ class AITrader:
         print(f"Fetching data for {symbol}...")
         df = self.data_fetcher.fetch_ohlcv(symbol, self.timeframe, start)
 
-        print("Engineering features (51+ features)...")
+        print("Engineering features...")
         df = self.feature_engineer.generate_all_features(df)
+        
+        self.n_features = len(df.columns)
+        print(f"Total features (including OHLCV): {self.n_features}")
 
         print("Normalizing and creating sequences...")
         df_normalized = self.preprocessor.normalize_features(df)
@@ -61,6 +65,8 @@ class AITrader:
         print(f"Test data shape: {X_test.shape}")
 
         print("Building LSTM-CNN hybrid model...")
+        self.model = LSTMCNNHybrid(lookback=30, n_features=self.n_features)
+        self.classifier = ProfitabilityClassifier(lookback=30, n_features=self.n_features)
         self.model.build()
 
         print("Training model...")
@@ -86,9 +92,9 @@ class AITrader:
         if not self.model_trained:
             raise ValueError("Model not trained. Call train_models() first.")
 
-        prediction = self.model.predict(features_window.values.reshape(1, 30, 51))[0][0]
+        prediction = self.model.predict(features_window.values.reshape(1, 30, self.n_features))[0][0]
         confidence = self.classifier.predict_proba(
-            features_window.values.reshape(1, 30, 51)
+            features_window.values.reshape(1, 30, self.n_features)
         )[0][0]
 
         current_price = features_window.iloc[-1]["close"]

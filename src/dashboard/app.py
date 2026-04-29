@@ -14,15 +14,15 @@ app = FastAPI(title="Institutional Forex AI Dashboard", version="3.0")
 connected_clients: List[WebSocket] = []
 
 latest_state = {
-    'equity': 100000.0,
-    'balance': 100000.0,
-    'margin': 0.0,
-    'free_margin': 100000.0,
-    'open_positions': [],
-    'trade_history': [],
-    'market_data': {},
-    'ai_metrics': {},
-    'timestamp': time.time()
+    "equity": 100000.0,
+    "balance": 100000.0,
+    "margin": 0.0,
+    "free_margin": 100000.0,
+    "open_positions": [],
+    "trade_history": [],
+    "market_data": {},
+    "ai_metrics": {},
+    "timestamp": time.time(),
 }
 
 
@@ -358,7 +358,7 @@ async def broadcast_update(state: dict):
 def update_state(**kwargs):
     global latest_state
     latest_state.update(kwargs)
-    latest_state['timestamp'] = time.time()
+    latest_state["timestamp"] = time.time()
 
 
 @app.get("/health")

@@ -19,9 +19,16 @@ from ctrader_open_api.messages.OpenApiModelMessages_pb2 import *
 
 # Symbol mapping (from C# code: EURUSD=1, GBPUSD=2, etc.)
 SYMBOL_MAP = {
-    1: "EURUSD", 2: "GBPUSD", 3: "USDJPY",
-    4: "XAUUSD", 5: "BTCUSD", 6: "ETHUSD",
-    7: "AUDUSD", 8: "USDCHF", 9: "NZDUSD", 10: "USDCAD"
+    1: "EURUSD",
+    2: "GBPUSD",
+    3: "USDJPY",
+    4: "XAUUSD",
+    5: "BTCUSD",
+    6: "ETHUSD",
+    7: "AUDUSD",
+    8: "USDCHF",
+    9: "NZDUSD",
+    10: "USDCAD",
 }
 REVERSE_SYMBOL_MAP = {v: k for k, v in SYMBOL_MAP.items()}
 
@@ -29,6 +36,7 @@ REVERSE_SYMBOL_MAP = {v: k for k, v in SYMBOL_MAP.items()}
 @dataclass
 class MarketDepth:
     """Real-time market data from cTrader."""
+
     symbol: str = ""
     symbol_id: int = 0
     bid: float = 0.0
@@ -41,6 +49,7 @@ class MarketDepth:
 @dataclass
 class TradeOrder:
     """Order to be sent to cTrader."""
+
     symbol: str = "EURUSD"
     symbol_id: int = 1
     side: str = "BUY"  # BUY or SELL
@@ -55,6 +64,7 @@ class TradeOrder:
 @dataclass
 class OrderResult:
     """Result from order execution."""
+
     order_id: str = ""
     status: str = "PENDING"  # FILLED, REJECTED, PENDING
     filled_price: float = 0.0
@@ -65,6 +75,7 @@ class OrderResult:
 @dataclass
 class AccountInfo:
     """Account information from cTrader."""
+
     account_id: str = ""
     ctid_account_id: int = 0
     balance: float = 0.0
@@ -78,6 +89,7 @@ class AccountInfo:
 @dataclass
 class OpenPosition:
     """Open position from cTrader."""
+
     position_id: int = 0
     symbol: str = ""
     direction: str = ""  # BUY or SELL
@@ -100,8 +112,15 @@ class CtraderClient:
     - Symbol IDs: EURUSD=1, GBPUSD=2, USDJPY=3, XAUUSD=4, BTCUSD=5
     """
 
-    def __init__(self, app_id: str, app_secret: str, access_token: str,
-                 account_id: str, demo: bool = True, use_websocket: bool = True):
+    def __init__(
+        self,
+        app_id: str,
+        app_secret: str,
+        access_token: str,
+        account_id: str,
+        demo: bool = True,
+        use_websocket: bool = True,
+    ):
         self.app_id = app_id
         self.app_secret = app_secret
         self.access_token = access_token
@@ -129,7 +148,9 @@ class CtraderClient:
 
     def start(self):
         """Start the client and connect to cTrader."""
-        host = EndPoints.PROTOBUF_DEMO_HOST if self.demo else EndPoints.PROTOBUF_LIVE_HOST
+        host = (
+            EndPoints.PROTOBUF_DEMO_HOST if self.demo else EndPoints.PROTOBUF_LIVE_HOST
+        )
         port = EndPoints.PROTOBUF_PORT
         protocol = WsProtocol if self.use_websocket else TcpProtocol
 
@@ -140,7 +161,9 @@ class CtraderClient:
         # Register message handlers (like C# Subscribe in COpenAPIClient.cs)
         self._client.add_handler(ProtoOAApplicationAuthRes, self._on_app_auth)
         self._client.add_handler(ProtoOAAccountAuthRes, self._on_account_auth)
-        self._client.add_handler(ProtoOAGetAccountListByAccessTokenRes, self._on_account_list)
+        self._client.add_handler(
+            ProtoOAGetAccountListByAccessTokenRes, self._on_account_list
+        )
         self._client.add_handler(ProtoOASpotEvent, self._on_spot_event)
         self._client.add_handler(ProtoOAExecutionEvent, self._on_execution)
         self._client.add_handler(ProtoOAOrderErrorEvent, self._on_order_error)
@@ -152,9 +175,9 @@ class CtraderClient:
 
         # Start reactor in separate thread (like C# Task.Run)
         if not reactor.running:
-            threading.Thread(target=reactor.run,
-                             kwargs={'installSignalHandlers': False},
-                             daemon=True).start()
+            threading.Thread(
+                target=reactor.run, kwargs={"installSignalHandlers": False}, daemon=True
+            ).start()
 
         # Connect and authenticate
         self._connect_and_auth()
@@ -258,7 +281,7 @@ class CtraderClient:
         if msg.trader:
             trader = msg.trader
             money_digits = trader.money_digits if trader.money_digits > 0 else 2
-            divisor = 10 ** money_digits
+            divisor = 10**money_digits
             balance = trader.balance / divisor
 
             self._account_info = AccountInfo(
@@ -266,9 +289,11 @@ class CtraderClient:
                 ctid_account_id=self._ctid_account_id,
                 balance=balance,
                 equity=balance,  # Will be updated with positions
-                currency=str(trader.deposit_asset_id)
+                currency=str(trader.deposit_asset_id),
             )
-            logger.info(f"Trader Info | Balance: {balance:.2f} {trader.deposit_asset_id}")
+            logger.info(
+                f"Trader Info | Balance: {balance:.2f} {trader.deposit_asset_id}"
+            )
 
             if self.on_account_update:
                 self.on_account_update(self._account_info)
@@ -329,7 +354,7 @@ class CtraderClient:
             bid=bid,
             ask=ask,
             spread=abs(ask - bid),
-            timestamp=time.time()
+            timestamp=time.time(),
         )
         self._last_market_depth[symbol_id] = depth
 
@@ -342,26 +367,37 @@ class CtraderClient:
         Returns OrderResult with status.
         """
         if self._is_simulation or not self._is_connected:
-            logger.info(f"[SIM] Order: {order.side} {order.volume/100000:.2f} lots {order.symbol}")
+            logger.info(
+                f"[SIM] Order: {order.side} {order.volume/100000:.2f} lots {order.symbol}"
+            )
             return OrderResult(
                 order_id=f"SIM_{int(time.time())}",
                 status="FILLED",
-                filled_price=order.price or (self._last_market_depth.get(order.symbol_id, MarketDepth())).ask,
-                volume=order.volume
+                filled_price=order.price
+                or (self._last_market_depth.get(order.symbol_id, MarketDepth())).ask,
+                volume=order.volume,
             )
 
         req = ProtoOANewOrderReq()
         req.ctid_trader_account_id = self._ctid_account_id
         req.order_type = ProtoOAOrderType.Market
-        req.trade_side = ProtoOATradeSide.Buy if order.side.upper() == "BUY" else ProtoOATradeSide.Sell
+        req.trade_side = (
+            ProtoOATradeSide.Buy
+            if order.side.upper() == "BUY"
+            else ProtoOATradeSide.Sell
+        )
         req.volume = order.volume
         req.symbol_id = order.symbol_id
 
         if order.position_id > 0:
             req.position_id = order.position_id
-            logger.info(f"[REAL] Close position {order.position_id}: {order.side} {order.volume/100000:.2f} lots")
+            logger.info(
+                f"[REAL] Close position {order.position_id}: {order.side} {order.volume/100000:.2f} lots"
+            )
         else:
-            logger.info(f"[REAL] Open order: {order.side} {order.volume/100000:.2f} lots {order.symbol}")
+            logger.info(
+                f"[REAL] Open order: {order.side} {order.volume/100000:.2f} lots {order.symbol}"
+            )
 
         self._last_order_filled = False
 
@@ -378,7 +414,7 @@ class CtraderClient:
             order_id=f"OPENAPI_{int(time.time())}",
             status="FILLED" if self._last_order_filled else "PENDING",
             filled_price=order.price,
-            volume=order.volume
+            volume=order.volume,
         )
 
         if self.on_order_update:
@@ -397,7 +433,7 @@ class CtraderClient:
             order_id=str(msg.execution_id),
             status="FILLED",
             filled_price=msg.price / 100000.0 if msg.price else 0.0,
-            volume=msg.volume
+            volume=msg.volume,
         )
         if self.on_order_update:
             self.on_order_update(result)

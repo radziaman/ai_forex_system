@@ -58,7 +58,8 @@ class BacktestEngine:
             current_bar = data.iloc[i]
 
             if position is None:
-                idx_start = i - 30
+                # Use past 30 bars (i-29 to i) to predict next bar
+                idx_start = i - 29
                 idx_end = i + 1
                 signal = self._generate_signal(
                     data.iloc[idx_start:idx_end], model, feature_engineer
@@ -134,16 +135,24 @@ class BacktestEngine:
     def _generate_signal(self, window: pd.DataFrame, model, feature_engineer) -> int:
         """Generate buy/sell/hold signal from model prediction"""
         try:
-            features = window.values.reshape(1, window.shape[0], window.shape[1])
+            # Ensure we pass exactly 30 bars to the model
+            if len(window) > 30:
+                window = window.iloc[-30:]
+            
+            features = window.values.reshape(1, 30, window.shape[1])
             prediction = model.predict(features)[0][0]
             current_price = window["close"].iloc[-1]
 
-            if prediction > current_price * 1.001:
-                return 1
-            elif prediction < current_price * 0.999:
-                return -1
-            return 0
-        except Exception:
+            # Model predicts normalized close price
+            # If prediction > current normalized price, model expects price to go up
+            # Use a threshold to avoid noise (0.1 in normalized units ≈ small change)
+            if prediction > current_price + 0.1:
+                return 1  # BUY signal
+            elif prediction < current_price - 0.1:
+                return -1  # SELL signal
+            return 0  # HOLD
+        except Exception as e:
+            print(f"Signal generation error: {e}")
             return 0
 
     def _calculate_pnl(self, position: Dict, current_price: float) -> float:

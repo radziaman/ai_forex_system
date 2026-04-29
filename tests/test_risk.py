@@ -9,6 +9,7 @@ from ai_forex_system.risk import RiskManager, TrailingStopManager
 
 from ai_forex_system.risk import RiskManager, TrailingStopManager
 
+
 class TestRiskManager:
     """Test risk management functionality"""
 
