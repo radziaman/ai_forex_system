@@ -1,19 +1,22 @@
-"""Data fetching and preprocessing module using yfinance and ccxt"""
+"""Data fetching and preprocessing module using yfinance, ccxt, or cTrader"""
 
 import pandas as pd
 import numpy as np
 from typing import Optional, List, Dict
 from datetime import datetime
 import warnings
+import logging
 
 warnings.filterwarnings("ignore")
+logger = logging.getLogger(__name__)
 
 
 class DataFetcher:
-    """Fetch forex data from yfinance or ccxt"""
+    """Fetch forex data from yfinance, ccxt, or cTrader"""
 
-    def __init__(self, source: str = "yfinance"):
+    def __init__(self, source: str = "yfinance", ctrader_client=None):
         self.source = source
+        self.ctrader_client = ctrader_client
 
     def fetch_ohlcv(
         self,
@@ -30,6 +33,8 @@ class DataFetcher:
             return self._fetch_yfinance(symbol, timeframe, start, end)
         elif self.source == "ccxt":
             return self._fetch_ccxt(symbol, timeframe, start, end)
+        elif self.source == "ctrader":
+            return self._fetch_ctrader(symbol, timeframe, start, end)
         else:
             raise ValueError(f"Unknown source: {self.source}")
 
@@ -58,6 +63,7 @@ class DataFetcher:
             import ccxt
 
             exchange = ccxt.binance()
+
             timeframe_map = {"1h": "1h", "15m": "15m", "5m": "5m", "1d": "1d"}
             tf = timeframe_map.get(timeframe, "1h")
 
@@ -72,6 +78,38 @@ class DataFetcher:
             return df
         except ImportError:
             raise ImportError("Install ccxt: pip install ccxt")
+
+    def _fetch_ctrader(
+        self, symbol: str, timeframe: str, start: str, end: str
+    ) -> pd.DataFrame:
+        """Fetch from cTrader (IC Markets) - uses real-time data"""
+        if not self.ctrader_client:
+            raise ValueError("cTrader client not initialized. Set ctrader_client in constructor")
+
+        # Convert symbol format (EURUSD=X -> EURUSD)
+        symbol_clean = symbol.replace("=X", "")
+
+        # Get symbol ID from cTrader mapping
+        from api.ctrader_client import REVERSE_SYMBOL_MAP
+        symbol_id = REVERSE_SYMBOL_MAP.get(symbol_clean.upper())
+        if not symbol_id:
+            raise ValueError(f"Symbol {symbol_clean} not supported by cTrader client")
+
+        # Try to get latest market data from cTrader
+        if hasattr(self.ctrader_client, '_last_market_depth') and symbol_id in self.ctrader_client._last_market_depth:
+            depth = self.ctrader_client._last_market_depth[symbol_id]
+            df = pd.DataFrame({
+                "open": [depth.bid],
+                "high": [max(depth.bid, depth.ask)],
+                "low": [min(depth.bid, depth.ask)],
+                "close": [depth.ask],
+                "volume": [depth.volume]
+            }, index=[pd.Timestamp.now()])
+            return df
+        else:
+            # Fallback to Yahoo Finance for historical data
+            logger.warning(f"No cTrader data for {symbol_clean}, falling back to Yahoo Finance")
+            return self._fetch_yfinance(symbol, timeframe, start, end)
 
     def fetch_multiple_pairs(
         self, symbols: List[str], timeframe: str = "1h", start: str = "2015-01-01"
