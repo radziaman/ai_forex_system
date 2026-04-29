@@ -109,15 +109,36 @@
             <div class="col-md-3">
                 <div class="stat-card">
                     <div class="text-secondary mb-2">Account Balance</div>
-                    <div class="stat-value" id="balance">$100,000.00</div>
+                    <div class="stat-value" id="balance">$10,000.00</div>
                 </div>
             </div>
             <div class="col-md-3">
                 <div class="stat-card">
                     <div class="text-secondary mb-2">Equity</div>
-                    <div class="stat-value" id="equity">$100,000.00</div>
+                    <div class="stat-value" id="equity">$10,000.00</div>
                 </div>
             </div>
+            <div class="col-md-3">
+                <div class="stat-card">
+                    <div class="text-secondary mb-2">Free Margin</div>
+                    <div class="stat-value" id="freeMarginInfo">$10,000.00</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card stat-card">
+                    <div class="card-body">
+                        <h6 class="card-subtitle mb-2 text-muted">cTrader & Broker</h6>
+                        <p class="card-text">
+                            <small>Broker: <span id="brokerNameInfo">IC Markets</span></small><br>
+                            <small>Account: <span id="accountId">6100830</span></small><br>
+                            <small>Type: <span id="accountTypeInfo">Demo</span></small><br>
+                            <small>Leverage: <span id="leverageInfo">1:30</span></small>
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="row mb-4">
             <div class="col-md-3">
                 <div class="stat-card">
                     <div class="text-secondary mb-2">Total Profit</div>
@@ -128,6 +149,18 @@
                 <div class="stat-card">
                     <div class="text-secondary mb-2">Win Rate</div>
                     <div class="stat-value" id="winRate">--%</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-card">
+                    <div class="text-secondary mb-2">Margin Used</div>
+                    <div class="stat-value" id="marginInfo">$0.00</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-card">
+                    <div class="text-secondary mb-2">Forex Pairs</div>
+                    <div class="stat-value" id="forexPairsCount">10</div>
                 </div>
             </div>
         </div>
@@ -228,6 +261,55 @@
                 </div>
             </div>
         </div>
+        
+        <!-- All Market Data from cTrader -->
+        <div class="row mt-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header"><i class="fas fa-globe me-2"></i>All Market Data (cTrader)</div>
+                    <div class="card-body p-0">
+                        <table>
+                            <thead><tr><th>Symbol</th><th>Bid</th><th>Ask</th><th>Spread</th><th>Volume</th><th>Pip Value</th></tr></thead>
+                            <tbody id="allMarketDataTable"><tr><td colspan="6" class="text-center text-secondary py-4">Loading market data...</td></tr></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Broker & Account Details -->
+        <div class="row mt-4">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header"><i class="fas fa-building me-2"></i>Broker Information (IC Markets)</div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-6 mb-3"><div class="text-secondary mb-1">Name</div><div id="brokerNameInfo">IC Markets</div></div>
+                            <div class="col-6 mb-3"><div class="text-secondary mb-1">Regulation</div><div id="brokerRegulationInfo">ASIC, CySEC</div></div>
+                            <div class="col-6 mb-3"><div class="text-secondary mb-1">Max Leverage</div><div id="brokerMaxLeverageInfo">1:500</div></div>
+                            <div class="col-6 mb-3"><div class="text-secondary mb-1">Min Deposit</div><div>$200</div></div>
+                            <div class="col-6"><div class="text-secondary mb-1">Platforms</div><div>cTrader, MT4, MT5</div></div>
+                            <div class="col-6"><div class="text-secondary mb-1">Forex Pairs</div><div id="forexPairsCount">10+</div></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header"><i class="fas fa-user-circle me-2"></i>Account Details</div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-6 mb-3"><div class="text-secondary mb-1">Account ID</div><div id="accountId">6100830</div></div>
+                            <div class="col-6 mb-3"><div class="text-secondary mb-1">Type</div><div id="accountTypeInfo">Demo</div></div>
+                            <div class="col-6 mb-3"><div class="text-secondary mb-1">Currency</div><div id="currencyInfo">USD</div></div>
+                            <div class="col-6 mb-3"><div class="text-secondary mb-1">Leverage</div><div id="leverageInfo">1:30</div></div>
+                            <div class="col-6"><div class="text-secondary mb-1">Balance</div><div id="balance">$10,000.00</div></div>
+                            <div class="col-6"><div class="text-secondary mb-1">Equity</div><div id="equity">$10,000.00</div></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <footer>
@@ -270,18 +352,50 @@
         }
 
         function updateDashboard(data) {
-            if (data.balance !== undefined) {
+            // === ACCOUNT INFO (Complete from cTrader) ===
+            if (data.account_info && data.account_info.balance !== undefined) {
+                document.getElementById('balance').textContent = '$' + data.account_info.balance.toLocaleString('en-US', {minimumFractionDigits: 2});
+            } else if (data.balance !== undefined) {
                 document.getElementById('balance').textContent = '$' + data.balance.toLocaleString('en-US', {minimumFractionDigits: 2});
             }
-            if (data.equity !== undefined) {
-                document.getElementById('equity').textContent = '$' + data.equity.toLocaleString('en-US', {minimumFractionDigits: 2});
-                const profit = data.equity - (data.initial_balance || 100000);
+            
+            if (data.account_info && data.account_info.equity !== undefined) {
+                document.getElementById('equity').textContent = '$' + data.account_info.equity.toLocaleString('en-US', {minimumFractionDigits: 2});
+                const profit = data.account_info.equity - (data.initial_balance || 10000);
                 const el = document.getElementById('totalProfit');
                 el.textContent = (profit >= 0 ? '+' : '') + '$' + profit.toFixed(2);
                 el.className = 'stat-value ' + (profit >= 0 ? 'positive' : 'negative');
+            } else if (data.equity !== undefined) {
+                document.getElementById('equity').textContent = '$' + data.equity.toLocaleString('en-US', {minimumFractionDigits: 2});
             }
+            
+            // Show leverage and free margin
+            if (data.account_info) {
+                const acct = data.account_info;
+                if (acct.leverage) document.getElementById('leverageInfo').textContent = acct.leverage;
+                if (acct.free_margin !== undefined) document.getElementById('freeMarginInfo').textContent = '$' + acct.free_margin.toLocaleString('en-US', {minimumFractionDigits: 2});
+                if (acct.margin !== undefined) document.getElementById('marginInfo').textContent = '$' + acct.margin.toLocaleString('en-US', {minimumFractionDigits: 2});
+                if (acct.currency) document.getElementById('currencyInfo').textContent = acct.currency;
+                if (acct.type) document.getElementById('accountTypeInfo').textContent = acct.type;
+            }
+            
+            // === BROKER INFO (IC Markets) ===
+            if (data.broker) {
+                if (data.broker.name) document.getElementById('brokerNameInfo').textContent = data.broker.name;
+                if (data.broker.regulation) document.getElementById('brokerRegulationInfo').textContent = data.broker.regulation;
+                if (data.broker.max_leverage) document.getElementById('brokerMaxLeverageInfo').textContent = data.broker.max_leverage;
+            }
+            
+            // === FOREX PAIRS COUNT ===
+            if (data.forex_pairs && data.forex_pairs.length > 0) {
+                document.getElementById('forexPairsCount').textContent = data.forex_pairs.length + ' pairs';
+            }
+            
+            // === WIN RATE & TRADES ===
             if (data.win_rate !== undefined) document.getElementById('winRate').textContent = (data.win_rate * 100).toFixed(1) + '%';
             if (data.total_trades !== undefined) document.getElementById('totalTrades').textContent = data.total_trades;
+            
+            // === OPEN POSITIONS ===
             if (data.open_positions !== undefined) {
                 document.getElementById('openPositionsCount').textContent = data.open_positions.length;
                 const tbody = document.getElementById('openPositionsTable');
@@ -297,6 +411,8 @@
                     </tr>`).join('');
                 }
             }
+            
+            // === TRADE HISTORY ===
             if (data.trade_history !== undefined) {
                 const tbody = document.getElementById('tradeHistoryTable');
                 if (data.trade_history.length === 0) {
@@ -312,17 +428,46 @@
                     </tr>`).join('');
                 }
             }
-            if (data.market_data) {
-                document.getElementById('livePrice').textContent = (data.market_data.ask || 0).toFixed(5);
-                document.getElementById('bidPrice').textContent = (data.market_data.bid || 0).toFixed(5);
-                document.getElementById('askPrice').textContent = (data.market_data.ask || 0).toFixed(5);
-                document.getElementById('spread').textContent = ((data.market_data.spread || 0) * 10000).toFixed(1) + ' pip';
+            
+            // === ALL MARKET DATA (from cTrader) ===
+            if (data.market_data && typeof data.market_data === 'object') {
+                // Update live price for main symbol (EURUSD)
+                if (data.market_data.EURUSD) {
+                    const eurusd = data.market_data.EURUSD;
+                    document.getElementById('livePrice').textContent = (eurusd.ask || 0).toFixed(5);
+                    document.getElementById('bidPrice').textContent = (eurusd.bid || 0).toFixed(5);
+                    document.getElementById('askPrice').textContent = (eurusd.ask || 0).toFixed(5);
+                    document.getElementById('spread').textContent = ((eurusd.spread || 0) * 10000).toFixed(1) + ' pip';
+                }
+                
+                // Update all market data table
+                const allMarketTbody = document.getElementById('allMarketDataTable');
+                if (allMarketTbody) {
+                    const symbols = Object.keys(data.market_data);
+                    if (symbols.length > 0) {
+                        allMarketTbody.innerHTML = symbols.map(symbol => {
+                            const m = data.market_data[symbol];
+                            return `<tr>
+                                <td><strong>${symbol}</strong></td>
+                                <td class="text-success">${m.bid?.toFixed(5) || '--'}</td>
+                                <td class="text-danger">${m.ask?.toFixed(5) || '--'}</td>
+                                <td><span class="spread-badge">${((m.spread || 0) * 10000).toFixed(1)} pip</span></td>
+                                <td>${(m.volume || 0).toLocaleString()}</td>
+                                <td>${m.pip_value || '--'}</td>
+                            </tr>`;
+                        }).join('');
+                    }
+                }
             }
+            
+            // === AI METRICS ===
             if (data.ai_metrics) {
                 document.getElementById('aiSignal').textContent = data.ai_metrics.signal || 'HOLD';
                 document.getElementById('aiAction').textContent = data.ai_metrics.action || 'HOLD';
                 document.getElementById('aiConfidence').textContent = ((data.ai_metrics.confidence || 0) * 100).toFixed(0) + '%';
             }
+            
+            // === CTRADER STATUS ===
             if (data.ctrader) {
                 document.getElementById('ctraderStatus').textContent = data.ctrader.connected ? 'Connected' : 'Disconnected';
                 document.getElementById('ctraderStatus').className = 'badge ' + (data.ctrader.connected ? 'bg-success' : 'bg-danger');
@@ -330,6 +475,8 @@
                 document.getElementById('environment').textContent = data.ctrader.demo ? 'Demo' : 'Live';
                 document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
             }
+            
+            // === AI SIGNALS ===
             if (data.signals) {
                 const container = document.getElementById('signalsContainer');
                 if (data.signals.length === 0) {
@@ -349,11 +496,28 @@
                     </div>`).join('');
                 }
             }
+            
+            // === EQUITY CHART ===
             if (data.equity !== undefined) {
                 equityData.labels.push(new Date());
                 equityData.datasets[0].data.push(data.equity);
                 if (equityData.labels.length > 100) { equityData.labels.shift(); equityData.datasets[0].data.shift(); }
                 equityChart.update('none');
+            }
+            
+            // Update connection status
+            if (data.connected !== undefined) {
+                const indicator = document.getElementById('connectionIndicator');
+                const status = document.getElementById('connectionStatus');
+                if (data.connected) {
+                    indicator.className = 'status-indicator status-online';
+                    status.textContent = 'Live Trading';
+                    status.className = 'text-success me-4';
+                } else {
+                    indicator.className = 'status-indicator';
+                    status.textContent = 'Disconnected';
+                    status.className = 'text-warning me-4';
+                }
             }
         }
 

@@ -1,37 +1,78 @@
 """
 Dashboard for AI Forex Trading System v3.0
 Provides real-time monitoring via FastAPI and WebSockets.
-Integrates with cTrader (IC Markets) for live data.
+Integrates with cTrader (IC Markets) for ALL available data.
 """
 import asyncio
 import json
 import time
 import os
 from datetime import datetime
+from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.requests import Request
 from loguru import logger
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 app = FastAPI(title="AI Forex Trading System Dashboard", version="3.0")
 
 connected_clients: List[WebSocket] = []
 
+# cTrader client instance
+ctrader_client: Optional[object] = None
+
+
+def init_ctrader():
+    """Initialize cTrader client with all data pulling capabilities."""
+    global ctrader_client
+    try:
+        from api.ctrader_client import CtraderClient
+        ctrader_client = CtraderClient(
+            app_id="15217_h8WxunXX70m6O6qsnIx9ZO3GZraTdO0wnLjL3dTKyYG6fkbUca",
+            app_secret="Zb8tEW4Axzq0AJqCNS8ubniYzsgp2kxuRkYBRD9XXOcLAj5aOT",
+            access_token="7d574e0bbcf30419cc752a4ea17bd627f8b46bdf79b5a3f34cf38db8285ce17f43592d3cb5bbd067ca3d2d",
+            account_id="6100830",
+            demo=True,
+        )
+        ctrader_client.start()
+        logger.info("✓ cTrader client initialized with full data access")
+    except Exception as e:
+        logger.error(f"Failed to initialize cTrader client: {e}")
+        ctrader_client = None
+
+
 latest_state = {
-    "equity": 100000.0,
-    "balance": 100000.0,
+    "connected": False,
+    "equity": 10000.0,
+    "balance": 10000.0,
     "margin": 0.0,
-    "free_margin": 100000.0,
+    "free_margin": 10000.0,
+    "leverage": "1:30",
     "open_positions": [],
     "trade_history": [],
     "market_data": {},
     "ai_metrics": {},
     "signals": [],
     "ctrader": {"connected": False, "account_id": "6100830", "demo": True},
+    "broker": {
+        "name": "IC Markets",
+        "regulation": "ASIC, CySEC",
+        "max_leverage": "1:500",
+    },
+    "forex_pairs": [],
+    "account_info": {},
     "timestamp": time.time(),
 }
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize on startup."""
+    init_ctrader()
+    logger.info("Dashboard started with cTrader integration")
+
 
 @app.get("/")
 async def get_dashboard(request: Request):
@@ -56,18 +97,23 @@ async def get_dashboard(request: Request):
     else:
         return HTMLResponse(content="<h1>Dashboard not found</h1><p>Expected at: dashboard.html</p>")
 
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     connected_clients.append(websocket)
     logger.info(f"Dashboard client connected | Total: {len(connected_clients)}")
     try:
-        await websocket.send_json(latest_state)
+        # Send initial state with all cTrader data
+        state = get_full_state()
+        await websocket.send_json(state)
+        
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
         connected_clients.remove(websocket)
         logger.info(f"Client disconnected | Total: {len(connected_clients)}")
+
 
 async def broadcast_update(state: dict):
     """Broadcast updates to all connected dashboard clients."""
@@ -81,27 +127,125 @@ async def broadcast_update(state: dict):
         if client in connected_clients:
             connected_clients.remove(client)
 
-def update_state(**kwargs):
-    """Update the latest state with new data."""
+
+def get_full_state() -> Dict[str, Any]:
+    """Get full state including ALL cTrader data."""
     global latest_state
-    latest_state.update(kwargs)
-    latest_state["timestamp"] = time.time()
+    
+    if ctrader_client and ctrader_client.is_connected():
+        # Get comprehensive data from cTrader client
+        dashboard_data = ctrader_client.get_dashboard_data()
+        
+        # Update latest_state with all available data
+        latest_state.update({
+            "connected": True,
+            "equity": dashboard_data.get("account", {}).get("equity", 10000.0),
+            "balance": dashboard_data.get("account", {}).get("balance", 10000.0),
+            "margin": dashboard_data.get("account", {}).get("margin", 0.0),
+            "free_margin": dashboard_data.get("account", {}).get("free_margin", 10000.0),
+            "leverage": dashboard_data.get("account", {}).get("leverage", "1:30"),
+            "market_data": dashboard_data.get("market_data", {}),
+            "open_positions": dashboard_data.get("open_positions", []),
+            "forex_pairs": dashboard_data.get("forex_pairs", []),
+            "broker": dashboard_data.get("broker", {}),
+            "account_info": dashboard_data.get("account", {}),
+            "ctrader": {
+                "connected": True,
+                "account_id": dashboard_data.get("account_id", ""),
+                "demo": dashboard_data.get("demo", True),
+            },
+            "timestamp": time.time(),
+        })
+    else:
+        latest_state["connected"] = False
+    
+    return latest_state
+
+
+@app.get("/api/data")
+async def get_data():
+    """Get ALL data for the dashboard from cTrader."""
+    try:
+        state = get_full_state()
+        
+        # Get AI signals from latest file
+        signals = []
+        signal_file = "signals_live.json"
+        if os.path.exists(signal_file):
+            try:
+                with open(signal_file) as f:
+                    latest = json.load(f)
+                    signals = latest.get("signals", [])
+            except:
+                pass
+        
+        # Get equity data (last 30 days)
+        equity_data = []
+        equity_file = "equity_curve.csv"
+        if os.path.exists(equity_file):
+            try:
+                import pandas as pd
+                df = pd.read_csv(equity_file)
+                equity_data = df.tail(30)["equity"].tolist()
+            except:
+                equity_data = [10000] * 30
+        else:
+            equity_data = [10000] * 30
+        
+        # Combine all data
+        state["signals"] = signals[:10]
+        state["equity_data"] = equity_data
+        
+        return state
+    except Exception as e:
+        logger.error(f"Error getting data: {e}")
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/ctrader/account")
+async def get_ctrader_account():
+    """Get complete account information from cTrader."""
+    if ctrader_client and ctrader_client.is_connected():
+        return ctrader_client.get_account_info().__dict__
+    return {"error": "cTrader not connected"}
+
+
+@app.get("/api/ctrader/broker")
+async def get_ctrader_broker():
+    """Get broker information (IC Markets)."""
+    if ctrader_client:
+        return ctrader_client.get_broker_info().__dict__
+    return {"error": "cTrader not initialized"}
+
+
+@app.get("/api/ctrader/pairs")
+async def get_ctrader_pairs():
+    """Get all available forex pairs."""
+    if ctrader_client and ctrader_client.is_connected():
+        return [p.__dict__ for p in ctrader_client.get_forex_pairs()]
+    return {"error": "cTrader not connected"}
+
+
+@app.get("/api/ctrader/market/{symbol}")
+async def get_market_data(symbol: str):
+    """Get market data for a specific symbol."""
+    if ctrader_client and ctrader_client.is_connected():
+        depth = ctrader_client.get_market_depth(symbol)
+        if depth:
+            return depth.__dict__
+    return {"error": "Symbol not found or cTrader not connected"}
+
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "timestamp": time.time(), "version": "3.0"}
+    return {
+        "status": "healthy",
+        "ctrader_connected": ctrader_client.is_connected() if ctrader_client else False,
+        "timestamp": time.time(),
+        "version": "3.0",
+    }
 
-@app.get("/api/state")
-async def get_state():
-    """Return current state for API consumers."""
-    return latest_state
-
-@app.post("/api/update")
-async def update_from_trader(data: Dict[str, Any]):
-    """Update dashboard state from trader system."""
-    update_state(**data)
-    await broadcast_update(data)
-    return {"status": "updated"}
 
 if __name__ == "__main__":
     import uvicorn
