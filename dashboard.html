@@ -10,21 +10,20 @@
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@2.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
     <style>
         :root {
-            --bg-dark: #0a0e17;
-            --bg-card: #111827;
+            --bg-dark: #0f1419;
+            --bg-card: #1a1f2e;
+            --bg-card-alt: #242b3d;
+            --border-color: #2d3548;
+            --text-primary: #e2e8f0;
+            --text-secondary: #94a3b8;
             --accent-gold: #f59e0b;
             --accent-green: #10b981;
             --accent-red: #ef4444;
-            --accent-blue: #3b82f6;
-            --text-primary: #f3f4f6;
-            --text-secondary: #9ca3af;
-            --border-color: #1f2937;
         }
-        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            font-family: 'Segoe UI', system-ui, sans-serif;
             background: var(--bg-dark);
             color: var(--text-primary);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
             min-height: 100vh;
         }
         .navbar {
@@ -35,202 +34,328 @@
         .navbar-brand {
             font-weight: 700;
             font-size: 1.5rem;
-            background: linear-gradient(135deg, var(--accent-gold) 0%, var(--accent-green) 100%);
+            background: linear-gradient(135deg, #f59e0b 0%, #10b981 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
         }
         .status-indicator {
-            width: 10px; height: 10px; border-radius: 50%;
-            display: inline-block; margin-right: 8px;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+            background: #6b7280;
+        }
+        .status-online {
+            background: var(--accent-green);
             animation: pulse 2s infinite;
         }
-        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-        .stat-card {
-            background: var(--bg-card); border: 1px solid var(--border-color);
-            border-radius: 12px; padding: 1.5rem; transition: transform 0.3s;
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
         }
-        .stat-card:hover { transform: translateY(-4px); }
-        .stat-value { font-size: 1.75rem; font-weight: 700; }
+        .stat-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.5rem;
+            transition: transform 0.3s;
+            height: 100%;
+        }
+        .stat-card:hover {
+            transform: translateY(-4px);
+        }
+        .stat-value {
+            font-size: 1.75rem;
+            font-weight: 700;
+        }
         .stat-value.positive { color: var(--accent-green); }
         .stat-value.negative { color: var(--accent-red); }
         .card {
-            background: var(--bg-card); border: 1px solid var(--border-color);
-            border-radius: 12px; margin-bottom: 1.5rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            margin-bottom: 1.5rem;
         }
         .card-header {
-            background: transparent; border-bottom: 1px solid var(--border-color);
-            padding: 1rem 1.5rem; font-weight: 600;
+            background: var(--bg-card-alt);
+            border-bottom: 1px solid var(--border-color);
+            font-weight: 600;
+            padding: 1rem 1.5rem;
         }
-        .chart-container { position: relative; height: 300px; }
-        table { width: 100%; border-collapse: collapse; }
-        th {
-            color: var(--text-secondary); font-weight: 500; font-size: 0.75rem;
-            text-transform: uppercase; letter-spacing: 0.05em;
-            padding: 0.75rem 1rem; text-align: left; border-bottom: 1px solid var(--border-color);
+        .table {
+            color: var(--text-primary);
+            margin-bottom: 0;
         }
-        td { padding: 0.75rem 1rem; border-bottom: 1px solid var(--border-color); }
-        tr:hover { background: rgba(255,255,255,0.02); }
-        .badge-win { background: rgba(16,185,129,0.15); color: var(--accent-green); padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem; }
-        .badge-loss { background: rgba(239,68,68,0.15); color: var(--accent-red); padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem; }
-        .live-price { font-family: 'Courier New', monospace; font-size: 2rem; font-weight: 700; }
-        .spread-badge { background: rgba(59,130,246,0.15); color: var(--accent-blue); padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.75rem; }
-        footer {
-            background: var(--bg-card); border-top: 1px solid var(--border-color);
-            padding: 1.5rem 0; margin-top: 3rem;
+        .table thead th {
+            border-color: var(--border-color);
+            color: var(--text-secondary);
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            letter-spacing: 0.05em;
         }
-        .footer-text { color: var(--text-secondary); font-size: 0.875rem; }
-        .signal-card { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 1.5rem; margin-bottom: 1rem; }
-        .signal-buy { border-left: 4px solid var(--accent-green); }
-        .signal-sell { border-left: 4px solid var(--accent-red); }
-        .signal-hold { border-left: 4px solid var(--accent-blue); }
+        .table td {
+            border-color: var(--border-color);
+            vertical-align: middle;
+        }
+        .badge {
+            padding: 0.35em 0.65em;
+            font-size: 0.75em;
+            font-weight: 600;
+        }
+        .badge-win { background: var(--accent-green); color: white; }
+        .badge-loss { background: var(--accent-red); color: white; }
+        .badge-primary { background: #3b82f6; color: white; }
+        .btn-primary {
+            background: linear-gradient(135deg, #f59e0b 0%, #10b981 100%);
+            border: none;
+            font-weight: 600;
+        }
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);
+        }
+        .progress {
+            background: var(--bg-card-alt);
+            border-radius: 8px;
+        }
+        .progress-bar {
+            background: linear-gradient(90deg, #f59e0b 0%, #10b981 100%);
+            border-radius: 8px;
+            transition: width 0.5s ease;
+        }
+        .footer-text {
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+        }
+        #equityChart {
+            max-height: 300px;
+        }
     </style>
 </head>
 <body>
-    <nav class="navbar sticky-top">
-        <div class="container">
-            <div class="d-flex align-items-center">
-                <i class="fas fa-brain text-warning me-2" style="font-size: 1.5rem;"></i>
-                <span class="navbar-brand">RTS - AI FX Trading System</span>
-                <span class="badge bg-secondary ms-3">v3.0</span>
-                <span class="badge bg-info ms-2">cTrader Integrated</span>
-            </div>
-            <div class="d-flex align-items-center">
-                <span class="status-indicator" id="connectionIndicator"></span>
-                <span class="text-success me-4" id="connectionStatus">Connecting...</span>
-                <span class="text-secondary" id="currentSymbol">EURUSD</span>
+    <!-- Navigation -->
+    <nav class="navbar navbar-dark">
+        <div class="container-fluid px-4">
+            <span class="navbar-brand"><i class="fas fa-robot me-2"></i>RTS - AI FX Trading System</span>
+            <div>
+                <span id="connectionStatus" class="text-warning me-4"><span class="status-indicator"></span>Disconnected</span>
+                <span class="text-secondary"><i class="fas fa-clock me-1"></i><span id="serverTime">--:--:--</span></span>
             </div>
         </div>
     </nav>
 
-    <div class="container mt-4">
-        <!-- Account Stats Row -->
+    <div class="container-fluid px-4 py-4">
+        <!-- Stats Row -->
         <div class="row mb-4">
-            <div class="col-md-3">
+            <div class="col-md-3 mb-3">
                 <div class="stat-card">
-                    <div class="text-secondary mb-2">Account Balance</div>
-                    <div class="stat-value" id="balance">$10,000.00</div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="stat-card">
-                    <div class="text-secondary mb-2">Equity</div>
-                    <div class="stat-value" id="equity">$10,000.00</div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="stat-card">
-                    <div class="text-secondary mb-2">Free Margin</div>
-                    <div class="stat-value" id="freeMarginInfo">$10,000.00</div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card stat-card">
-                    <div class="card-body">
-                        <h6 class="card-subtitle mb-2 text-muted">cTrader & Broker</h6>
-                        <p class="card-text">
-                            <small>Broker: <span id="brokerNameInfo">IC Markets</span></small><br>
-                            <small>Account: <span id="accountId">6100830</span></small><br>
-                            <small>Type: <span id="accountTypeInfo">Demo</span></small><br>
-                            <small>Leverage: <span id="leverageInfo">1:30</span></small>
-                        </p>
+                    <div class="text-secondary mb-1">EQUITY</div>
+                    <div class="stat-value" id="equityValue">$10,000</div>
+                    <div class="text-secondary mt-2" style="font-size: 0.875rem;">
+                        <i class="fas fa-arrow-up text-success me-1"></i>
+                        <span id="equityChange">+0.00 (0.00%)</span>
                     </div>
                 </div>
             </div>
-        </div>
-        <div class="row mb-4">
-            <div class="col-md-3">
+            <div class="col-md-3 mb-3">
                 <div class="stat-card">
-                    <div class="text-secondary mb-2">Total Profit</div>
-                    <div class="stat-value positive" id="totalProfit">$0.00</div>
+                    <div class="text-secondary mb-1">BALANCE</div>
+                    <div class="stat-value" id="balanceValue">$10,000</div>
+                    <div class="text-secondary mt-2" style="font-size: 0.875rem;">Available: <span id="freeMargin">$10,000</span></div>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col-md-3 mb-3">
                 <div class="stat-card">
-                    <div class="text-secondary mb-2">Win Rate</div>
+                    <div class="text-secondary mb-1">OPEN POSITIONS</div>
+                    <div class="stat-value" id="openPositionsCount">0</div>
+                    <div class="text-secondary mt-2" style="font-size: 0.875rem;">Margin: <span id="marginUsed">$0</span></div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="stat-card">
+                    <div class="text-secondary mb-1">WIN RATE</div>
                     <div class="stat-value" id="winRate">--%</div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="stat-card">
-                    <div class="text-secondary mb-2">Margin Used</div>
-                    <div class="stat-value" id="marginInfo">$0.00</div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="stat-card">
-                    <div class="text-secondary mb-2">Forex Pairs</div>
-                    <div class="stat-value" id="forexPairsCount">10</div>
+                    <div class="text-secondary mt-2" style="font-size: 0.875rem;">P/L: <span id="totalPL">$0</span></div>
                 </div>
             </div>
         </div>
 
-        <!-- AI Signals Row -->
+        <!-- Main Content Row -->
         <div class="row mb-4">
-            <div class="col-lg-6">
+            <!-- AI Signals -->
+            <div class="col-lg-6 mb-3">
                 <div class="card">
                     <div class="card-header"><i class="fas fa-robot me-2"></i>AI Signals (IC Markets)</div>
                     <div class="card-body" id="signalsContainer">
-                        <div class="text-center text-secondary py-4">Loading signals...</div>
+                        <div class="text-center text-secondary py-4">No signals generated</div>
                     </div>
                 </div>
             </div>
-            <div class="col-lg-6">
+
+            <!-- Equity Chart -->
+            <div class="col-lg-6 mb-3">
                 <div class="card">
                     <div class="card-header"><i class="fas fa-chart-line me-2"></i>Equity Curve</div>
                     <div class="card-body">
-                        <div class="chart-container"><canvas id="equityChart"></canvas></div>
+                        <canvas id="equityChart"></canvas>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- Live Market Data & AI Metrics -->
+        <!-- Market Data & AI Metrics -->
         <div class="row mb-4">
-            <div class="col-lg-4">
+            <div class="col-lg-4 mb-3">
                 <div class="card">
                     <div class="card-header"><i class="fas fa-tachometer-alt me-2"></i>Live Market</div>
-                    <div class="card-body text-center">
-                        <div class="live-price mb-2" id="livePrice">1.16754</div>
-                        <div class="d-flex justify-content-center gap-3 mb-3">
-                            <span class="text-success"><i class="fas fa-arrow-up"></i> Bid: <span id="bidPrice">1.16752</span></span>
-                            <span class="spread-badge" id="spread">2.0 pip</span>
-                            <span class="text-danger"><i class="fas fa-arrow-down"></i> Ask: <span id="askPrice">1.16754</span></span>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <div class="text-secondary mb-1">EURUSD</div>
+                            <div class="d-flex justify-content-between align-items-center">
+                                <h3 class="mb-0" id="livePrice">1.12345</h3>
+                                <span class="badge bg-success" id="priceChange">+0.0012</span>
+                            </div>
                         </div>
-                        <hr style="border-color: var(--border-color);">
-                        <div class="text-start">
-                            <div class="d-flex justify-content-between mb-2"><span class="text-secondary">AI Signal</span><span class="badge bg-primary" id="aiSignal">HOLD</span></div>
-                            <div class="d-flex justify-content-between mb-2"><span class="text-secondary">Confidence</span><span class="badge bg-info" id="aiConfidence">--%</span></div>
-                            <div class="d-flex justify-content-between mb-2"><span class="text-secondary">Market Regime</span><span class="badge bg-warning" id="regimeBadge">--</span></div>
-                            <div class="d-flex justify-content-between"><span class="text-secondary">Features</span><span class="badge bg-primary" id="featuresCount">41</span></div>
+                        <div class="row">
+                            <div class="col-6">
+                                <div class="text-secondary mb-1">Bid</div>
+                                <div id="bidPrice" class="text-success">1.12343</div>
+                            </div>
+                            <div class="col-6">
+                                <div class="text-secondary mb-1">Ask</div>
+                                <div id="askPrice" class="text-danger">1.12345</div>
+                            </div>
+                        </div>
+                        <div class="mt-3">
+                            <div class="text-secondary mb-1">Spread</div>
+                            <span class="badge bg-primary" id="spread">2.0 pip</span>
                         </div>
                     </div>
                 </div>
             </div>
-            <div class="col-lg-4">
+
+            <div class="col-lg-4 mb-3">
                 <div class="card">
                     <div class="card-header"><i class="fas fa-brain me-2"></i>AI Brain Metrics</div>
                     <div class="card-body">
-                        <div class="row text-center">
-                            <div class="col-6 mb-3"><div class="text-secondary mb-1">Model Status</div><span class="badge bg-success" id="modelStatus">Loaded</span></div>
-                            <div class="col-6 mb-3"><div class="text-secondary mb-1">Mode</div><div class="stat-value" style="font-size: 1.2rem;" id="tradingMode">PAPER</div></div>
-                            <div class="col-6 mb-3"><div class="text-secondary mb-1">Data Source</div><div class="stat-value" style="font-size: 1.2rem;" id="dataSource">cTrader</div></div>
-                            <div class="col-6 mb-3"><div class="text-secondary mb-1">Open Positions</div><div class="stat-value" id="openPositionsCount">0</div></div>
-                            <div class="col-6"><div class="text-secondary mb-1">Total Trades</div><div class="stat-value" id="totalTrades">0</div></div>
-                            <div class="col-6"><div class="text-secondary mb-1">AI Action</div><div class="stat-value" style="font-size: 1.2rem;" id="aiAction">HOLD</div></div>
+                        <div class="mb-3">
+                            <div class="text-secondary mb-1">Current Signal</div>
+                            <div><span class="badge badge-primary" id="aiSignal">HOLD</span></div>
+                        </div>
+                        <div class="mb-3">
+                            <div class="text-secondary mb-1">Action</div>
+                            <div id="aiAction">HOLD</div>
+                        </div>
+                        <div class="mb-3">
+                            <div class="text-secondary mb-1">Confidence</div>
+                            <div id="aiConfidence">0%</div>
+                        </div>
+                        <div>
+                            <div class="text-secondary mb-1">Model Status</div>
+                            <div id="modelStatus" class="text-success"><i class="fas fa-check-circle me-1"></i>Trained</div>
                         </div>
                     </div>
                 </div>
             </div>
-            <div class="col-lg-4">
+
+            <div class="col-lg-4 mb-3">
                 <div class="card">
                     <div class="card-header"><i class="fas fa-cogs me-2"></i>cTrader Status</div>
                     <div class="card-body">
-                        <div class="mb-3"><div class="text-secondary mb-1">Connection</div><span class="badge bg-success" id="ctraderStatus">Connected</span></div>
-                        <div class="mb-3"><div class="text-secondary mb-1">Account ID</div><div id="accountId">6100830</div></div>
-                        <div class="mb-3"><div class="text-secondary mb-1">Environment</div><div id="environment">Demo</div></div>
-                        <div class="mb-3"><div class="text-secondary mb-1">Last Update</div><div id="lastUpdate">--:--:--</div></div>
-                        <div><div class="text-secondary mb-1">Symbols Monitored</div><div id="symbolsList">EURUSD, GBPUSD, AUDUSD</div></div>
+                        <div class="mb-3">
+                            <div class="text-secondary mb-1">Connection</div>
+                            <span class="badge bg-success" id="ctraderStatus">Connected</span>
+                        </div>
+                        <div class="mb-3">
+                            <div class="text-secondary mb-1">Account ID</div>
+                            <div id="accountId">6100830</div>
+                        </div>
+                        <div class="mb-3">
+                            <div class="text-secondary mb-1">Environment</div>
+                            <div id="environment">Demo</div>
+                        </div>
+                        <div class="mb-3">
+                            <div class="text-secondary mb-1">Last Update</div>
+                            <div id="lastUpdate">--:--:--</div>
+                        </div>
+                        <div>
+                            <div class="text-secondary mb-1">Symbols Monitored</div>
+                            <div id="symbolsList">EURUSD, GBPUSD, AUDUSD</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Training Progress Section -->
+        <div class="row mb-4">
+            <div class="col-lg-4 mb-3">
+                <div class="card">
+                    <div class="card-header"><i class="fas fa-brain me-2"></i>Training Progress</div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <div class="text-secondary mb-1">Overall Progress</div>
+                            <div class="progress" style="height: 25px;">
+                                <div id="trainingProgress" class="progress-bar progress-bar-striped progress-bar-animated" 
+                                     role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">0%</div>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <div class="text-secondary mb-1">Current Pair</div>
+                            <div id="currentPair">--</div>
+                        </div>
+                        <div class="mb-3">
+                            <div class="text-secondary mb-1">Epoch</div>
+                            <div id="currentEpoch">--</div>
+                        </div>
+                        <div class="mb-3">
+                            <div class="text-secondary mb-1">Models Trained</div>
+                            <div id="modelsTrained">0</div>
+                        </div>
+                        <div class="mb-3">
+                            <div class="text-secondary mb-1">Completed Pairs</div>
+                            <div id="completedPairs">None yet</div>
+                        </div>
+                        <div class="mb-3" id="trainingStatus" style="display: none;">
+                            <div class="alert alert-info">Training in progress...</div>
+                        </div>
+                        <div class="mb-3" id="trainingComplete" style="display: none;">
+                            <div class="alert alert-success"><i class="fas fa-check-circle me-2"></i>All training complete!</div>
+                        </div>
+                        <button class="btn btn-primary w-100" onclick="startTraining()">
+                            <i class="fas fa-play me-2"></i>Start Training All Pairs
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- cTrader Status (moved) -->
+            <div class="col-lg-4 mb-3">
+                <!-- Already shown above -->
+            </div>
+        </div>
+
+        <!-- Backtest Results (Hidden by default) -->
+        <div class="row mt-4" id="backtestResults" style="display: none;">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header"><i class="fas fa-chart-bar me-2"></i>Backtest Results</div>
+                    <div class="card-body p-0">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Pair</th>
+                                    <th>Total Return</th>
+                                    <th>Win Rate</th>
+                                    <th>Sharpe Ratio</th>
+                                    <th>Max Drawdown</th>
+                                </tr>
+                            </thead>
+                            <tbody id="backtestTable"></tbody>
+                        </table>
                     </div>
                 </div>
             </div>
@@ -238,73 +363,140 @@
 
         <!-- Open Positions & Trade History -->
         <div class="row">
-            <div class="col-lg-5">
+            <div class="col-lg-5 mb-3">
                 <div class="card">
                     <div class="card-header"><i class="fas fa-briefcase me-2"></i>Open Positions</div>
                     <div class="card-body p-0">
-                        <table>
-                            <thead><tr><th>Symbol</th><th>Dir</th><th>Volume</th><th>Entry</th><th>PnL</th></tr></thead>
-                            <tbody id="openPositionsTable"><tr><td colspan="5" class="text-center text-secondary py-4">No open positions</td></tr></tbody>
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Symbol</th>
+                                    <th>Dir</th>
+                                    <th>Volume</th>
+                                    <th>Entry</th>
+                                    <th>PnL</th>
+                                </tr>
+                            </thead>
+                            <tbody id="openPositionsTable">
+                                <tr>
+                                    <td colspan="5" class="text-center text-secondary py-4">No open positions</td>
+                                </tr>
+                            </tbody>
                         </table>
                     </div>
                 </div>
             </div>
-            <div class="col-lg-7">
+            <div class="col-lg-7 mb-3">
                 <div class="card">
                     <div class="card-header"><i class="fas fa-history me-2"></i>Trade History</div>
                     <div class="card-body p-0">
-                        <table>
-                            <thead><tr><th>Time</th><th>Symbol</th><th>Dir</th><th>Entry</th><th>Exit</th><th>PnL</th></tr></thead>
-                            <tbody id="tradeHistoryTable"><tr><td colspan="6" class="text-center text-secondary py-4">No trades yet</td></tr></tbody>
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Time</th>
+                                    <th>Symbol</th>
+                                    <th>Dir</th>
+                                    <th>Entry</th>
+                                    <th>Exit</th>
+                                    <th>PnL</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tradeHistoryTable">
+                                <tr>
+                                    <td colspan="6" class="text-center text-secondary py-4">No trades yet</td>
+                                </tr>
+                            </tbody>
                         </table>
                     </div>
                 </div>
             </div>
         </div>
-        
+
         <!-- All Market Data from cTrader -->
         <div class="row mt-4">
             <div class="col-12">
                 <div class="card">
                     <div class="card-header"><i class="fas fa-globe me-2"></i>All Market Data (cTrader)</div>
                     <div class="card-body p-0">
-                        <table>
-                            <thead><tr><th>Symbol</th><th>Bid</th><th>Ask</th><th>Spread</th><th>Volume</th><th>Pip Value</th></tr></thead>
-                            <tbody id="allMarketDataTable"><tr><td colspan="6" class="text-center text-secondary py-4">Loading market data...</td></tr></tbody>
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Symbol</th>
+                                    <th>Bid</th>
+                                    <th>Ask</th>
+                                    <th>Spread</th>
+                                    <th>Volume</th>
+                                    <th>Pip Value</th>
+                                </tr>
+                            </thead>
+                            <tbody id="allMarketDataTable">
+                                <tr>
+                                    <td colspan="6" class="text-center text-secondary py-4">Loading market data...</td>
+                                </tr>
+                            </tbody>
                         </table>
                     </div>
                 </div>
             </div>
         </div>
-        
-        <!-- Broker & Account Details -->
+
+        <!-- Broker Information -->
         <div class="row mt-4">
-            <div class="col-md-6">
+            <div class="col-lg-6 mb-3">
                 <div class="card">
                     <div class="card-header"><i class="fas fa-building me-2"></i>Broker Information (IC Markets)</div>
                     <div class="card-body">
                         <div class="row">
-                            <div class="col-6 mb-3"><div class="text-secondary mb-1">Name</div><div id="brokerNameInfo">IC Markets</div></div>
-                            <div class="col-6 mb-3"><div class="text-secondary mb-1">Regulation</div><div id="brokerRegulationInfo">ASIC, CySEC</div></div>
-                            <div class="col-6 mb-3"><div class="text-secondary mb-1">Max Leverage</div><div id="brokerMaxLeverageInfo">1:500</div></div>
-                            <div class="col-6 mb-3"><div class="text-secondary mb-1">Min Deposit</div><div>$200</div></div>
-                            <div class="col-6"><div class="text-secondary mb-1">Platforms</div><div>cTrader, MT4, MT5</div></div>
-                            <div class="col-6"><div class="text-secondary mb-1">Forex Pairs</div><div id="forexPairsCount">10+</div></div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <div class="text-secondary mb-1">Broker Name</div>
+                                    <div id="brokerName">IC Markets</div>
+                                </div>
+                                <div class="mb-3">
+                                    <div class="text-secondary mb-1">Regulation</div>
+                                    <div id="brokerRegulation">ASIC, CySEC</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <div class="text-secondary mb-1">Max Leverage</div>
+                                    <div id="maxLeverage">1:500</div>
+                                </div>
+                                <div class="mb-3">
+                                    <div class="text-secondary mb-1">Commission</div>
+                                    <div id="commission">$3.50/lot</div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
-            <div class="col-md-6">
+
+            <div class="col-lg-6 mb-3">
                 <div class="card">
                     <div class="card-header"><i class="fas fa-user-circle me-2"></i>Account Details</div>
                     <div class="card-body">
                         <div class="row">
-                            <div class="col-6 mb-3"><div class="text-secondary mb-1">Account ID</div><div id="accountId">6100830</div></div>
-                            <div class="col-6 mb-3"><div class="text-secondary mb-1">Type</div><div id="accountTypeInfo">Demo</div></div>
-                            <div class="col-6 mb-3"><div class="text-secondary mb-1">Currency</div><div id="currencyInfo">USD</div></div>
-                            <div class="col-6 mb-3"><div class="text-secondary mb-1">Leverage</div><div id="leverageInfo">1:30</div></div>
-                            <div class="col-6"><div class="text-secondary mb-1">Balance</div><div id="balance">$10,000.00</div></div>
-                            <div class="col-6"><div class="text-secondary mb-1">Equity</div><div id="equity">$10,000.00</div></div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <div class="text-secondary mb-1">Account ID</div>
+                                    <div id="accountDetailsId">6100830</div>
+                                </div>
+                                <div class="mb-3">
+                                    <div class="text-secondary mb-1">Account Type</div>
+                                    <div id="accountType">Demo</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <div class="text-secondary mb-1">Leverage</div>
+                                    <div id="accountLeverage">1:30</div>
+                                </div>
+                                <div class="mb-3">
+                                    <div class="text-secondary mb-1">Currency</div>
+                                    <div id="accountCurrency">USD</div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -312,202 +504,84 @@
         </div>
     </div>
 
-    <footer>
-        <div class="container">
-            <div class="d-flex justify-content-between align-items-center">
-                <div class="footer-text"><i class="fas fa-robot me-2"></i>RTS - AI FX Trading System v3.0 | Powered by LSTM-CNN Hybrid & cTrader API</div>
-                <div class="footer-text"><i class="fab fa-github me-2"></i><a href="https://github.com/radziaman/ai_forex_system" class="text-decoration-none text-secondary">Source</a></div>
+    <!-- Footer -->
+    <footer class="container-fluid px-4 py-3">
+        <div class="d-flex justify-content-between align-items-center">
+            <div class="footer-text">
+                <i class="fas fa-robot me-2"></i>RTS - AI FX Trading System v3.0 | Powered by LSTM-CNN Hybrid & cTrader API
+            </div>
+            <div class="footer-text">
+                <span id="footerTime"></span>
             </div>
         </div>
     </footer>
 
     <script>
-        let ws = null;
+        // === CHART SETUP ===
         const equityData = {
             labels: [],
             datasets: [{
                 label: 'Equity',
                 data: [],
                 borderColor: '#10b981',
-                backgroundColor: 'rgba(16,185,129,0.1)',
+                backgroundColor: 'rgba(16, 185, 129, 0.1)',
                 fill: true,
-                tension: 0.4,
-                pointRadius: 0
+                tension: 0.4
             }]
         };
 
-        function connectWebSocket() {
-            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
-            ws.onopen = () => {
-                document.getElementById('connectionIndicator').className = 'status-indicator status-online';
-                document.getElementById('connectionStatus').textContent = 'Live Trading';
-            };
-            ws.onmessage = (e) => { updateDashboard(JSON.parse(e.data)); };
-            ws.onclose = () => {
-                document.getElementById('connectionIndicator').className = 'status-indicator';
-                document.getElementById('connectionStatus').textContent = 'Disconnected';
-                setTimeout(connectWebSocket, 3000);
-            };
-        }
-
-        function updateDashboard(data) {
-            // === ACCOUNT INFO (Complete from cTrader) ===
-            if (data.account_info && data.account_info.balance !== undefined) {
-                document.getElementById('balance').textContent = '$' + data.account_info.balance.toLocaleString('en-US', {minimumFractionDigits: 2});
-            } else if (data.balance !== undefined) {
-                document.getElementById('balance').textContent = '$' + data.balance.toLocaleString('en-US', {minimumFractionDigits: 2});
-            }
-            
-            if (data.account_info && data.account_info.equity !== undefined) {
-                document.getElementById('equity').textContent = '$' + data.account_info.equity.toLocaleString('en-US', {minimumFractionDigits: 2});
-                const profit = data.account_info.equity - (data.initial_balance || 10000);
-                const el = document.getElementById('totalProfit');
-                el.textContent = (profit >= 0 ? '+' : '') + '$' + profit.toFixed(2);
-                el.className = 'stat-value ' + (profit >= 0 ? 'positive' : 'negative');
-            } else if (data.equity !== undefined) {
-                document.getElementById('equity').textContent = '$' + data.equity.toLocaleString('en-US', {minimumFractionDigits: 2});
-            }
-            
-            // Show leverage and free margin
-            if (data.account_info) {
-                const acct = data.account_info;
-                if (acct.leverage) document.getElementById('leverageInfo').textContent = acct.leverage;
-                if (acct.free_margin !== undefined) document.getElementById('freeMarginInfo').textContent = '$' + acct.free_margin.toLocaleString('en-US', {minimumFractionDigits: 2});
-                if (acct.margin !== undefined) document.getElementById('marginInfo').textContent = '$' + acct.margin.toLocaleString('en-US', {minimumFractionDigits: 2});
-                if (acct.currency) document.getElementById('currencyInfo').textContent = acct.currency;
-                if (acct.type) document.getElementById('accountTypeInfo').textContent = acct.type;
-            }
-            
-            // === BROKER INFO (IC Markets) ===
-            if (data.broker) {
-                if (data.broker.name) document.getElementById('brokerNameInfo').textContent = data.broker.name;
-                if (data.broker.regulation) document.getElementById('brokerRegulationInfo').textContent = data.broker.regulation;
-                if (data.broker.max_leverage) document.getElementById('brokerMaxLeverageInfo').textContent = data.broker.max_leverage;
-            }
-            
-            // === FOREX PAIRS COUNT ===
-            if (data.forex_pairs && data.forex_pairs.length > 0) {
-                document.getElementById('forexPairsCount').textContent = data.forex_pairs.length + ' pairs';
-            }
-            
-            // === WIN RATE & TRADES ===
-            if (data.win_rate !== undefined) document.getElementById('winRate').textContent = (data.win_rate * 100).toFixed(1) + '%';
-            if (data.total_trades !== undefined) document.getElementById('totalTrades').textContent = data.total_trades;
-            
-            // === OPEN POSITIONS ===
-            if (data.open_positions !== undefined) {
-                document.getElementById('openPositionsCount').textContent = data.open_positions.length;
-                const tbody = document.getElementById('openPositionsTable');
-                if (data.open_positions.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="5" class="text-center text-secondary py-4">No open positions</td></tr>';
-                } else {
-                    tbody.innerHTML = data.open_positions.map(p => `<tr>
-                        <td>${p.symbol}</td>
-                        <td><span class="badge ${p.direction === 'BUY' ? 'badge-win' : 'badge-loss'}">${p.direction}</span></td>
-                        <td>${p.volume}</td>
-                        <td>${p.entry_price?.toFixed(5)}</td>
-                        <td class="${p.unrealized_pnl >= 0 ? 'text-success' : 'text-danger'}">$${p.unrealized_pnl?.toFixed(2)}</td>
-                    </tr>`).join('');
-                }
-            }
-            
-            // === TRADE HISTORY ===
-            if (data.trade_history !== undefined) {
-                const tbody = document.getElementById('tradeHistoryTable');
-                if (data.trade_history.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-secondary py-4">No trades yet</td></tr>';
-                } else {
-                    tbody.innerHTML = data.trade_history.slice(-20).reverse().map(t => `<tr>
-                        <td>${new Date(t.timestamp * 1000).toLocaleTimeString()}</td>
-                        <td>${t.symbol}</td>
-                        <td><span class="badge ${t.direction === 'BUY' ? 'badge-win' : 'badge-loss'}">${t.direction}</span></td>
-                        <td>${t.entry?.toFixed(5)}</td>
-                        <td>${t.exit?.toFixed(5)}</td>
-                        <td class="${t.pnl >= 0 ? 'text-success' : 'text-danger'}">$${t.pnl?.toFixed(2)}</td>
-                    </tr>`).join('');
-                }
-            }
-            
-            // === ALL MARKET DATA (from cTrader) ===
-            if (data.market_data && typeof data.market_data === 'object') {
-                // Update live price for main symbol (EURUSD)
-                if (data.market_data.EURUSD) {
-                    const eurusd = data.market_data.EURUSD;
-                    document.getElementById('livePrice').textContent = (eurusd.ask || 0).toFixed(5);
-                    document.getElementById('bidPrice').textContent = (eurusd.bid || 0).toFixed(5);
-                    document.getElementById('askPrice').textContent = (eurusd.ask || 0).toFixed(5);
-                    document.getElementById('spread').textContent = ((eurusd.spread || 0) * 10000).toFixed(1) + ' pip';
-                }
-                
-                // Update all market data table
-                const allMarketTbody = document.getElementById('allMarketDataTable');
-                if (allMarketTbody) {
-                    const symbols = Object.keys(data.market_data);
-                    if (symbols.length > 0) {
-                        allMarketTbody.innerHTML = symbols.map(symbol => {
-                            const m = data.market_data[symbol];
-                            return `<tr>
-                                <td><strong>${symbol}</strong></td>
-                                <td class="text-success">${m.bid?.toFixed(5) || '--'}</td>
-                                <td class="text-danger">${m.ask?.toFixed(5) || '--'}</td>
-                                <td><span class="spread-badge">${((m.spread || 0) * 10000).toFixed(1)} pip</span></td>
-                                <td>${(m.volume || 0).toLocaleString()}</td>
-                                <td>${m.pip_value || '--'}</td>
-                            </tr>`;
-                        }).join('');
+        const ctx = document.getElementById('equityChart').getContext('2d');
+        const equityChart = new Chart(ctx, {
+            type: 'line',
+            data: equityData,
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { 
+                        mode: 'index',
+                        callbacks: { 
+                            label: (ctx) => '$' + ctx.parsed.y.toFixed(2) 
+                        } 
+                    }
+                },
+                scales: {
+                    x: { 
+                        grid: { color: '#1f2937' }, 
+                        ticks: { color: '#6b7280', maxTicksLimit: 10 } 
+                    },
+                    y: { 
+                        grid: { color: '#1f2937' }, 
+                        ticks: { color: '#6b7280', callback: (v) => '$' + v.toFixed(0) } 
                     }
                 }
             }
-            
-            // === AI METRICS ===
-            if (data.ai_metrics) {
-                document.getElementById('aiSignal').textContent = data.ai_metrics.signal || 'HOLD';
-                document.getElementById('aiAction').textContent = data.ai_metrics.action || 'HOLD';
-                document.getElementById('aiConfidence').textContent = ((data.ai_metrics.confidence || 0) * 100).toFixed(0) + '%';
-            }
-            
-            // === CTRADER STATUS ===
-            if (data.ctrader) {
-                document.getElementById('ctraderStatus').textContent = data.ctrader.connected ? 'Connected' : 'Disconnected';
-                document.getElementById('ctraderStatus').className = 'badge ' + (data.ctrader.connected ? 'bg-success' : 'bg-danger');
-                document.getElementById('accountId').textContent = data.ctrader.account_id || '--';
-                document.getElementById('environment').textContent = data.ctrader.demo ? 'Demo' : 'Live';
-                document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
-            }
-            
-            // === AI SIGNALS ===
-            if (data.signals) {
-                const container = document.getElementById('signalsContainer');
-                if (data.signals.length === 0) {
-                    container.innerHTML = '<div class="text-center text-secondary py-4">No signals generated</div>';
-                } else {
-                    container.innerHTML = data.signals.map(s => `<div class="signal-card signal-${s.signal.toLowerCase()}">
-                        <div class="d-flex justify-content-between align-items-center mb-2">
-                            <h5 class="mb-0">${s.symbol}</h5>
-                            <span class="badge ${s.signal === 'BUY' ? 'badge-win' : s.signal === 'SELL' ? 'badge-loss' : 'badge-primary'}">${s.signal}</span>
-                        </div>
-                        <div class="row">
-                            <div class="col-6"><div class="text-secondary">Entry</div><div>${s.entry?.toFixed(5)}</div></div>
-                            <div class="col-6"><div class="text-secondary">Confidence</div><div>${(s.confidence * 100).toFixed(1)}%</div></div>
-                            <div class="col-6"><div class="text-secondary">SL</div><div class="text-danger">${s.sl?.toFixed(5)}</div></div>
-                            <div class="col-6"><div class="text-secondary">TP</div><div class="text-success">${s.tp?.toFixed(5)}</div></div>
-                        </div>
-                    </div>`).join('');
-                }
-            }
-            
-            // === EQUITY CHART ===
+        });
+
+        // === UTILITY FUNCTIONS ===
+        function formatCurrency(value) {
+            return '$' + (value || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        }
+
+        function formatPercent(value) {
+            return (value || 0).toFixed(2) + '%';
+        }
+
+        // === UPDATE DASHBOARD ===
+        function updateDashboard(data) {
+            // Update stats
             if (data.equity !== undefined) {
-                equityData.labels.push(new Date());
-                equityData.datasets[0].data.push(data.equity);
-                if (equityData.labels.length > 100) { equityData.labels.shift(); equityData.datasets[0].data.shift(); }
-                equityChart.update('none');
+                document.getElementById('equityValue').textContent = formatCurrency(data.equity);
+                document.getElementById('balanceValue').textContent = formatCurrency(data.balance);
+                document.getElementById('freeMargin').textContent = formatCurrency(data.free_margin);
+                document.getElementById('marginUsed').textContent = formatCurrency(data.margin);
+                document.getElementById('openPositionsCount').textContent = (data.open_positions || []).length;
             }
-            
+
             // Update connection status
             if (data.connected !== undefined) {
-                const indicator = document.getElementById('connectionIndicator');
+                const indicator = document.querySelector('#connectionStatus .status-indicator');
                 const status = document.getElementById('connectionStatus');
                 if (data.connected) {
                     indicator.className = 'status-indicator status-online';
@@ -519,26 +593,152 @@
                     status.className = 'text-warning me-4';
                 }
             }
-        }
 
-        const ctx = document.getElementById('equityChart').getContext('2d');
-        const equityChart = new Chart(ctx, {
-            type: 'line',
-            data: equityData,
-            options: {
-                responsive: true, maintainAspectRatio: false,
-                plugins: {
-                    legend: { display: false },
-                    tooltip: { mode: 'index', callbacks: { label: (ctx) => '$' + ctx.parsed.y.toFixed(2) } }
-                },
-                scales: {
-                    x: { grid: { color: '#1f2937' }, ticks: { color: '#6b7280', maxTicksLimit: 10 } },
-                    y: { grid: { color: '#1f2937' }, ticks: { color: '#6b7280', callback: (v) => '$' + v.toFixed(0) } }
+            // Update cTrader status
+            if (data.ctrader) {
+                const statusEl = document.getElementById('ctraderStatus');
+                statusEl.textContent = data.ctrader.connected ? 'Connected' : 'Disconnected';
+                statusEl.className = 'badge ' + (data.ctrader.connected ? 'bg-success' : 'bg-danger');
+                document.getElementById('accountId').textContent = data.ctrader.account_id || '--';
+                document.getElementById('environment').textContent = data.ctrader.demo ? 'Demo' : 'Live';
+                document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+            }
+
+            // Update live market data
+            if (data.market_data && data.market_data.EURUSD) {
+                const eurusd = data.market_data.EURUSD;
+                document.getElementById('livePrice').textContent = (eurusd.ask || 0).toFixed(5);
+                document.getElementById('bidPrice').textContent = (eurusd.bid || 0).toFixed(5);
+                document.getElementById('askPrice').textContent = (eurusd.ask || 0).toFixed(5);
+                document.getElementById('spread').textContent = ((eurusd.spread || 0) * 10000).toFixed(1) + ' pip';
+            }
+
+            // Update AI signals
+            if (data.signals) {
+                const container = document.getElementById('signalsContainer');
+                if (data.signals.length === 0) {
+                    container.innerHTML = '<div class="text-center text-secondary py-4">No signals generated</div>';
+                } else {
+                    container.innerHTML = data.signals.map(s => `
+                        <div class="signal-card signal-${s.signal.toLowerCase()}" style="padding: 1rem; margin-bottom: 1rem; border-left: 4px solid ${s.signal === 'BUY' ? '#10b981' : s.signal === 'SELL' ? '#ef4444' : '#3b82f6'};">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h5 class="mb-0">${s.symbol}</h5>
+                                <span class="badge ${s.signal === 'BUY' ? 'badge-win' : s.signal === 'SELL' ? 'badge-loss' : 'badge-primary'}">${s.signal}</span>
+                            </div>
+                            <div class="row">
+                                <div class="col-6"><div class="text-secondary">Entry</div><div>${s.entry?.toFixed(5)}</div></div>
+                                <div class="col-6"><div class="text-secondary">Confidence</div><div>${(s.confidence * 100).toFixed(1)}%</div></div>
+                                <div class="col-6"><div class="text-secondary">SL</div><div class="text-danger">${s.sl?.toFixed(5)}</div></div>
+                                <div class="col-6"><div class="text-secondary">TP</div><div class="text-success">${s.tp?.toFixed(5)}</div></div>
+                            </div>
+                        </div>
+                    `).join('');
                 }
             }
-        });
 
-        window.addEventListener('load', connectWebSocket);
+            // Update equity chart
+            if (data.equity !== undefined) {
+                equityData.labels.push(new Date());
+                equityData.datasets[0].data.push(data.equity);
+                if (equityData.labels.length > 100) { 
+                    equityData.labels.shift(); 
+                    equityData.datasets[0].data.shift(); 
+                }
+                equityChart.update('none');
+            }
+        }
+
+        function updateTrainingProgress() {
+            fetch('/api/training/status')
+                .then(response => response.json())
+                .then(data => {
+                    const progressBar = document.getElementById('trainingProgress');
+                    const progressPercent = data.progress_percent || 0;
+                    progressBar.style.width = progressPercent + '%';
+                    progressBar.textContent = progressPercent + '%';
+                    progressBar.setAttribute('aria-valuenow', progressPercent);
+
+                    document.getElementById('currentPair').textContent = data.current_pair || '--';
+
+                    const epochText = (data.current_epoch && data.total_epochs) ?
+                        data.current_epoch + '/' + data.total_epochs : '--';
+                    document.getElementById('currentEpoch').textContent = epochText;
+
+                    document.getElementById('modelsTrained').textContent = data.models_trained || 0;
+
+                    const completed = data.completed_pairs || [];
+                    document.getElementById('completedPairs').textContent =
+                        completed.length > 0 ? completed.join(', ') : 'None yet';
+
+                    const statusDiv = document.getElementById('trainingStatus');
+                    const completeDiv = document.getElementById('trainingComplete');
+                    const backtestDiv = document.getElementById('backtestResults');
+
+                    if (data.training_complete) {
+                        statusDiv.style.display = 'none';
+                        completeDiv.style.display = 'block';
+                        progressBar.classList.remove('progress-bar-animated', 'progress-bar-striped');
+
+                        if (data.backtest_results && Object.keys(data.backtest_results).length > 0) {
+                            backtestDiv.style.display = 'block';
+                            const tbody = document.getElementById('backtestTable');
+                            tbody.innerHTML = Object.entries(data.backtest_results).map(([pair, r]) => `
+                                <tr>
+                                    <td><strong>${pair.replace('=X', '')}</strong></td>
+                                    <td class="${r.total_return >= 0 ? 'text-success' : 'text-danger'}">${r.total_return?.toFixed(2)}%</td>
+                                    <td>${r.win_rate?.toFixed(1)}%</td>
+                                    <td>${r.sharpe_ratio?.toFixed(2)}</td>
+                                    <td class="text-danger">${r.max_drawdown?.toFixed(2)}%</td>
+                                </tr>
+                            `).join('');
+                        }
+                    } else if (data.current_pair) {
+                        statusDiv.style.display = 'block';
+                        completeDiv.style.display = 'none';
+                    }
+                })
+                .catch(err => console.error('Error fetching training status:', err));
+        }
+
+        function startTraining() {
+            fetch('/api/training/start', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    alert('Training started! Progress will update automatically.');
+                    setInterval(updateTrainingProgress, 2000);
+                })
+                .catch(err => alert('Error starting training: ' + err));
+        }
+
+        // === WEBSOCKET ===
+        function connectWebSocket() {
+            const ws = new WebSocket('ws://localhost:8000/ws');
+
+            ws.onopen = () => console.log('WebSocket connected');
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                updateDashboard(data);
+            };
+            ws.onclose = () => {
+                console.log('WebSocket disconnected, reconnecting...');
+                setTimeout(connectWebSocket, 3000);
+            };
+        }
+
+        // === TIME UPDATE ===
+        function updateTime() {
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString();
+            document.getElementById('serverTime').textContent = timeStr;
+            document.getElementById('footerTime').textContent = timeStr;
+        }
+
+        // === INITIALIZE ===
+        setInterval(updateTrainingProgress, 2000);
+        updateTrainingProgress();
+        updateTime();
+        setInterval(updateTime, 1000);
+        // connectWebSocket(); // Uncomment when WebSocket is ready
     </script>
 </body>
 </html>
