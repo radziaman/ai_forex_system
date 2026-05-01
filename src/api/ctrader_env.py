@@ -12,15 +12,20 @@ Usage:
 import os
 import ssl
 import socket
-import time
 from google.protobuf.json_format import MessageToDict
-from proto.messages import ProtoMessage, ProtoPayloadType
-from proto.OA_messages import (
-    ProtoOAApplicationAuthReq, ProtoOAApplicationAuthRes,
-    ProtoOAGetAccountListByAccessTokenReq, ProtoOAGetAccountListByAccessTokenRes,
-    ProtoOAAccountAuthReq, ProtoOAAccountAuthRes,
-    ProtoOASubscribeSpotsReq, ProtoOASpotEvent
+from ctrader_open_api.messages.OpenApiCommonMessages_pb2 import ProtoMessage
+from ctrader_open_api.messages.OpenApiMessages_pb2 import (
+    ProtoOAApplicationAuthReq,
+    ProtoOAGetAccountListByAccessTokenReq,
+    ProtoOAGetAccountListByAccessTokenRes,
 )
+
+# Payload type constants (ctrader_open_api uses raw integers)
+PAYLOAD_OA_APPLICATION_AUTH_REQ = 2100
+PAYLOAD_OA_APPLICATION_AUTH_RES = 2101
+PAYLOAD_OA_GET_ACCOUNT_LIST_BY_ACCESS_TOKEN_REQ = 2149
+PAYLOAD_OA_GET_ACCOUNT_LIST_BY_ACCESS_TOKEN_RES = 2150
+
 
 class cTraderEnvClient:
     """cTrader client that loads credentials from environment variables."""
@@ -31,8 +36,8 @@ class cTraderEnvClient:
 
         self.access_token = os.getenv("CTRADER_ACCESS_TOKEN")
         self.refresh_token = os.getenv("CTRADER_REFRESH_TOKEN")
-        self.client_id = os.getenv("CTRADER_CLIENT_ID", "15217_h8WxunXX70m6O6qsnIx9ZO3GZraTdO0wnLjL3dTKyYG6fkbUca")
-        self.client_secret = os.getenv("CTRADER_CLIENT_SECRET", "Zb8tEW4Axzq0AJqCNS8ubniYzsgp2kxuRkYBRD9XXOcLAj5aOT")
+        self.client_id = os.getenv("CTRADER_CLIENT_ID", "15217_h8WxunXX70m6O6qsnIx9ZO3GZraTdO0wnLjL3dTKyYG6fkbUca")  # noqa: E501
+        self.client_secret = os.getenv("CTRADER_CLIENT_SECRET", "Zb8tEW4Axzq0AJqCNS8ubniYzsgp2kxuRkYBRD9XXOcLAj5aOT")  # noqa: E501
         self.account_id = os.getenv("CTRADER_ACCOUNT_ID", "6100830")
 
         self.host = "demo.ctraderapi.com"
@@ -111,7 +116,7 @@ class cTraderEnvClient:
         auth_req.clientId = self.client_id
         auth_req.clientSecret = self.client_secret
 
-        if not self.send_message(ProtoPayloadType.PROTO_OA_APPLICATION_AUTH_REQ, auth_req):
+        if not self.send_message(PAYLOAD_OA_APPLICATION_AUTH_REQ, auth_req):
             return False
 
         payload_type, payload, error = self.receive_message()
@@ -119,7 +124,7 @@ class cTraderEnvClient:
             self.last_error = error
             return False
 
-        if payload_type == ProtoPayloadType.PROTO_OA_APPLICATION_AUTH_RES:
+        if payload_type == PAYLOAD_OA_APPLICATION_AUTH_RES:
             return True
         else:
             self.last_error = f"Unexpected response: {payload_type}"
@@ -134,7 +139,7 @@ class cTraderEnvClient:
         req = ProtoOAGetAccountListByAccessTokenReq()
         req.accessToken = self.access_token
 
-        if not self.send_message(ProtoPayloadType.PROTO_OA_GET_ACCOUNT_LIST_BY_ACCESS_TOKEN_REQ, req):
+        if not self.send_message(PAYLOAD_OA_GET_ACCOUNT_LIST_BY_ACCESS_TOKEN_REQ, req):
             return None
 
         payload_type, payload, error = self.receive_message()
@@ -142,7 +147,7 @@ class cTraderEnvClient:
             self.last_error = error
             return None
 
-        if payload_type == ProtoPayloadType.PROTO_OA_GET_ACCOUNT_LIST_BY_ACCESS_TOKEN_RES:
+        if payload_type == PAYLOAD_OA_GET_ACCOUNT_LIST_BY_ACCESS_TOKEN_RES:
             res = ProtoOAGetAccountListByAccessTokenRes()
             res.ParseFromString(payload)
             return MessageToDict(res)

@@ -41,3 +41,34 @@ data/
 *.csv
 *.parquet
 *.h5
+
+# Model binaries (regeneratable)
+models/*.keras
+models/*.pkl
+models/*.h5
+
+# Generated artifacts
+fine_tuned_results.json
+quick_walk_forward_results.json
+training_status.json
+training.log
+dashboard.log
+signals_live.json
+equity_curve.csv
+
+# WIP simulation scripts
+sim_*.py
+simulation_*.py
+retrain_*.py
+backtest_*.py
+quick_*.py
+check_*.py
+debug_*.py
+verify_*.py
+fix_*.py
+
+# WIP strategy docs
+FINAL_STRATEGY.md
+REALISTIC_STRATEGY.md
+TRADING_REPORT.md
+VERSION_COMPARISON.md

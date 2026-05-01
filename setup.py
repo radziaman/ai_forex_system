@@ -17,5 +17,9 @@ setup(
         "yfinance>=1.2.0",
         "ccxt>=4.5.0",
         "tensorflow>=2.15.0,<2.16.0",
+        "ctrader-open-api>=0.9.2",
+        "twisted>=24.3.0",
+        "service-identity>=24.2.0",
+        "requests>=2.32.0",
     ],
 )
