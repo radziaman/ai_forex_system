@@ -245,6 +245,55 @@ async def get_market_data(symbol: str):
     return {"error": "Symbol not found or cTrader not connected"}
 
 
+@app.get("/api/training/status")
+async def get_training_status():
+    """Get training progress status."""
+    import json
+    from pathlib import Path
+
+    status_file = Path(__file__).parent.parent.parent / 'training_status.json'
+
+    if status_file.exists():
+        with open(status_file, 'r') as f:
+            return json.load(f)
+    else:
+        return {
+            'training_complete': False,
+            'progress_percent': 0,
+            'current_pair': None,
+            'completed_pairs': [],
+            'failed_pairs': [],
+            'total_pairs': 0,
+            'models_trained': 0,
+            'backtest_results': {},
+            'message': 'No training started yet. Run: python scripts/train_all_pairs.py'
+        }
+
+
+@app.post("/api/training/start")
+async def start_training(pairs: list = None):
+    """Start training (triggers background task)."""
+    import subprocess
+    from pathlib import Path
+    import sys
+
+    # Build command
+    cmd = [sys.executable, 'scripts/train_all_pairs.py']
+    if pairs:
+        cmd.extend(['--pairs'] + pairs)
+
+    # Run in background
+    def run_training():
+        subprocess.run(cmd, cwd=Path(__file__).parent.parent.parent)
+
+    import threading
+    thread = threading.Thread(target=run_training)
+    thread.daemon = True
+    thread.start()
+
+    return {'status': 'started', 'message': 'Training started in background'}
+
+
 @app.get("/health")
 async def health_check():
     return {

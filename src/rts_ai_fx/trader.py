@@ -9,6 +9,7 @@ from rts_ai_fx.data import DataFetcher, DataPreprocessor
 from rts_ai_fx.features import FeatureEngineer
 from rts_ai_fx.model import LSTMCNNHybrid, ProfitabilityClassifier
 from rts_ai_fx.risk import RiskManager, TrailingStopManager
+import numpy as np
 
 sys.path.append("..")
 
@@ -61,9 +62,24 @@ class AITrader:
         print("Normalizing and creating sequences...")
         df_normalized = self.preprocessor.normalize_features(df)
 
-        (X_train, X_test), (y_train, y_test), (train_df, test_df) = (
-            self.preprocessor.train_test_split(df_normalized, train_end="2020-01-01")
-        )
+        # Use 80/20 split for recent data
+        split_idx = int(len(df_normalized) * 0.8)
+        train_df = df_normalized.iloc[:split_idx]
+        test_df = df_normalized.iloc[split_idx:]
+
+        # Create sequences for training
+        X_train, y_train = [], []
+        for i in range(self.preprocessor.lookback, len(train_df)):
+            X_train.append(train_df.iloc[i-self.preprocessor.lookback:i].values)
+            y_train.append(train_df.iloc[i]['close'])
+        X_train, y_train = np.array(X_train), np.array(y_train)
+
+        # Create sequences for testing
+        X_test, y_test = [], []
+        for i in range(self.preprocessor.lookback, len(test_df)):
+            X_test.append(test_df.iloc[i-self.preprocessor.lookback:i].values)
+            y_test.append(test_df.iloc[i]['close'])
+        X_test, y_test = np.array(X_test), np.array(y_test)
 
         print(f"Training data shape: {X_train.shape}")
         print(f"Test data shape: {X_test.shape}")
