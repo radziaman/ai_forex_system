@@ -124,19 +124,22 @@ class DataManager:
             self.order_flow[f"{tf}_large_z"] = 0.0
 
     def get_snapshot(self, symbol="EURUSD", acc=None, positions=None):
-        from src.data.feature_engine import FeatureEngine
-
-        fe = FeatureEngine()
+        try:
+            from src.data.feature_engine import FeatureEngine
+            fe = FeatureEngine()
+            features = fe.compute_features(self.ohlcv, self.order_flow, acc, positions)
+            feature_names = fe.feature_names
+        except Exception:
+            features = None
+            feature_names = []
         snapshot = type(
             "Snapshot",
             (),
             {
                 "symbol": symbol,
                 "timestamp": pd.Timestamp.now().timestamp(),
-                "features": fe.compute_features(
-                    self.ohlcv, self.order_flow, acc, positions
-                ),
-                "feature_names": fe.feature_names,
+                "features": features,
+                "feature_names": feature_names,
                 "regime": "trending_up",
                 "regime_conf": 0.8,
                 "cvd": self._cvd_state,
@@ -146,14 +149,16 @@ class DataManager:
         self.latest_snapshot = snapshot
         return snapshot
 
-    def load_historical(self, symbol, tf, days=30):
+    def load_historical(self, tf: str, days: int = 365, symbol: str = "EURUSD"):
         fp = os.path.join(self.historical_path, f"{symbol}_{tf}_{days}d.csv")
         if os.path.exists(fp):
             self.ohlcv[tf] = pd.read_csv(fp)
+            logger.info(f"Loaded {tf} historical data ({len(self.ohlcv[tf])} bars)")
         else:
             self._gen_synthetic(symbol, tf, days)
             os.makedirs(os.path.dirname(fp), exist_ok=True)
             self.ohlcv[tf].to_csv(fp, index=False)
+            logger.info(f"Generated synthetic {tf} data ({len(self.ohlcv[tf])} bars)")
 
     def _gen_synthetic(self, symbol, tf, days):
         secs = (

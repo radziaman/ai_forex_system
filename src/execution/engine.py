@@ -3,6 +3,7 @@ import json
 from loguru import logger
 from typing import Optional, Dict, List
 from dataclasses import dataclass, field
+from api.ctrader_client import TradeOrder
 
 
 @dataclass
@@ -84,12 +85,11 @@ class ExecutionEngine:
         return None
 
     def _simulate_open(self, symbol, direction, volume, sl, tp, reason):
-        snapshot = self.data.latest_snapshot
-        price = (
-            snapshot.bid
-            if direction == "SELL"
-            else snapshot.ask if snapshot else 1.1200
-        )
+        snapshot = self.data.latest_snapshot if self.data else None
+        if snapshot and hasattr(snapshot, "bid"):
+            price = snapshot.bid if direction == "SELL" else snapshot.ask
+        else:
+            price = 1.1200
         self._position_counter += 1
         trade = TradeRecord(
             timestamp=time.time(),
@@ -145,12 +145,11 @@ class ExecutionEngine:
         return False
 
     def _simulate_close(self, trade, reason):
-        snapshot = self.data.latest_snapshot
-        exit_price = (
-            snapshot.bid
-            if trade.direction == "BUY"
-            else snapshot.ask if snapshot else trade.entry_price
-        )
+        snapshot = self.data.latest_snapshot if self.data else None
+        if snapshot and hasattr(snapshot, "bid"):
+            exit_price = snapshot.bid if trade.direction == "BUY" else snapshot.ask
+        else:
+            exit_price = trade.entry_price
         pnl = self._calculate_pnl(trade, exit_price)
         trade.exit_price = exit_price
         trade.pnl = pnl
@@ -218,6 +217,9 @@ class ExecutionEngine:
         }
 
     def get_open_positions(self):
+        snap_price = None
+        if self.data and self.data.latest_snapshot and hasattr(self.data.latest_snapshot, "bid"):
+            snap_price = self.data.latest_snapshot.bid
         return [
             {
                 "position_id": t.position_id,
@@ -227,14 +229,7 @@ class ExecutionEngine:
                 "entry_price": t.entry_price,
                 "sl": t.sl,
                 "tp": t.tp,
-                "unrealized_pnl": self._calculate_pnl(
-                    t,
-                    (
-                        self.data.latest_snapshot.bid
-                        if self.data.latest_snapshot
-                        else t.entry_price
-                    ),
-                ),
+                "unrealized_pnl": self._calculate_pnl(t, snap_price or t.entry_price),
             }
             for t in self.open_positions.values()
         ]

@@ -108,14 +108,19 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     df["stoch_k"] = (df["close"] - low14) / (high14 - low14).replace(0, 1) * 100
     df["stoch_d"] = df["stoch_k"].rolling(3).mean()
 
-    # Time features
-    if hasattr(df.index, "hour"):
+    # Time features — handle both DatetimeIndex and timestamp columns
+    if not isinstance(df.index, pd.DatetimeIndex):
+        if "timestamp" in df.columns:
+            dt_series = pd.to_datetime(df["timestamp"], unit="s")
+            df["hour"] = dt_series.dt.hour
+            df["day_of_week"] = dt_series.dt.dayofweek
+            df["month"] = dt_series.dt.month
+            df["quarter"] = dt_series.dt.quarter
+    else:
         df["hour"] = df.index.hour
-    if hasattr(df.index, "dayofweek"):
         df["day_of_week"] = df.index.dayofweek
-    if hasattr(df.index, "month"):
         df["month"] = df.index.month
-    df["quarter"] = df.index.quarter if hasattr(df.index, "quarter") else df["month"] // 4
+        df["quarter"] = df.index.quarter
 
     df = apply_cyclical_encoding(df)
 

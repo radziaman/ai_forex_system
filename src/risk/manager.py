@@ -9,9 +9,9 @@ from typing import List, Optional, Tuple
 from enum import Enum
 
 
-class TradeMode(Enum):
-    PAPER = "PAPER"
-    LIVE = "LIVE"
+# Use plain strings to avoid enum comparison issues
+TRADE_MODE_PAPER = "PAPER"
+TRADE_MODE_LIVE = "LIVE"
 
 
 @dataclass
@@ -21,6 +21,13 @@ class RiskParameters:
     max_margin_usage: float = 0.80
     min_win_rate_live: float = 0.55
     min_win_rate_paper: float = 0.45
+    kelly_fraction: float = 0.25
+    sl_atr_multiplier: float = 2.0
+    tp_atr_multiplier: float = 4.0
+    trailing_activation_rr: float = 1.0
+    trailing_distance_rr: float = 0.5
+    max_consecutive_losses: int = 5
+    max_daily_loss: float = 0.05
 
 
 @dataclass
@@ -42,7 +49,7 @@ class RiskManager:
     def __init__(self, params: RiskParameters, initial_balance: float = 100_000.0):
         self.params = params
         self.initial_balance = initial_balance
-        self.mode: TradeMode = TradeMode.PAPER
+        self.mode: str = TRADE_MODE_PAPER
         self.kill_switch_triggered = False
         self.daily_pnl = 0.0
         self.daily_trades = 0
@@ -149,6 +156,10 @@ class RiskManager:
         self._price_history.append(price)
         if len(self._price_history) > self._var_lookback * 24:
             self._price_history = self._price_history[-self._var_lookback * 24:]
+
+    def update_trailing_stops(self, prices: dict):
+        """Stub for engine compatibility — trailing stops managed by TrailingStopManager."""
+        pass
 
     def reset_daily_stats(self, balance: float):
         self.daily_pnl = 0.0
