@@ -1,6 +1,6 @@
 """
 Live Trading with cTrader Integration
-Connects the AI Forex Trading System to cTrader (IC Markets).
+Connects the RTS - AI FX Trading System to cTrader (IC Markets).
 """
 
 import json
@@ -10,8 +10,8 @@ from pathlib import Path
 # Add src to path (go up one level from scripts/ to project root, then to src/)
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from ai_forex_system.trader import AITrader
-from ai_forex_system.data import DataFetcher
+from rts_ai_fx.trader import AITrader
+from rts_ai_fx.data import DataFetcher
 import tensorflow as tf
 
 
@@ -31,7 +31,7 @@ def load_ctrader_config():
 
 def main():
     print("=" * 60)
-    print("AI Forex Trading System - Live Trading (cTrader)")
+    print("RTS - AI FX Trading System - Live Trading (cTrader)")
     print("=" * 60 + "\n")
 
     # Load config

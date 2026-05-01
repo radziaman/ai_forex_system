@@ -8,9 +8,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from ai_forex_system.features import FeatureEngineer
+from rts_ai_fx.features import FeatureEngineer
 
-from ai_forex_system.features import FeatureEngineer
+from rts_ai_fx.features import FeatureEngineer
 
 
 class TestFeatureEngineer:

@@ -5,7 +5,7 @@ from typing import Dict, List
 import json
 from datetime import datetime
 
-from ai_forex_system.trader import AITrader
+from rts_ai_fx.trader import AITrader
 
 
 class TradingDashboard:

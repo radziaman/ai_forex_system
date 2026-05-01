@@ -5,7 +5,7 @@
 1. **Create cTrader App**:
    - Go to https://connect.ctrader.com/
    - Click "Create App"
-   - Name: `AI Forex Trading System`
+   - Name: `RTS - AI FX Trading System`
    - Redirect URI: `http://localhost:8080`
    - Save `App ID` and `App Secret`
 

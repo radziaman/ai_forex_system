@@ -4,7 +4,7 @@ import numpy as np
 import sys
 from pathlib import Path
 
-from ai_forex_system.model import LSTMCNNHybrid, ProfitabilityClassifier
+from rts_ai_fx.model import LSTMCNNHybrid, ProfitabilityClassifier
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 

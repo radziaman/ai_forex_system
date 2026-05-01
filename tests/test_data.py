@@ -8,10 +8,10 @@ from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from ai_forex_system.data import DataFetcher, DataPreprocessor
+from rts_ai_fx.data import DataFetcher, DataPreprocessor
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-from ai_forex_system.data import DataFetcher, DataPreprocessor
+from rts_ai_fx.data import DataFetcher, DataPreprocessor
 
 
 class TestDataFetcher:

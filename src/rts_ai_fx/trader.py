@@ -5,10 +5,10 @@ from typing import List, Dict, Optional
 from datetime import datetime
 import sys
 
-from ai_forex_system.data import DataFetcher, DataPreprocessor
-from ai_forex_system.features import FeatureEngineer
-from ai_forex_system.model import LSTMCNNHybrid, ProfitabilityClassifier
-from ai_forex_system.risk import RiskManager, TrailingStopManager
+from rts_ai_fx.data import DataFetcher, DataPreprocessor
+from rts_ai_fx.features import FeatureEngineer
+from rts_ai_fx.model import LSTMCNNHybrid, ProfitabilityClassifier
+from rts_ai_fx.risk import RiskManager, TrailingStopManager
 
 sys.path.append("..")
 

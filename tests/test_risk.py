@@ -5,9 +5,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from ai_forex_system.risk import RiskManager, TrailingStopManager
+from rts_ai_fx.risk import RiskManager, TrailingStopManager
 
-from ai_forex_system.risk import RiskManager, TrailingStopManager
+from rts_ai_fx.risk import RiskManager, TrailingStopManager
 
 
 class TestRiskManager:

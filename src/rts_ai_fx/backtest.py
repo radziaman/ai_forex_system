@@ -6,7 +6,7 @@ from typing import Dict
 import numpy as np
 import pandas as pd
 
-from ai_forex_system.risk import RiskManager
+from rts_ai_fx.risk import RiskManager
 
 sys.path.append("..")
 

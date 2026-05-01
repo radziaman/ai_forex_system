@@ -1,5 +1,5 @@
 """
-Dashboard for AI Forex Trading System v3.0
+Dashboard for RTS - AI FX Trading System v3.0
 Provides real-time monitoring via FastAPI and WebSockets.
 Integrates with cTrader (IC Markets) - macOS compatible SSL solution.
 """
@@ -16,7 +16,7 @@ from starlette.requests import Request
 from loguru import logger
 from typing import List, Dict, Any, Optional
 
-app = FastAPI(title="AI Forex Trading System Dashboard", version="3.0")
+app = FastAPI(title="RTS - AI FX Trading System Dashboard", version="3.0")
 
 connected_clients: List[WebSocket] = []
 

@@ -10,8 +10,8 @@ from datetime import datetime
 # 添加src到路径
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from ai_forex_system.data import DataFetcher
-from ai_forex_system.features import FeatureEngineer
+from rts_ai_fx.data import DataFetcher
+from rts_ai_fx.features import FeatureEngineer
 import tensorflow as tf
 
 

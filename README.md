@@ -1,6 +1,6 @@
-# AI Forex Trading System v3.0
+# RTS - AI FX Trading System v3.0
 
-Advanced AI-powered Forex trading system implementing **LSTM-CNN hybrid architecture** based on research of top-performing systems (Sentinel AI, Zenox EA, Aurum AI).
+Advanced AI-powered FX trading system implementing **LSTM-CNN hybrid architecture** based on research of top-performing systems (Sentinel AI, Zenox EA, Aurum AI).
 
 ## ✅ NEW: cTrader IC Markets Integration (macOS Compatible)
 
@@ -143,7 +143,7 @@ make check         # Run all checks
 ## Project Structure
 
 ```
-src/ai_forex_system/
+src/rts_ai_fx/
 ├── features.py      # 51+ feature engineering
 ├── model.py         # LSTM-CNN hybrid architecture
 ├── risk.py          # Risk management & position sizing

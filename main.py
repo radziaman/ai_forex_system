@@ -1,15 +1,15 @@
-"""Main entry point for AI Forex Trading System"""
+"""Main entry point for RTS - AI FX Trading System"""
 
 import argparse
 import sys
 from pathlib import Path
 
 import tensorflow as tf
-from ai_forex_system.backtest import BacktestEngine
-from ai_forex_system.dashboard import TradingDashboard
-from ai_forex_system.data import DataFetcher
-from ai_forex_system.features import FeatureEngineer
-from ai_forex_system.trader import AITrader
+from rts_ai_fx.backtest import BacktestEngine
+from rts_ai_fx.dashboard import TradingDashboard
+from rts_ai_fx.data import DataFetcher
+from rts_ai_fx.features import FeatureEngineer
+from rts_ai_fx.trader import AITrader
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
@@ -104,7 +104,7 @@ def run_live(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="AI Forex Trading System")
+    parser = argparse.ArgumentParser(description="RTS - AI FX Trading System")
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
     train_parser = subparsers.add_parser("train", help="Train the model")

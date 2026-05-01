@@ -1,9 +1,9 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="ai_forex_system",
+    name="rts_ai_fx_trading",
     version="3.0",
-    description="AI-powered Forex trading system with ML and risk management",
+    description="RTS - AI FX Trading System with ML and risk management",
     package_dir={"": "src"},
     packages=find_packages(where="src"),
     python_requires=">=3.9",
