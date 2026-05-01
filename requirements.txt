@@ -12,6 +12,7 @@ twisted>=24.3.0
 service-identity>=24.2.0
 requests>=2.32.0
 aiohttp>=3.9.0
+cloudscraper>=1.2.71
 hmmlearn>=0.3.0
 fastapi>=0.128.0
 uvicorn>=0.39.0
