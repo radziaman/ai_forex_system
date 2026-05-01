@@ -100,17 +100,7 @@ def create_execution_provider(secrets: Secrets) -> Tuple[ExecutionProvider, Opti
     """
     provider = secrets.provider
 
-    if provider == "oanda":
-        logger.info("Provider: OANDA v20 API")
-        from api.oanda_client import OandaExecutionProvider
-        client = OandaExecutionProvider(
-            api_key=secrets.oanda_api_key,
-            account_id=secrets.oanda_account_id,
-            practice=secrets.oanda_practice,
-        )
-        return client, client  # OANDA handles both execution and data
-
-    elif provider == "dukascopy":
+    if provider == "dukascopy":
         logger.info("Provider: Dukascopy data + cTrader execution")
         from data.dukascopy_provider import DukascopyDataProvider
         data_provider = DukascopyDataProvider()

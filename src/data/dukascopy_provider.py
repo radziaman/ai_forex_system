@@ -217,5 +217,5 @@ class DukascopyDataProvider(DataProvider):
     async def stream_prices(self, symbols: List[str], callback: Callable):
         raise NotImplementedError(
             "Dukascopy does not provide free real-time streaming. "
-            "Use the OANDA client or cTrader client for live prices."
+            "Use the cTrader client for live prices."
         )

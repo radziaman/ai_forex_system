@@ -182,7 +182,7 @@ class RTSForexBot:
                 await asyncio.sleep(5.0)
 
     async def _load_historical_data(self):
-        # Try the dedicated data provider first (Dukascopy or OANDA)
+        # Try the dedicated data provider first (Dukascopy)
         if self.data_provider is not None:
             try:
                 symbols = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD"]
