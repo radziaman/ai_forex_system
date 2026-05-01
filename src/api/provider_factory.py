@@ -101,26 +101,6 @@ def create_execution_provider(secrets: Secrets) -> Tuple[ExecutionProvider, Opti
         from data.dukascopy_provider import DukascopyDataProvider
         return CtraderExecutionAdapter(secrets), DukascopyDataProvider()
 
-    elif provider == "ibkr":
-        logger.info("Provider: Interactive Brokers (ib_insync)")
-        from api.ib_provider import IBExecutionProvider
-        client = IBExecutionProvider(
-            host=secrets.ibkr_host,
-            port=secrets.ibkr_port,
-            client_id=secrets.ibkr_client_id,
-        )
-        return client, client
-
-    elif provider == "fxcm":
-        logger.info("Provider: FXCM REST API")
-        from api.fxcm_provider import FXCMExecutionProvider
-        client = FXCMExecutionProvider(
-            access_token=secrets.fxcm_token,
-            account_id=secrets.fxcm_account_id,
-            demo=secrets.fxcm_demo,
-        )
-        return client, client
-
     elif provider == "lmax":
         logger.info("Provider: LMAX Global REST API")
         from api.lmax_provider import LMAXExecutionProvider

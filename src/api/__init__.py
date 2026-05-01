@@ -9,8 +9,6 @@ from api.base import (
     AccountInfo, OrderRequest, OrderResult,
     PriceTick, Position, OHLCV,
 )
-from api.ib_provider import IBExecutionProvider
-from api.fxcm_provider import FXCMExecutionProvider
 from api.lmax_provider import LMAXExecutionProvider
 
 __all__ = [
@@ -19,5 +17,5 @@ __all__ = [
     "ExecutionProvider", "DataProvider",
     "AccountInfo", "OrderRequest", "OrderResult",
     "PriceTick", "Position", "OHLCV",
-    "IBExecutionProvider", "FXCMExecutionProvider", "LMAXExecutionProvider",
+    "LMAXExecutionProvider",
 ]
