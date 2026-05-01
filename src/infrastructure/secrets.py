@@ -67,15 +67,30 @@ class Secrets:
     def is_demo(self) -> bool:
         return os.getenv("CTRADER_DEMO", "true").lower() == "true"
 
+    @property
+    def oanda_api_key(self) -> str:
+        return os.getenv("OANDA_API_KEY", "")
+
+    @property
+    def oanda_account_id(self) -> str:
+        return os.getenv("OANDA_ACCOUNT_ID", "")
+
+    @property
+    def oanda_practice(self) -> bool:
+        return os.getenv("OANDA_PRACTICE", "true").lower() == "true"
+
+    @property
+    def provider(self) -> str:
+        return os.getenv("TRADING_PROVIDER", "ctrader").lower()
+
     def validate(self) -> list:
-        """Return list of missing critical secrets."""
         missing = []
-        if not self.ctrader_app_id:
-            missing.append("CTRADER_APP_ID")
-        if not self.ctrader_app_secret:
-            missing.append("CTRADER_APP_SECRET")
-        if not self.ctrader_access_token:
-            missing.append("CTRADER_ACCESS_TOKEN")
-        if not self.ctrader_account_id:
-            missing.append("CTRADER_ACCOUNT_ID")
+        provider = self.provider
+        if provider == "ctrader":
+            if not self.ctrader_app_id: missing.append("CTRADER_APP_ID")
+            if not self.ctrader_app_secret: missing.append("CTRADER_APP_SECRET")
+            if not self.ctrader_account_id: missing.append("CTRADER_ACCOUNT_ID")
+        elif provider == "oanda":
+            if not self.oanda_api_key: missing.append("OANDA_API_KEY")
+            if not self.oanda_account_id: missing.append("OANDA_ACCOUNT_ID")
         return missing

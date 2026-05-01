@@ -16,10 +16,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from infrastructure.config import Config
 from infrastructure.secrets import Secrets
-from risk.manager import RiskManager, RiskParameters, TrailingStopManager, TRADE_MODE_PAPER
+from risk.manager import RiskManager, RiskParameters, TrailingStopManager
 from execution.engine import ExecutionEngine
 from execution.cost_model import CostModel
-from api.ctrader_client import CtraderClient, MarketDepth
+from api.base import PriceTick
+from api.provider_factory import create_execution_provider
 from rts_ai_fx.features_unified import FeaturePipeline
 from rts_ai_fx.regime_detector import HMMRegimeDetector
 from rts_ai_fx.ensemble import MoEEnsemble
@@ -70,14 +71,10 @@ class RTSForexBot:
         logger.info("=" * 60)
 
     def _init_ctrader(self):
-        self.ctrader = CtraderClient(
-            app_id=self.secrets.ctrader_app_id,
-            app_secret=self.secrets.ctrader_app_secret,
-            access_token=self.secrets.ctrader_access_token,
-            account_id=self.secrets.ctrader_account_id,
-            demo=self.secrets.is_demo,
-        )
-        self.ctrader.on_market_data = self._on_market_data
+        self.execution, self.data_provider = create_execution_provider(self.secrets)
+        self.execution.on_price = self._on_market_data
+        # For backward compatibility, expose as self.ctrader
+        self.ctrader = getattr(self.execution, 'raw', self.execution)
 
     def _init_risk(self):
         params = RiskParameters(
@@ -161,7 +158,14 @@ class RTSForexBot:
         self.feature_pipeline.fit(self.data_manager.ohlcv)
         logger.info("Feature pipeline fitted")
 
-        # Start dashboard
+        # Start WebSocket streaming if available
+        if hasattr(self.execution, 'stream_prices'):
+            symbols = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD"]
+            try:
+                await self.execution.stream_prices(symbols)
+            except NotImplementedError:
+                pass
+
         self._start_dashboard()
 
         self.is_running = True
@@ -178,9 +182,31 @@ class RTSForexBot:
                 await asyncio.sleep(5.0)
 
     async def _load_historical_data(self):
+        # Try the dedicated data provider first (Dukascopy or OANDA)
+        if self.data_provider is not None:
+            try:
+                symbols = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD"]
+                for sym in symbols:
+                    ohlcv = await self.data_provider.fetch_ohlcv(
+                        sym, "1h", "2025-06-01", "2026-03-31"
+                    )
+                    if ohlcv:
+                        df = pd.DataFrame([{
+                            "timestamp": o.timestamp, "open": o.open, "high": o.high,
+                            "low": o.low, "close": o.close, "volume": o.volume,
+                        } for o in ohlcv])
+                        if len(df) > 100:
+                            self.data_manager.ohlcv["1h"] = df
+                            logger.info(f"Loaded {len(df)} 1h bars for {sym} via data provider")
+                            break
+            except Exception as e:
+                logger.warning(f"Data provider failed, using fallback: {e}")
+
+        # Fallback to synthetic data
         for tf in ["1h", "4h", "1d"]:
-            logger.info(f"Loading {tf} data...")
-            self.data_manager.load_historical(tf, days=365)
+            if tf not in self.data_manager.ohlcv or len(self.data_manager.ohlcv[tf]) < 100:
+                logger.info(f"Generating {tf} data...")
+                self.data_manager.load_historical(tf, days=365)
 
     def _start_dashboard(self):
         import threading
@@ -197,7 +223,7 @@ class RTSForexBot:
 
     async def _trading_cycle(self):
         # 1. Get market snapshot
-        snapshot = self._get_snapshot()
+        snapshot = await self._get_snapshot()
         if snapshot is None:
             return
 
@@ -277,8 +303,8 @@ class RTSForexBot:
 
         self._update_dashboard(snapshot, regime)
 
-    def _get_snapshot(self) -> Optional[Dict[str, Any]]:
-        acc = self.ctrader.get_account_info()
+    async def _get_snapshot(self) -> Optional[Dict[str, Any]]:
+        acc = await self.execution.get_account_info()
         if acc is None:
             return None
         positions = self.execution.get_open_positions()
@@ -308,8 +334,8 @@ class RTSForexBot:
             "symbol": "EURUSD",
         }
 
-    def _on_market_data(self, depth: MarketDepth):
-        self.data_manager.update_tick(depth.symbol, depth.bid, depth.ask, depth.volume)
+    def _on_market_data(self, tick: PriceTick):
+        self.data_manager.update_tick(tick.symbol, tick.bid, tick.ask, tick.volume)
 
     def _send_alert(self, message: str):
         logger.info(f"[ALERT] {message}")

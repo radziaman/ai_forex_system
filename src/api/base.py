@@ -124,11 +124,10 @@ class DataProvider(ABC):
     ) -> List[OHLCV]:
         ...
 
-    @abstractmethod
     async def fetch_ticks(
         self, symbol: str, date: str,
     ) -> List[PriceTick]:
-        ...
+        raise NotImplementedError(f"{type(self).__name__} does not support tick data")
 
     @abstractmethod
     async def stream_prices(self, symbols: List[str], callback: Callable):

@@ -5,7 +5,7 @@ Loads from config.yaml, then overrides with environment variables.
 import os
 import yaml
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List
 from .secrets import Secrets
 
 
@@ -92,6 +92,10 @@ class Config:
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     secrets: Secrets = field(default_factory=Secrets)
     config_path: str = "config.yaml"
+
+    @property
+    def provider(self) -> str:
+        return self.secrets.provider
 
     def __post_init__(self):
         self._load_yaml()

@@ -198,8 +198,8 @@ class ExecutionEngine:
         elif result.status == "REJECTED":
             logger.error(f"Order rejected: {result.error}")
 
-    def get_account_info(self):
-        acc = self.client.get_account_info()
+    async def get_account_info(self):
+        acc = await self.client.get_account_info() if hasattr(self.client, 'get_account_info') and callable(self.client.get_account_info) else self.client.get_account_info()
         if acc:
             return {
                 "balance": acc.balance,

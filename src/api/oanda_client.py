@@ -12,7 +12,7 @@ from typing import Optional, List, Dict, Callable
 import requests
 
 from .base import (
-    ExecutionProvider, AccountInfo, OrderRequest,
+    ExecutionProvider, DataProvider, AccountInfo, OrderRequest,
     OrderResult, PriceTick, Position, OHLCV,
 )
 
@@ -52,7 +52,7 @@ def _parse_datetime(dt_str: str) -> float:
     return datetime.fromisoformat(dt_str.replace("Z", "+00:00")).timestamp()
 
 
-class OandaExecutionProvider(ExecutionProvider):
+class OandaExecutionProvider(ExecutionProvider, DataProvider):
     """
     OANDA v20 execution via REST API + WebSocket streaming.
 
