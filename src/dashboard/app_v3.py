@@ -146,15 +146,16 @@ async def get_status():
     }
 
 @app.get("/api/ctrader/status")
-async def get_ctrader_status():
-    """Get cTrader connection status."""
+async def ctrader_status():
+    """Check cTrader connection status."""
+    has_token = bool(os.getenv("CTRADER_ACCESS_TOKEN"))
     return {
-        "connected": ctrader_available,
-        "macos_compatible": True,
-        "ssl_status": "✓ Works on macOS (LibreSSL 2.8.3)",
-        "solution": "Standard ssl + length-prefixed protobuf",
-        "next_step": "Complete OAuth flow to get valid access token",
-        "instructions_url": "https://id.ctrader.com/my/settings/openapi/grantingaccess/"
+        "status": "connected" if ctrader and ctrader.sock else "disconnected",
+        "last_error": ctrader.last_error if ctrader else None,
+        "connection_status": ctrader.connection_status if ctrader else "not_initialized",
+        "has_token": has_token,
+        "token_status": "valid" if has_token else "missing",
+        "oauth_url": "https://id.ctrader.com/my/settings/openapi/grantingaccess/?client_id=15217_h8WxunXX70m6O6qsnIx9ZO3GZraTdO0wnLjL3dTKyYG6fkbUca&redirect_uri=https://spotware.com&scope=trading&product=web" if not has_token else None
     }
 
 @app.websocket("/ws")

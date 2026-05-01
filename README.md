@@ -11,6 +11,21 @@ Advanced AI-powered FX trading system implementing **LSTM-CNN hybrid architectur
 - **Next Step**: Complete OAuth flow to get trading data
 
 ### Quick Start:
+
+#### Automated Setup (Recommended):
+```bash
+# 1. Activate virtual environment
+source venv/bin/activate
+
+# 2. Run OAuth helper (opens browser for authorization)
+python scripts/oauth_helper.py
+
+# 3. Token will be saved to .env automatically
+# 4. Run the solution
+python src/api/ctrader_env.py
+```
+
+#### Manual Setup:
 1. **Complete OAuth flow** (get valid access token):
    ```bash
    # Open in browser:
@@ -26,10 +41,16 @@ Advanced AI-powered FX trading system implementing **LSTM-CNN hybrid architectur
    curl -X GET 'https://openapi.ctrader.com/apps/token?grant_type=authorization_code&code=YOUR_CODE&redirect_uri=https://spotware.com&client_id=15217_h8WxunXX70m6O6qsnIx9ZO3GZraTdO0wnLjL3dTKyYG6fkbUca&client_secret=Zb8tEW4Axzq0AJqCNS8ubniYzsgp2kxuRkYBRD9XXOcLAj5aOT' -H 'Accept: application/json'
    ```
 
-3. **Run the solution**:
+3. **Set environment variables**:
+   ```bash
+   export CTRADER_ACCESS_TOKEN="your_access_token"
+   export CTRADER_REFRESH_TOKEN="your_refresh_token"
+   ```
+
+4. **Run the solution**:
    ```bash
    source venv/bin/activate
-   python src/api/ctrader_ready.py
+   python src/api/ctrader_env.py
    ```
 
 ### Files Created:
