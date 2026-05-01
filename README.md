@@ -1,194 +1,175 @@
-# RTS - AI FX Trading System v3.0
+# RTS AI Forex Trading System v4.0 (Elite)
 
-Advanced AI-powered FX trading system implementing **LSTM-CNN hybrid architecture** based on research of top-performing systems (Sentinel AI, Zenox EA, Aurum AI).
+Multi-timeframe AI forex trading system with HMM regime detection, Monte Carlo Dropout uncertainty quantification, concept drift detection, and institutional-grade risk management.
 
-## ✅ NEW: cTrader IC Markets Integration (macOS Compatible)
+## Architecture
 
-### Status: ✅ WORKING (pending valid OAuth token)
-- **SSL Connection**: Works on macOS LibreSSL 2.8.3 → TLSv1.2 ✓
-- **Protobuf Messaging**: Length-prefixed format working ✓
-- **Application Auth**: Verified working ✓
-- **Next Step**: Complete OAuth flow to get trading data
+### AI/ML Stack
+| Component | Technology | Purpose |
+|-----------|------------|---------|
+| **PPO Reinforcement Learning** | PyTorch | Meta-controller: 5 actions (HOLD/BUY/SELL/CLOSE_ALL/MODIFY), continuous SL/TP/size outputs |
+| **LSTM-CNN Hybrid** | TensorFlow/Keras | Price regression: 30-bar lookback, 51 features, dual-branch fusion |
+| **Profitability Classifier** | TensorFlow/Keras | Direction prediction (binary) with CORRECT future-label construction |
+| **Mixture-of-Experts Ensemble** | NumPy | Regime-gated expert weighting via HMM posterior probabilities |
+| **HMM Regime Detector** | hmmlearn | 4-state (trending/ranging/volatile/crisis) — learns transitions from data |
+| **MC Dropout Uncertainty** | TensorFlow | 50 forward passes → prediction variance filters low-confidence trades |
+| **ADWIN Concept Drift** | River | Adaptive windowing — triggers retraining on distribution shifts |
 
-### Quick Start:
+### Feature Engineering
+- **Multi-timeframe**: 15m / 1h / 4h / 1d parallel processing with z-score normalization
+- **55+ features**: RSI(14,21), MACD, ATR(14,21), Bollinger Bands, ADX, Stochastic, EMA ratios, SMA distances
+- **Cyclical encoding**: sin/cos for hour/day/month (fixes integer discontinuity)
+- **Hurst exponent**: Rolling 50-bar estimate for mean-reversion vs trending
+- **Market microstructure**: CVD, bid-ask imbalance, volatility regimes
 
-#### Automated Setup (Recommended):
-```bash
-# 1. Activate virtual environment
-source venv/bin/activate
+### Risk Management
+| Feature | Implementation |
+|---------|---------------|
+| **Kelly Criterion** | Fractional (25%), adaptive win-rate tracking |
+| **ATR-based SL/TP** | Configurable multipliers (default 2.0x SL, 4.0x TP) |
+| **Value-at-Risk** | Historical simulation, 95% confidence |
+| **Conditional VaR** | Expected shortfall beyond VaR threshold |
+| **Daily drawdown** | 5% max daily loss, 10% total max drawdown |
+| **Correlation filter** | Blocks trades >0.80 correlation with open positions |
+| **Pre-trade checks** | Margin usage, consecutive losses, kill switch |
+| **Trailing stop** | 3-tier (30%/30%/40% partial close) |
 
-# 2. Run OAuth helper (opens browser for authorization)
-python scripts/oauth_helper.py
+### Cost Model
+Realistic transaction costs applied to every trade:
+- **Spread**: Variable per pair (EURUSD 0.5 pips, GBPUSD 0.8, etc.), widens in high volatility
+- **Commission**: $7/lot (IC Markets Raw Spread pricing)
+- **Slippage**: Function of trade size relative to ATR
 
-# 3. Token will be saved to .env automatically
-# 4. Run the solution
-python src/api/ctrader_env.py
-```
+### Data Sources
+- **cTrader Open API** (IC Markets): SSL+Protobuf real-time connection, async-safe IO with retry
+- **Yahoo Finance**: Historical data with caching
+- **OANDA** (optional): Real-time + historical OHLCV
 
-#### Manual Setup:
-1. **Complete OAuth flow** (get valid access token):
-   ```bash
-   # Open in browser:
-   https://id.ctrader.com/my/settings/openapi/grantingaccess/
-   ?client_id=15217_h8WxunXX70m6O6qsnIx9ZO3GZraTdO0wnLjL3dTKyYG6fkbUca
-   &redirect_uri=https://spotware.com,
-   &scope=trading,
-   &product=web
-   ```
+## Quick Start
 
-2. **Exchange code for tokens**:
-   ```bash
-   curl -X GET 'https://openapi.ctrader.com/apps/token?grant_type=authorization_code&code=YOUR_CODE&redirect_uri=https://spotware.com&client_id=15217_h8WxunXX70m6O6qsnIx9ZO3GZraTdO0wnLjL3dTKyYG6fkbUca&client_secret=Zb8tEW4Axzq0AJqCNS8ubniYzsgp2kxuRkYBRD9XXOcLAj5aOT' -H 'Accept: application/json'
-   ```
-
-3. **Set environment variables**:
-   ```bash
-   export CTRADER_ACCESS_TOKEN="your_access_token"
-   export CTRADER_REFRESH_TOKEN="your_refresh_token"
-   ```
-
-4. **Run the solution**:
-   ```bash
-   source venv/bin/activate
-   python src/api/ctrader_env.py
-   ```
-
-### Files Created:
-- `src/api/ctrader_ready.py` - Main working solution
-- `src/api/ctrader_solution.py` - Alternative approach
-- `docs/ctrader_macos_solution.md` - Full documentation
-- `tests/test_ctrader_ssl.py` - Automated tests
-
-### Key Achievement:
-Bypasses Twisted/pyOpenSSL incompatibility with macOS LibreSSL 2.8.3 by using:
-- Standard Python `ssl` module (verified working)
-- Length-prefixed protobuf messages (4-byte header + payload)
-- Correct cTrader payload types (2149 for account list)
-
----
-
-### Core AI Architecture (Based on Top Performers)
-- **LSTM-CNN Hybrid Model** (Aurum AI architecture)
-  - LSTM branch: Captures temporal dependencies (30 bars)
-  - CNN branch: Extracts local patterns from feature matrix
-  - Fusion layer: Combines both for price prediction
-- **Profitability Classifier**: Secondary network for trade confidence scoring
-- **25-year training capability** (like Zenox EA) with reinforcement learning
-- **Out-of-sample validation** (Aurum AI methodology)
-
-### 51+ Engineered Features
-- **Price dynamics**: body_size, shadows, range
-- **Momentum indicators**: RSI (14,21), MACD, momentum (3,5), ROC
-- **Volatility features**: ATR (14,21), Yang-Zhang volatility, Garman-Klass
-- **Trend indicators**: EMA (20,50,100,200), ADX, trend strength
-- **Market regime**: Volatility regime, trend regime, crisis filter
-- **Time features**: Hour, day of week, London/NY/Tokyo sessions
-- **Cross-asset**: Gold correlation, USDX correlation
-
-### Risk Management (Zenox EA Approach)
-- **No martingale/grid** - Predefined SL/TP on every trade
-- **Dynamic position sizing**: Kelly Criterion or volatility-based
-- **ATR-based SL/TP**: Adaptive to market conditions
-- **Correlation filtering**: Blocks correlated pairs (>0.80)
-- **Daily drawdown protection**: Configurable limits
-- **3-tier trailing stop**: Partial closes at 30%/30%/40%
-
-### Multi-Pair Trading
-- Trade 16+ pairs simultaneously (like Zenox EA)
-- Single chart setup with portfolio context
-- Real-time correlation monitoring
-
-## Branches
-
-- `main` - Stable release branch
-- `develop` - Development branch (active)
-- `production` - Live production branch
-- `gh-pages` - GitHub Pages dashboard
-
-## Installation
-
-```bash
-# Create virtual environment
-make setup
-# or manually:
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
-
-## Usage
-
-### Train Model
-```bash
-python main.py train --symbol EURUSD=X --timeframe 1h --start-date 2015-01-01
-```
-
-### Run Backtest (with Out-of-Sample Validation)
-```bash
-python main.py backtest --symbol EURUSD=X --initial-balance 10000
-```
-
-### Live Trading (Simulation)
-```bash
-python main.py live --initial-balance 10000
-```
-
-### Jupyter Analysis
-```bash
-jupyter lab notebooks/analysis.ipynb
-```
-
-## Development Commands
-
-```bash
-make test          # Run tests
-make lint          # Lint code
-make format        # Format code
-make check         # Run all checks
-```
-
-## Performance Targets (Based on Research)
-
-| System | Monthly Return | Win Rate | Max Drawdown | Track Record |
-|--------|---------------|----------|---------------|--------------|
-| Sentinel AI | 2.05% | ~70% | 29% | 7+ years |
-| Zenox EA | ~5-10% | 82% | 21% | 25-year backtest |
-| Aurum AI | ~5% | ~70% | 8.35% | Verified on MyFxBook |
-
-## Requirements
-
+### Prerequisites
 - Python 3.9+
-- TensorFlow 2.15+ (for LSTM-CNN model)
-- See `requirements.txt` for all dependencies
+- Docker (optional, for containerized deployment)
+
+### Local Setup
+```bash
+# Clone and setup
+git clone https://github.com/radziaman/ai_forex_system.git
+cd ai_forex_system
+
+# Create environment
+make setup
+source venv/bin/activate
+
+# Configure credentials (see .env.example)
+cp .env.example .env
+# Edit .env with your cTrader credentials
+
+# Install
+pip install -r requirements.txt
+
+# Run
+python -m src.main
+```
+
+### Docker Setup
+```bash
+cp .env.example .env
+# Edit .env with your credentials
+docker compose up -d
+```
+
+### OAuth for cTrader
+1. Visit: `https://id.ctrader.com/my/settings/openapi/grantingaccess/?client_id=YOUR_APP_ID&redirect_uri=https://spotware.com&scope=trading&product=web`
+2. Copy the authorization code from redirect URL
+3. Exchange for tokens:
+```bash
+curl -X GET "https://openapi.ctrader.com/apps/token?grant_type=authorization_code&code=YOUR_CODE&redirect_uri=https://spotware.com&client_id=YOUR_APP_ID&client_secret=YOUR_SECRET"
+```
+4. Add `CTRADER_ACCESS_TOKEN` and `CTRADER_REFRESH_TOKEN` to `.env`
 
 ## Project Structure
-
 ```
-src/rts_ai_fx/
-├── features.py      # 51+ feature engineering
-├── model.py         # LSTM-CNN hybrid architecture
-├── risk.py          # Risk management & position sizing
-├── data.py          # Data fetching (yfinance/ccxt)
-├── backtest.py      # Backtesting with out-of-sample validation
-├── trader.py        # Main trading bot
-└── dashboard.py     # Real-time monitoring
-tests/              # Comprehensive test suite
-notebooks/          # Jupyter analysis notebooks
+src/
+├── main.py                      # Entry point: async trading loop
+├── api/
+│   ├── ctrader_client.py        # Async-safe SSL+Protobuf client with retry
+│   ├── ctrader_icmarkets.py     # Dashboard integration client
+│   └── ctrader_env.py           # Environment-variable-based client
+├── risk/
+│   └── manager.py               # Kelly sizing, VaR/CVaR, pre-trade checks, stress tests
+├── execution/
+│   ├── engine.py                # Order execution with lifecycle tracking
+│   └── cost_model.py            # Spread + commission + slippage per trade
+├── rts_ai_fx/
+│   ├── model.py                 # LSTM-CNN Hybrid + ProfitabilityClassifier (fixed labels)
+│   ├── features_unified.py      # Multi-timeframe feature pipeline (55+ features)
+│   ├── regime_detector.py       # HMM-based 4-state regime detector
+│   ├── ensemble.py              # Mixture-of-Experts with HMM gating
+│   ├── uncertainty.py           # Monte Carlo Dropout quantification
+│   ├── drift_detector.py        # ADWIN concept drift monitor
+│   └── rl_agent.py              # PPO reinforcement learning agent
+├── ai/
+│   └── rl_agent.py              # PPO agent with GAE and continuous action heads
+├── data/
+│   └── data_manager.py          # Multi-timeframe tick aggregation
+├── dashboard/
+│   └── app.py                   # FastAPI + WebSocket real-time dashboard
+└── infrastructure/
+    ├── config.py                # Typed configuration (YAML + env overrides)
+    └── secrets.py               # .env-based credential management
 ```
 
-## Automation
+## Development
+```bash
+make test      # Run tests
+make lint     # Flake8 linting
+make format   # Black formatting
+make check    # All checks (lint + type-check + test)
+```
 
-- **GitHub Pages**: Auto-deploys on push to `main`/`gh-pages`
-- **CI/CD**: Multi-Python testing via GitHub Actions
-- **Pre-commit hooks**: Black, flake8, mypy for code quality
+## Deployment
+```bash
+# Docker (recommended for production)
+docker compose up -d
 
-## Research-Based Implementation
+# The dashboard is available at http://localhost:8000
+# Health check: http://localhost:8000/health
+```
 
-This system implements strategies from verified top performers:
-- Sentinel AI: Deep learning filters, ChatGPT integration
-- Zenox EA: 25-year reinforcement learning, multi-pair diversification
-- Aurum AI: LSTM-CNN hybrid, 59,000+ hours training data
+## CI/CD
+- **GitHub Actions**: Multi-Python (3.9, 3.10, 3.11) testing + linting on push
+- **GitHub Pages**: Auto-deploys dashboard to `https://radziaman.github.io/ai_forex_system/`
+- **Pre-commit**: Black, flake8, mypy enforced locally
+
+## Environment Variables
+See `.env.example` for all configuration. Never commit `.env` to git.
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `CTRADER_APP_ID` | Yes | cTrader application ID |
+| `CTRADER_APP_SECRET` | Yes | cTrader application secret |
+| `CTRADER_ACCESS_TOKEN` | Yes | OAuth2 access token |
+| `CTRADER_REFRESH_TOKEN` | For refresh | OAuth2 refresh token |
+| `CTRADER_ACCOUNT_ID` | Yes | cTrader account ID |
+| `TELEGRAM_BOT_TOKEN` | No | Telegram alerting bot token |
+| `TELEGRAM_CHAT_ID` | No | Telegram alerting chat ID |
+| `LOG_LEVEL` | No | Logging level (default: INFO) |
+
+## Performance Targets
+| Metric | Target |
+|--------|--------|
+| Sharpe Ratio | > 2.0 |
+| Win Rate | > 60% |
+| Max Drawdown | < 10% |
+| Monthly Return | 2-5% |
+| Risk per Trade | 2% (fixed fraction) |
 
 ## Disclaimer
-
 Trading involves substantial risk. This software is for educational/research purposes. Always test thoroughly on demo accounts before using real money. Past performance does not guarantee future results.
+
+## Branches
+- `main` — Stable release
+- `develop` — Active development
+- `production` — Live trading
+- `gh-pages` — Dashboard deployment
