@@ -37,8 +37,8 @@ dmypy.json
 *.log
 logs/
 
-# Forex data
-data/
+# Forex data (root level only — not src/data/)
+/data/
 *.csv
 *.parquet
 *.h5
