@@ -1,0 +1,25 @@
+{
+  "note": "To get REAL data from IC Markets cTrader, follow these steps:",
+  "steps": [
+    "1. Ensure you have completed OAuth2 flow",
+    "2. Have valid access_token with 'trading' scope",
+    "3. Use Twisted reactor for async TCP connection",
+    "4. Connect to demo.ctrader.com:5035 (demo) or live.ctrader.com:5035 (live)",
+    "5. Send ProtoOAApplicationAuthReq with clientId and clientSecret",
+    "6. Send ProtoOAAccountAuthReq with accessToken and accountId",
+    "7. Send ProtoOAGetAccountInfoReq to get REAL account balance, equity, etc."
+  ],
+  "current_credentials": {
+    "app_id": "15217_h8WxunXX70m6O6qsnIx9ZO3GZraTdO0wnLjL3dTKyYG6fkbUca",
+    "account_id": "6100830",
+    "access_token_provided": true,
+    "demo": true
+  },
+  "required_packages": {
+    "ctrader_open_api": "pip install ctrader-open-api",
+    "twisted": "pip install twisted",
+    "service_identity": "pip install service_identity"
+  },
+  "example_code_location": "scripts/setup_ctrader_oauth.py (for OAuth2)",
+  "next_step": "Run the full async client implementation with Twisted reactor"
+}

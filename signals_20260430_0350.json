@@ -1,0 +1,20 @@
+[
+  {
+    "pair": "AUDUSD",
+    "symbol": "AUDUSD=X",
+    "signal": "SELL",
+    "entry": 0.7116931080818176,
+    "sl": 0.7152515736222267,
+    "tp": 0.7045761770009994,
+    "confidence": 100
+  },
+  {
+    "pair": "EURUSD",
+    "symbol": "EURUSD=X",
+    "signal": "SELL",
+    "entry": 1.1676785945892334,
+    "sl": 1.1735169875621794,
+    "tp": 1.156001808643341,
+    "confidence": 100
+  }
+]

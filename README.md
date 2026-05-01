@@ -2,7 +2,49 @@
 
 Advanced AI-powered Forex trading system implementing **LSTM-CNN hybrid architecture** based on research of top-performing systems (Sentinel AI, Zenox EA, Aurum AI).
 
-## Features
+## ✅ NEW: cTrader IC Markets Integration (macOS Compatible)
+
+### Status: ✅ WORKING (pending valid OAuth token)
+- **SSL Connection**: Works on macOS LibreSSL 2.8.3 → TLSv1.2 ✓
+- **Protobuf Messaging**: Length-prefixed format working ✓
+- **Application Auth**: Verified working ✓
+- **Next Step**: Complete OAuth flow to get trading data
+
+### Quick Start:
+1. **Complete OAuth flow** (get valid access token):
+   ```bash
+   # Open in browser:
+   https://id.ctrader.com/my/settings/openapi/grantingaccess/
+   ?client_id=15217_h8WxunXX70m6O6qsnIx9ZO3GZraTdO0wnLjL3dTKyYG6fkbUca
+   &redirect_uri=https://spotware.com,
+   &scope=trading,
+   &product=web
+   ```
+
+2. **Exchange code for tokens**:
+   ```bash
+   curl -X GET 'https://openapi.ctrader.com/apps/token?grant_type=authorization_code&code=YOUR_CODE&redirect_uri=https://spotware.com&client_id=15217_h8WxunXX70m6O6qsnIx9ZO3GZraTdO0wnLjL3dTKyYG6fkbUca&client_secret=Zb8tEW4Axzq0AJqCNS8ubniYzsgp2kxuRkYBRD9XXOcLAj5aOT' -H 'Accept: application/json'
+   ```
+
+3. **Run the solution**:
+   ```bash
+   source venv/bin/activate
+   python src/api/ctrader_ready.py
+   ```
+
+### Files Created:
+- `src/api/ctrader_ready.py` - Main working solution
+- `src/api/ctrader_solution.py` - Alternative approach
+- `docs/ctrader_macos_solution.md` - Full documentation
+- `tests/test_ctrader_ssl.py` - Automated tests
+
+### Key Achievement:
+Bypasses Twisted/pyOpenSSL incompatibility with macOS LibreSSL 2.8.3 by using:
+- Standard Python `ssl` module (verified working)
+- Length-prefixed protobuf messages (4-byte header + payload)
+- Correct cTrader payload types (2149 for account list)
+
+---
 
 ### Core AI Architecture (Based on Top Performers)
 - **LSTM-CNN Hybrid Model** (Aurum AI architecture)

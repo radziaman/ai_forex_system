@@ -64,6 +64,14 @@ class cTraderICMarkets:
         self.ssl_socket = None
         self.tcp_socket = None
         self.authenticated = False
+        self.last_error = None
+        self.connection_status = "disconnected"
+        
+    def _set_error(self, error_msg: str):
+        """Helper to set and log errors"""
+        self.last_error = error_msg
+        logging.error(error_msg)
+        return False
         
     def connect(self) -> bool:
         """Connect using standard ssl (verified working on macOS LibreSSL)"""
