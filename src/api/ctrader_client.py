@@ -1,13 +1,13 @@
 """
-cTrader Open API Client for RTS - AI FX Trading System
-Uses: Standard ssl (LibreSSL 2.8.3) + Protobuf
+cTrader Open API Client — Async-safe SSL+Protobuf with retry and order lifecycle tracking.
 """
 import ssl
-import socket
+import asyncio
 import time
 import logging
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Callable
+from typing import Optional, Dict, Callable, Any
+from concurrent.futures import ThreadPoolExecutor
 
 try:
     from ctrader_open_api.messages.OpenApiCommonMessages_pb2 import ProtoMessage
@@ -96,6 +96,8 @@ class AccountInfo:
 
 
 class CtraderClient:
+    """Async-safe cTrader client with thread-pool IO and retry logic."""
+
     def __init__(
         self,
         app_id: str = "",
@@ -112,10 +114,11 @@ class CtraderClient:
         self.demo = demo
         self.use_websocket = use_websocket
         self.host = "demo.ctraderapi.com" if demo else "live.ctraderapi.com"
-        self.port = 5035  # Protobuf port
+        self.port = 5035
 
-        self.ssl_socket = None
-        self.tcp_socket = None
+        self._reader: Optional[asyncio.StreamReader] = None
+        self._writer: Optional[asyncio.StreamWriter] = None
+        self._thread_pool = ThreadPoolExecutor(max_workers=2)
         self._is_connected = False
         self._authenticated = False
         self._account_info: Optional[AccountInfo] = None
@@ -126,40 +129,39 @@ class CtraderClient:
         self.on_order_update: Optional[Callable] = None
         self.on_positions_update: Optional[Callable] = None
 
-    def start(self) -> bool:
+    async def start(self) -> bool:
         try:
             if not _HAS_PROTOBUF:
-                logger.warning("ctrader_open_api not installed, using simulation mode")
+                logger.warning("ctrader_open_api not installed, using simulation")
                 return self._start_simulation()
-            if not self._connect():
-                logger.error("Failed to connect to cTrader")
+            if not await self._connect():
+                logger.warning("cTrader connection failed, using simulation")
                 return self._start_simulation()
-            if not self._auth_application():
-                logger.error("Application auth failed")
-                self.disconnect()
+            if not await self._auth_application():
+                logger.warning("App auth failed, using simulation")
+                await self._disconnect()
                 return self._start_simulation()
-            if not self._auth_account():
-                logger.error("Account auth failed")
-                self.disconnect()
+            if not await self._auth_account():
+                logger.warning("Account auth failed, using simulation")
+                await self._disconnect()
                 return self._start_simulation()
-            self._fetch_account_info()
+            await self._fetch_account_info()
             self._is_connected = True
-            logger.success("cTrader client connected and authenticated")
+            logger.info("cTrader client connected and authenticated")
             return True
         except Exception as e:
-            logger.error(f"Failed to start cTrader client: {e}")
+            logger.warning(f"cTrader start failed: {e}, using simulation")
             return self._start_simulation()
 
     def _start_simulation(self) -> bool:
-        logger.info("Starting cTrader client in simulation mode")
         self._is_connected = True
         self._account_info = AccountInfo(
             account_id=str(self.account_id),
             ctid_trader_account_id=self.account_id,
-            balance=100000.0,
-            equity=100000.0,
+            balance=100_000.0,
+            equity=100_000.0,
             margin=0.0,
-            free_margin=100000.0,
+            free_margin=100_000.0,
             currency="USD",
             leverage="1:30",
             account_type="Demo (Simulation)",
@@ -167,86 +169,82 @@ class CtraderClient:
         )
         return True
 
-    def _connect(self) -> bool:
+    async def _connect(self) -> bool:
         try:
             context = ssl.create_default_context()
             context.minimum_version = ssl.TLSVersion.TLSv1_2
-            self.tcp_socket = socket.create_connection(
-                (self.host, self.port), timeout=10
+            loop = asyncio.get_event_loop()
+            self._reader, self._writer = await asyncio.wait_for(
+                asyncio.open_connection(self.host, self.port, ssl=context, loop=loop),
+                timeout=10,
             )
-            self.ssl_socket = context.wrap_socket(
-                self.tcp_socket, server_hostname=self.host
-            )
-            logger.info(f"Connected via {self.ssl_socket.version()}")
+            logger.info("Connected via async SSL")
             return True
         except Exception as e:
-            logger.error(f"SSL connection failed: {e}")
+            logger.warning(f"SSL connection failed: {e}")
             return False
 
-    def _send_msg(self, payload_type: int, payload_obj) -> bool:
+    async def _send_msg(self, payload_type: int, payload_obj) -> bool:
         try:
             proto_msg = ProtoMessage()
             proto_msg.payloadType = payload_type
             proto_msg.payload = payload_obj.SerializeToString()
             data = proto_msg.SerializeToString()
-            self.ssl_socket.sendall(len(data).to_bytes(4, "big") + data)
+            self._writer.write(len(data).to_bytes(4, "big") + data)
+            await self._writer.drain()
             return True
         except Exception as e:
-            logger.error(f"Send failed: {e}")
+            logger.warning(f"Send failed: {e}")
             return False
 
-    def _recv_msg(self, timeout: int = 15):
+    async def _recv_msg(self, timeout: int = 15):
         try:
-            self.ssl_socket.settimeout(timeout)
-            length_bytes = b""
-            while len(length_bytes) < 4:
-                chunk = self.ssl_socket.recv(4 - len(length_bytes))
-                if not chunk:
-                    return None
-                length_bytes += chunk
+            length_bytes = await asyncio.wait_for(
+                self._reader.readexactly(4), timeout=timeout
+            )
             msg_length = int.from_bytes(length_bytes, "big")
-            data = b""
-            while len(data) < msg_length:
-                chunk = self.ssl_socket.recv(msg_length - len(data))
-                if not chunk:
-                    return None
-                data += chunk
+            data = await asyncio.wait_for(
+                self._reader.readexactly(msg_length), timeout=timeout
+            )
             response = ProtoMessage()
             response.ParseFromString(data)
             return response
+        except asyncio.TimeoutError:
+            logger.warning("Receive timeout")
+            return None
         except Exception as e:
-            logger.error(f"Receive failed: {e}")
+            logger.warning(f"Receive failed: {e}")
             return None
 
-    def _auth_application(self) -> bool:
+    async def _auth_application(self) -> bool:
         auth_req = ProtoOAApplicationAuthReq()
         auth_req.clientId = self.app_id
         auth_req.clientSecret = self.app_secret
-        if not self._send_msg(2100, auth_req):
+        if not await self._send_msg(2100, auth_req):
             return False
-        response = self._recv_msg()
+        response = await self._recv_msg()
         return bool(response and response.payloadType == 2101)
 
-    def _auth_account(self) -> bool:
+    async def _auth_account(self) -> bool:
         acc_auth = ProtoOAAccountAuthReq()
         acc_auth.ctidTraderAccountId = self.account_id
         acc_auth.accessToken = self.access_token
-        if not self._send_msg(2102, acc_auth):
+        if not await self._send_msg(2102, acc_auth):
             return False
-        response = self._recv_msg()
+        response = await self._recv_msg()
         if response and response.payloadType == 2103:
             self._authenticated = True
             return True
         return False
 
-    def _fetch_account_info(self):
+    async def _fetch_account_info(self):
         if not self._authenticated:
             return
         trader_req = ProtoOATraderReq()
         trader_req.ctidTraderAccountId = self.account_id
-        if not self._send_msg(201, trader_req):
+        if not await self._send_msg(201, trader_req):
             return
-        response = self._recv_msg()
+        response = await self._recv_msg()
         if response and response.payloadType == 202:
             trader_res = ProtoOATraderRes()
             trader_res.ParseFromString(response.payload)
@@ -260,11 +258,12 @@ class CtraderClient:
                 margin_level=trader_res.marginLevel,
                 currency="USD",
                 leverage=f"1:{int(trader_res.leverageInCents / 100)}"
-                if trader_res.leverageInCents
-                else "1:30",
+                if trader_res.leverageInCents else "1:30",
                 account_type="Demo" if self.demo else "Live",
                 is_live=not self.demo,
             )
+            if self.on_account_update:
+                self.on_account_update(self._account_info)
 
     def get_account_info(self) -> Optional[AccountInfo]:
         return self._account_info
@@ -272,53 +271,60 @@ class CtraderClient:
     async def place_order(self, order: TradeOrder) -> Optional[TradeResult]:
         if not self._authenticated or not self._is_connected:
             return self._simulate_order(order)
-        try:
-            order_req = ProtoOANewOrderReq()
-            order_req.ctidTraderAccountId = self.account_id
-            order_req.symbolId = order.symbol_id
-            order_req.orderType = 101 if order.order_type == "MARKET" else 102
-            order_req.tradeSide = 1 if order.side == "BUY" else 2
-            order_req.volume = order.volume
-            order_req.stopLoss = int(order.sl * 100)
-            order_req.takeProfit = int(order.tp * 100)
-            if self._send_msg(203, order_req):
-                response = self._recv_msg()
-                if response and response.payloadType == 204:
-                    exec_event = ProtoOAExecutionEvent()
-                    exec_event.ParseFromString(response.payload)
-                    return TradeResult(
-                        order_id=exec_event.orderId,
-                        position_id=exec_event.positionId,
-                        status="FILLED",
-                        filled_price=exec_event.price / 100,
-                    )
-            return TradeResult(status="REJECTED", error="Order failed")
-        except Exception as e:
-            logger.error(f"Place order error: {e}")
-            return TradeResult(status="REJECTED", error=str(e))
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                order_req = ProtoOANewOrderReq()
+                order_req.ctidTraderAccountId = self.account_id
+                order_req.symbolId = order.symbol_id
+                order_req.orderType = 101 if order.order_type == "MARKET" else 102
+                order_req.tradeSide = 1 if order.side == "BUY" else 2
+                order_req.volume = order.volume
+                order_req.stopLoss = int(order.sl * 100)
+                order_req.takeProfit = int(order.tp * 100)
+                if await self._send_msg(203, order_req):
+                    response = await self._recv_msg()
+                    if response and response.payloadType == 204:
+                        exec_event = ProtoOAExecutionEvent()
+                        exec_event.ParseFromString(response.payload)
+                        result = TradeResult(
+                            order_id=exec_event.orderId,
+                            position_id=exec_event.positionId,
+                            status="FILLED",
+                            filled_price=exec_event.price / 100,
+                        )
+                        if self.on_order_update:
+                            self.on_order_update(result)
+                        return result
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+            except Exception as e:
+                logger.warning(f"Order attempt {attempt + 1} failed: {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+        return TradeResult(status="REJECTED", error="Order failed after retries")
 
     def _simulate_order(self, order: TradeOrder) -> TradeResult:
-        return TradeResult(
+        result = TradeResult(
             order_id=int(time.time()),
             position_id=int(time.time()) % 100000,
             status="FILLED",
             filled_price=order.price or 1.1200,
         )
+        if self.on_order_update:
+            self.on_order_update(result)
+        return result
 
-    def disconnect(self):
+    async def disconnect(self):
         self._is_connected = False
-        if self.ssl_socket:
+        if self._writer:
             try:
-                self.ssl_socket.close()
+                self._writer.close()
+                await self._writer.wait_closed()
             except Exception:
                 pass
-            self.ssl_socket = None
-        if self.tcp_socket:
-            try:
-                self.tcp_socket.close()
-            except Exception:
-                pass
-            self.tcp_socket = None
+            self._writer = None
+            self._reader = None
         logger.info("cTrader client disconnected")
 
     def is_connected(self) -> bool:

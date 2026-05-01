@@ -33,11 +33,11 @@ jobs:
 
     - name: Type check with mypy
       run: |
-        mypy . || true
+        mypy src/ --ignore-missing-imports
 
     - name: Test with pytest
       run: |
-        pytest tests/ -v || true
+        pytest tests/ -v
 
   build:
     runs-on: ubuntu-latest

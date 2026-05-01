@@ -19,6 +19,7 @@ wheels/
 *.egg
 
 # Secrets - DO NOT COMMIT
+.env
 config/ctrader_config.json
 
 # Testing

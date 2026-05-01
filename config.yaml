@@ -1,20 +1,5 @@
-# Institutional Forex AI Moneybot Configuration
-# cTrader Credentials (Demo Mode)
-ctrader:
-  app_id: "15217_h8WxunXX70m6O6qsnIx9ZO3GZraTdO0wnLjL3dTKyYG6fkbUca"
-  app_secret: "Zb8tEW4Axzq0AJqCNS8ubniYzsgp2kxuRkYBRD9XXOcLAj5aOT"
-  access_token: ""  # Will be generated via OAuth or provided
-  account_id: "9698970"
-  demo: true  # FORCE DEMO MODE
-  host: "demo.ctrader.com"
-  port: 5035
-  use_websocket: true
-  symbols:
-    1: "EURUSD"
-    2: "GBPUSD"
-    3: "USDJPY"
-    4: "XAUUSD"
-    5: "BTCUSD"
+# RTS AI Forex Trading System — Configuration
+# Secrets moved to .env file (see .env.example)
 
 # Trading Parameters
 trading:
@@ -52,27 +37,13 @@ ai:
   online_finetune: true
   finetune_freq: 100
 
-# Feature Engineering
+# Features
 features:
   timeframes:
-    - "1m"
-    - "5m"
     - "15m"
     - "1h"
     - "4h"
-  technical:
-    - "open" - "high" - "low" - "close" - "volume"
-    - "atr" - "rsi" - "macd" - "bollinger"
-    - "stochastic" - "adx" - "cci" - "mfi" - "obv"
-  order_flow:
-    - "cvd" - "bid_ask_imbalance"
-    - "aggressive_buy_ratio" - "aggressive_sell_ratio"
-    - "large_trade_zscore" - "absorption" - "exhaustion"
-  smc:
-    - "order_blocks" - "fair_value_gaps"
-    - "bos" - "choch" - "liquidity_levels"
-  regime:
-    - "hurst_exponent" - "volatility" - "trend_strength"
+  lookback: 30
 
 # Risk Management
 risk:
@@ -86,6 +57,8 @@ risk:
   max_consecutive_losses: 5
   max_daily_loss: 0.05
   max_position_hold_time: 86400
+  var_confidence: 0.95
+  var_lookback_days: 60
 
 # Dashboard
 dashboard:
@@ -97,7 +70,6 @@ dashboard:
 
 # Data
 data:
-  redis_url: "redis://localhost:6379"
   historical_path: "data/historical"
   models_path: "models"
   logs_path: "data/logs"

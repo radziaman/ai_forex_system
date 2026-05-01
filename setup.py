@@ -21,5 +21,11 @@ setup(
         "twisted>=24.3.0",
         "service-identity>=24.2.0",
         "requests>=2.32.0",
+        "hmmlearn>=0.3.0",
+        "fastapi>=0.128.0",
+        "uvicorn>=0.39.0",
+        "loguru>=0.7.0",
+        "websockets>=15.0.0",
+        "pyyaml>=6.0.0",
     ],
 )
