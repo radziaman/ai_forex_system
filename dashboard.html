@@ -234,8 +234,72 @@
                     </div>
                 </div>
             </div>
+            
+            <!-- Training Progress Section -->
+            <div class="col-lg-4">
+                <div class="card">
+                    <div class="card-header"><i class="fas fa-brain me-2"></i>Training Progress</div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <div class="text-secondary mb-1">Overall Progress</div>
+                            <div class="progress" style="height: 25px;">
+                                <div id="trainingProgress" class="progress-bar progress-bar-striped progress-bar-animated" 
+                                     role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">0%</div>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <div class="text-secondary mb-1">Current Pair</div>
+                            <div id="currentPair">--</div>
+                        </div>
+                        <div class="mb-3">
+                            <div class="text-secondary mb-1">Epoch</div>
+                            <div id="currentEpoch">--</div>
+                        </div>
+                        <div class="mb-3">
+                            <div class="text-secondary mb-1">Models Trained</div>
+                            <div id="modelsTrained">0</div>
+                        </div>
+                        <div class="mb-3">
+                            <div class="text-secondary mb-1">Completed Pairs</div>
+                            <div id="completedPairs">None yet</div>
+                        </div>
+                        <div class="mb-3" id="trainingStatus" style="display: none;">
+                            <div class="alert alert-info">Training in progress...</div>
+                        </div>
+                        <div class="mb-3" id="trainingComplete" style="display: none;">
+                            <div class="alert alert-success">✅ All training complete!</div>
+                        </div>
+                        <button class="btn btn-primary w-100" onclick="startTraining()">
+                            <i class="fas fa-play me-2"></i>Start Training All Pairs
+                        </button>
+                    </div>
+                </div>
+            </div>
         </div>
-
+        
+        <!-- Training Backtest Results -->
+        <div class="row mt-4" id="backtestResults" style="display: none;">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header"><i class="fas fa-chart-bar me-2"></i>Backtest Results</div>
+                    <div class="card-body p-0">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Pair</th>
+                                    <th>Total Return</th>
+                                    <th>Win Rate</th>
+                                    <th>Sharpe Ratio</th>
+                                    <th>Max Drawdown</th>
+                                </tr>
+                            </thead>
+                            <tbody id="backtestTable"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
         <!-- Open Positions & Trade History -->
         <div class="row">
             <div class="col-lg-5">
@@ -542,3 +606,79 @@
     </script>
 </body>
 </html>
+
+        // === TRAINING PROGRESS ===
+        function updateTrainingProgress() {
+            fetch('/api/training/status')
+                .then(response => response.json())
+                .then(data => {
+                    // Update progress bar
+                    const progressBar = document.getElementById('trainingProgress');
+                    const progressPercent = data.progress_percent || 0;
+                    progressBar.style.width = progressPercent + '%';
+                    progressBar.textContent = progressPercent + '%';
+                    progressBar.setAttribute('aria-valuenow', progressPercent);
+
+                    // Update current pair
+                    document.getElementById('currentPair').textContent = data.current_pair || '--';
+
+                    // Update epoch
+                    const epochText = data.current_epoch && data.total_epochs ?
+                        `${data.current_epoch}/${data.total_epochs}` : '--';
+                    document.getElementById('currentEpoch').textContent = epochText;
+
+                    // Update models trained
+                    document.getElementById('modelsTrained').textContent = data.models_trained || 0;
+
+                    // Update completed pairs
+                    const completed = data.completed_pairs || [];
+                    document.getElementById('completedPairs').textContent =
+                        completed.length > 0 ? completed.join(', ') : 'None yet';
+
+                    // Show/hide status messages
+                    const statusDiv = document.getElementById('trainingStatus');
+                    const completeDiv = document.getElementById('trainingComplete');
+                    const backtestDiv = document.getElementById('backtestResults');
+
+                    if (data.training_complete) {
+                        statusDiv.style.display = 'none';
+                        completeDiv.style.display = 'block';
+                        progressBar.classList.remove('progress-bar-animated', 'progress-bar-striped');
+
+                        // Show backtest results
+                        if (data.backtest_results && Object.keys(data.backtest_results).length > 0) {
+                            backtestDiv.style.display = 'block';
+                            const tbody = document.getElementById('backtestTable');
+                            tbody.innerHTML = Object.entries(data.backtest_results).map(([pair, r]) => `
+                                <tr>
+                                    <td><strong>${pair.replace('=X', '')}</strong></td>
+                                    <td class="${r.total_return >= 0 ? 'text-success' : 'text-danger'}">${r.total_return?.toFixed(2)}%</td>
+                                    <td>${r.win_rate?.toFixed(1)}%</td>
+                                    <td>${r.sharpe_ratio?.toFixed(2)}</td>
+                                    <td class="text-danger">${r.max_drawdown?.toFixed(2)}%</td>
+                                </tr>
+                            `).join('');
+                        }
+                    } else if (data.current_pair) {
+                        statusDiv.style.display = 'block';
+                        completeDiv.style.display = 'none';
+                    }
+                })
+                .catch(err => console.error('Error fetching training status:', err));
+        }
+
+        // Start training button handler
+        function startTraining() {
+            fetch('/api/training/start', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    alert('Training started! Progress will update automatically.');
+                    // Start polling for updates
+                    setInterval(updateTrainingProgress, 2000);
+                })
+                .catch(err => alert('Error starting training: ' + err));
+        }
+
+        // Poll training status every 2 seconds
+        setInterval(updateTrainingProgress, 2000);
+        updateTrainingProgress(); // Initial call

@@ -196,13 +196,62 @@ async def get_ctrader_accounts():
             "message": "cTrader not connected",
             "instruction": "Complete OAuth flow and update access token in src/api/ctrader_ready.py"
         }
-    
+
     # This would call ctrader_client.get_account_list(access_token)
     return {
         "status": "pending",
         "message": "Complete OAuth flow to see accounts",
         "oauth_url": f"https://id.ctrader.com/my/settings/openapi/grantingaccess/?client_id=15217_h8WxunXX70m6O6qsnIx9ZO3GZraTdO0wnLjL3dTKyYG6fkbUca&redirect_uri=https://spotware.com&scope=trading&product=web"
     }
+
+
+@app.get("/api/training/status")
+async def get_training_status():
+    """Get training progress status."""
+    import json
+    from pathlib import Path
+
+    status_file = Path(__file__).parent.parent.parent / 'training_status.json'
+
+    if status_file.exists():
+        with open(status_file, 'r') as f:
+            return json.load(f)
+    else:
+        return {
+            'training_complete': False,
+            'progress_percent': 0,
+            'current_pair': None,
+            'completed_pairs': [],
+            'failed_pairs': [],
+            'total_pairs': 0,
+            'models_trained': 0,
+            'backtest_results': {},
+            'message': 'No training started yet. Run: python scripts/train_all_pairs.py'
+        }
+
+
+@app.post("/api/training/start")
+async def start_training(pairs: list = None):
+    """Start training (triggers background task)."""
+    import subprocess
+    from pathlib import Path
+
+    # Build command
+    cmd = [sys.executable, 'scripts/train_all_pairs.py']
+    if pairs:
+        cmd.extend(['--pairs'] + pairs)
+
+    # Run in background
+    def run_training():
+        subprocess.run(cmd, cwd=Path(__file__).parent.parent.parent)
+
+    import threading
+    thread = threading.Thread(target=run_training)
+    thread.daemon = True
+    thread.start()
+
+    return {'status': 'started', 'message': 'Training started in background'}
+
 
 if __name__ == "__main__":
     import uvicorn
