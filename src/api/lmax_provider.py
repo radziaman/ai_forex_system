@@ -18,9 +18,8 @@ from .base import (
 
 logger = logging.getLogger(__name__)
 
-LMAX_LIVE = "https://api.lmax.com"
-LMAX_DEMO = "https://api.lmax.com/demo"
-LMAX_STREAM = "https://stream.lmax.com"
+LMAX_LIVE = "https://trade.lmax.com/api"
+LMAX_DEMO = "https://trade.lmax.com/api"
 
 LMAX_SYMBOLS = {
     "EURUSD": "eur-usd", "GBPUSD": "gbp-usd", "USDJPY": "usd-jpy",
@@ -44,7 +43,7 @@ class LMAXExecutionProvider(ExecutionProvider):
     def __init__(self, username: str = "", password: str = "", demo: bool = True):
         self.username = username
         self.password = password
-        self.base = LMAX_DEMO if demo else LMAX_LIVE
+        self.base = LMAX_LIVE  # same host, auth determines demo/live
         self._auth_token = ""
         self._account_id = ""
         self._session = requests.Session()

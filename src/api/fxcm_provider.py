@@ -210,7 +210,7 @@ class FXCMExecutionProvider(ExecutionProvider, DataProvider):
         instruments = ",".join(FXCM_SYMBOLS.get(s.upper(), s) for s in symbols)
         url = f"{self.base}/trading/v1/subscribe?instruments={instruments}"
 
-            def _subscribe():
+        def _subscribe():
             try:
                 requests.post(url, headers=self._headers, stream=False)
                 for sym in symbols:
