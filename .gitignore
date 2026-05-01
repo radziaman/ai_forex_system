@@ -73,3 +73,6 @@ FINAL_STRATEGY.md
 REALISTIC_STRATEGY.md
 TRADING_REPORT.md
 VERSION_COMPARISON.md
+
+# Simulation result files
+sim_*.json
