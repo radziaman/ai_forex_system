@@ -9,7 +9,6 @@ from api.base import (
     AccountInfo, OrderRequest, OrderResult,
     PriceTick, Position, OHLCV,
 )
-from api.lmax_provider import LMAXExecutionProvider
 
 __all__ = [
     "CtraderClient", "MarketDepth", "TradeOrder", "TradeResult",
@@ -17,5 +16,4 @@ __all__ = [
     "ExecutionProvider", "DataProvider",
     "AccountInfo", "OrderRequest", "OrderResult",
     "PriceTick", "Position", "OHLCV",
-    "LMAXExecutionProvider",
 ]

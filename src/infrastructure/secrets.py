@@ -71,26 +71,13 @@ class Secrets:
     def provider(self) -> str:
         return os.getenv("TRADING_PROVIDER", "ctrader").lower()
 
-    @property
-    def lmax_username(self) -> str:
-        return os.getenv("LMAX_USERNAME", "")
-
-    @property
-    def lmax_password(self) -> str:
-        return os.getenv("LMAX_PASSWORD", "")
-
-    @property
-    def lmax_demo(self) -> bool:
-        return os.getenv("LMAX_DEMO", "true").lower() == "true"
-
     def validate(self) -> list:
         missing = []
-        p = self.provider
-        if p == "ctrader" or p == "dukascopy":
-            if not self.ctrader_app_id: missing.append("CTRADER_APP_ID")
-            if not self.ctrader_app_secret: missing.append("CTRADER_APP_SECRET")
-            if not self.ctrader_account_id: missing.append("CTRADER_ACCOUNT_ID")
-        elif p == "lmax":
-            if not self.lmax_username: missing.append("LMAX_USERNAME")
-            if not self.lmax_password: missing.append("LMAX_PASSWORD")
+        if self.provider in ("ctrader", "dukascopy"):
+            if not self.ctrader_app_id:
+                missing.append("CTRADER_APP_ID")
+            if not self.ctrader_app_secret:
+                missing.append("CTRADER_APP_SECRET")
+            if not self.ctrader_account_id:
+                missing.append("CTRADER_ACCOUNT_ID")
         return missing

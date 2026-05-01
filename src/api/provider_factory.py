@@ -101,16 +101,6 @@ def create_execution_provider(secrets: Secrets) -> Tuple[ExecutionProvider, Opti
         from data.dukascopy_provider import DukascopyDataProvider
         return CtraderExecutionAdapter(secrets), DukascopyDataProvider()
 
-    elif provider == "lmax":
-        logger.info("Provider: LMAX Global REST API")
-        from api.lmax_provider import LMAXExecutionProvider
-        client = LMAXExecutionProvider(
-            username=secrets.lmax_username,
-            password=secrets.lmax_password,
-            demo=secrets.lmax_demo,
-        )
-        return client, client
-
     else:
         logger.info("Provider: cTrader Open API (default)")
         return CtraderExecutionAdapter(secrets), None
