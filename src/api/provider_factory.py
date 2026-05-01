@@ -94,20 +94,43 @@ class CtraderExecutionAdapter(ExecutionProvider):
 
 
 def create_execution_provider(secrets: Secrets) -> Tuple[ExecutionProvider, Optional[DataProvider]]:
-    """
-    Create the appropriate execution provider based on TRADING_PROVIDER env var.
-    Returns: (execution_provider, optional_data_provider)
-    """
     provider = secrets.provider
 
     if provider == "dukascopy":
         logger.info("Provider: Dukascopy data + cTrader execution")
         from data.dukascopy_provider import DukascopyDataProvider
-        data_provider = DukascopyDataProvider()
-        exec_provider = CtraderExecutionAdapter(secrets)
-        return exec_provider, data_provider
+        return CtraderExecutionAdapter(secrets), DukascopyDataProvider()
+
+    elif provider == "ibkr":
+        logger.info("Provider: Interactive Brokers (ib_insync)")
+        from api.ib_provider import IBExecutionProvider
+        client = IBExecutionProvider(
+            host=secrets.ibkr_host,
+            port=secrets.ibkr_port,
+            client_id=secrets.ibkr_client_id,
+        )
+        return client, client
+
+    elif provider == "fxcm":
+        logger.info("Provider: FXCM REST API")
+        from api.fxcm_provider import FXCMExecutionProvider
+        client = FXCMExecutionProvider(
+            access_token=secrets.fxcm_token,
+            account_id=secrets.fxcm_account_id,
+            demo=secrets.fxcm_demo,
+        )
+        return client, client
+
+    elif provider == "lmax":
+        logger.info("Provider: LMAX Global REST API")
+        from api.lmax_provider import LMAXExecutionProvider
+        client = LMAXExecutionProvider(
+            username=secrets.lmax_username,
+            password=secrets.lmax_password,
+            demo=secrets.lmax_demo,
+        )
+        return client, client
 
     else:
         logger.info("Provider: cTrader Open API (default)")
-        exec_provider = CtraderExecutionAdapter(secrets)
-        return exec_provider, None
+        return CtraderExecutionAdapter(secrets), None

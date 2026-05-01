@@ -71,13 +71,55 @@ class Secrets:
     def provider(self) -> str:
         return os.getenv("TRADING_PROVIDER", "ctrader").lower()
 
+    @property
+    def ibkr_host(self) -> str:
+        return os.getenv("IBKR_HOST", "127.0.0.1")
+
+    @property
+    def ibkr_port(self) -> int:
+        return int(os.getenv("IBKR_PORT", "7497"))
+
+    @property
+    def ibkr_client_id(self) -> int:
+        return int(os.getenv("IBKR_CLIENT_ID", "1"))
+
+    @property
+    def fxcm_token(self) -> str:
+        return os.getenv("FXCM_ACCESS_TOKEN", "")
+
+    @property
+    def fxcm_account_id(self) -> str:
+        return os.getenv("FXCM_ACCOUNT_ID", "")
+
+    @property
+    def fxcm_demo(self) -> bool:
+        return os.getenv("FXCM_DEMO", "true").lower() == "true"
+
+    @property
+    def lmax_username(self) -> str:
+        return os.getenv("LMAX_USERNAME", "")
+
+    @property
+    def lmax_password(self) -> str:
+        return os.getenv("LMAX_PASSWORD", "")
+
+    @property
+    def lmax_demo(self) -> bool:
+        return os.getenv("LMAX_DEMO", "true").lower() == "true"
+
     def validate(self) -> list:
         missing = []
-        if self.provider == "ctrader":
-            if not self.ctrader_app_id:
-                missing.append("CTRADER_APP_ID")
-            if not self.ctrader_app_secret:
-                missing.append("CTRADER_APP_SECRET")
-            if not self.ctrader_account_id:
-                missing.append("CTRADER_ACCOUNT_ID")
+        p = self.provider
+        if p == "ctrader" or p == "dukascopy":
+            if not self.ctrader_app_id: missing.append("CTRADER_APP_ID")
+            if not self.ctrader_app_secret: missing.append("CTRADER_APP_SECRET")
+            if not self.ctrader_account_id: missing.append("CTRADER_ACCOUNT_ID")
+        elif p == "ibkr":
+            pass  # ib_insync connects to local TWS/Gateway
+        elif p == "fxcm":
+            if not self.fxcm_token: missing.append("FXCM_ACCESS_TOKEN")
+            if not self.fxcm_account_id: missing.append("FXCM_ACCOUNT_ID")
+        elif p == "lmax":
+            if not self.lmax_username: missing.append("LMAX_USERNAME")
+            if not self.lmax_password: missing.append("LMAX_PASSWORD")
         return missing
