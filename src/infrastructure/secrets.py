@@ -60,6 +60,10 @@ class Secrets:
         return os.getenv("REDIS_URL", "")
 
     @property
+    def fred_api_key(self) -> str:
+        return os.getenv("FRED_API_KEY", "")
+
+    @property
     def log_level(self) -> str:
         return os.getenv("LOG_LEVEL", "INFO")
 

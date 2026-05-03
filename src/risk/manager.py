@@ -151,6 +151,13 @@ class RiskManager:
         else:
             self.losses += 1
             self.consecutive_losses += 1
+        if self._on_trade_close:
+            try:
+                self._on_trade_close(trade)
+            except Exception:
+                pass
+
+    _on_trade_close: Optional[callable] = None
 
     def update_price_history(self, price: float):
         self._price_history.append(price)
