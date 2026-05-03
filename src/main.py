@@ -37,6 +37,7 @@ from validation.walk_forward import PurgedWalkForward
 from validation.monte_carlo import MonteCarloSigTest
 from backtest.vectorized_backtester import VectorizedBacktester
 from notifications.telegram import TelegramNotifier
+from training.online_learner import OnlineLearner
 from dashboard.app import app, broadcast_update, update_state, latest_state
 
 try:
@@ -157,6 +158,14 @@ class RTSForexBot:
             fred_api_key=self.secrets.fred_api_key if hasattr(self.secrets, 'fred_api_key') else "",
             cache_dir="data/alternative_data",
         )
+        self.online_learner = OnlineLearner(
+            model_dir="models",
+            retrain_cooldown_hours=4.0,
+            min_trades_before_retrain=50,
+            lstm_epochs=30,
+            clf_epochs=20,
+            notify_callback=lambda msg: self.notifier.send(msg, level="info"),
+        )
         logger.info("Intelligence layer initialized")
 
     def _init_notifications(self):
@@ -211,7 +220,7 @@ class RTSForexBot:
         # Load historical data for ALL symbols
         await self._load_historical_data()
 
-        # Fit regime detector per symbol
+        # Fit regime detector per symbol + init drift monitors
         for sym in SYMBOLS:
             df = self.data_manager.get_ohlcv(sym, "1h")
             if df is not None and len(df) > 200:
@@ -219,6 +228,10 @@ class RTSForexBot:
                 rd.fit(df)
                 self._regimes[sym] = rd.detect_regime(df)
                 logger.info(f"HMM regime detector fitted for {sym}")
+            # Initialize drift monitor for online learning
+            self.active_models[sym] = {
+                "drift": DriftMonitor(error_threshold=0.02),
+            }
 
         # Fit feature pipeline on ALL symbols (per-symbol normalization)
         self.feature_pipeline.fit_all(self.data_manager.ohlcv)
@@ -530,10 +543,26 @@ class RTSForexBot:
                 price=price, regime=regime, confidence=confidence, atr=atr,
             )
 
-        # Update drift monitors
+        # Update drift monitors + online learner
         for name, model_data in self.active_models.items():
             if "drift" in model_data:
-                model_data["drift"].update(price, price)
+                drifted = model_data["drift"].update(price, price)
+                if drifted and name in SYMBOLS:
+                    self.online_learner.on_drift_detected(
+                        name, model_data["drift"].error_detector.drift_count
+                    )
+
+        # Check if retraining is needed for any pair
+        for sym in SYMBOLS:
+            if self.online_learner.should_retrain(sym, self.risk.total_trades):
+                def fetch_fn(p):
+                    df = self.data_manager.get_ohlcv(p, "1h")
+                    if df is not None and len(df) > 200:
+                        return df
+                    return None
+                self.online_learner.request_retrain(
+                    sym, fetch_fn, self.feature_pipeline
+                )
 
     # ================================================================
     # HELPERS
