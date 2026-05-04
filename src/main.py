@@ -125,7 +125,7 @@ class RTSForexBot:
             historical_path=self.config.data.historical_path,
         )
         self.feature_pipeline = FeaturePipeline(
-            lookback=30, timeframes=["1h", "4h", "1d"],
+            lookback=30, timeframes=["1h"],
             use_microstructure=True, use_cross_asset=False,
         )
         self.regime_detector = HMMRegimeDetector(n_regimes=4, lookback=60)
@@ -310,13 +310,35 @@ class RTSForexBot:
                 await asyncio.sleep(5.0)
 
     async def _load_historical_data(self):
-        # Load all 7 symbols from data provider
-        if self.data_provider is not None:
+        loaded = 0
+        # Try yfinance first for all symbols
+        try:
+            import yfinance as yf
+            yf_pairs = {s: f"{s}=X" for s in SYMBOLS}
+            for sym, yf_sym in yf_pairs.items():
+                if self.data_manager.get_ohlcv(sym, "1h") is not None and len(self.data_manager.get_ohlcv(sym, "1h")) > 200:
+                    loaded += 1
+                    continue
+                data = yf.download(yf_sym, period="2y", interval="1h", progress=False)
+                if not data.empty and len(data) > 200:
+                    df = data.copy()
+                    df.columns = [c[0] for c in df.columns]
+                    df = df.rename(columns={"Open": "open", "High": "high", "Low": "low", "Close": "close", "Volume": "volume"})
+                    df["timestamp"] = df.index.astype(np.int64) // 10**9
+                    df = df.reset_index(drop=True)
+                    self.data_manager.ohlcv[sym]["1h"] = df
+                    loaded += 1
+                    logger.info(f"Loaded {len(df)} 1h bars for {sym} (yfinance)")
+        except Exception as e:
+            logger.warning(f"yfinance fetch failed: {e}")
+
+        # Try data provider for anything still missing
+        if self.data_provider is not None and loaded < len(SYMBOLS):
             try:
                 for sym in SYMBOLS:
-                    ohlcv = await self.data_provider.fetch_ohlcv(
-                        sym, "1h", "2025-06-01", "2026-03-31"
-                    )
+                    if self.data_manager.get_ohlcv(sym, "1h") is not None and len(self.data_manager.get_ohlcv(sym, "1h")) > 200:
+                        continue
+                    ohlcv = await self.data_provider.fetch_ohlcv(sym, "1h", "2025-06-01", "2026-03-31")
                     if ohlcv:
                         df = pd.DataFrame([{
                             "timestamp": o.timestamp, "open": o.open, "high": o.high,
@@ -324,16 +346,13 @@ class RTSForexBot:
                         } for o in ohlcv])
                         if len(df) > 100:
                             self.data_manager.ohlcv[sym]["1h"] = df
-                            logger.info(f"Loaded {len(df)} 1h bars for {sym}")
+                            loaded += 1
+                            logger.info(f"Loaded {len(df)} 1h bars for {sym} (data provider)")
             except Exception as e:
                 logger.warning(f"Data provider failed: {e}")
 
-        # Fallback: load/generate per symbol
-        for sym in SYMBOLS:
-            for tf in ["1h", "4h", "1d"]:
-                df = self.data_manager.get_ohlcv(sym, tf)
-                if df is None or len(df) < 100:
-                    self.data_manager.load_historical(sym, tf, days=365)
+        if loaded < len(SYMBOLS):
+            logger.warning(f"Only {loaded}/{len(SYMBOLS)} pairs loaded. Missing pairs will use limited data.")
 
     def _start_dashboard(self):
         import threading
