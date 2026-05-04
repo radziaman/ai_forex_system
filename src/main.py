@@ -612,15 +612,16 @@ class RTSForexBot:
                         reason = "Take Profit"
 
                 if sl_hit or tp_hit:
+                    exit_price = trade.sl if sl_hit else trade.tp
                     pip_size = 0.01 if "JPY" in sym.upper() else 0.0001
-                    pnl_pips = ((trade.direction == "BUY" and 1) or -1) * ((price if tp_hit else sl_hit and price or 0) or price - trade.entry_price) / pip_size
+                    raw_pips = ((1 if trade.direction == "BUY" else -1) * (exit_price - trade.entry_price)) / pip_size
                     lots = trade.volume / 100000.0
-                    pnl_usd = pnl_pips * lots * 10.0
-                    logger.info(f"Closing {sym} {trade.direction} @ {price:.5f}: {reason}")
-                    await self.execution.close_position(trade.position_id, reason)
+                    pnl_usd = raw_pips * lots * 10.0
+                    logger.info(f"Closing {sym} {trade.direction} at SL/TP @ {exit_price:.5f}: {reason}")
+                    await self.execution.close_position(trade.position_id, reason, exit_price)
                     self.notifier.trade_closed(
                         symbol=sym, direction=trade.direction,
-                        entry=trade.entry_price, exit=price,
+                        entry=trade.entry_price, exit=exit_price,
                         pnl=pnl_usd, reason=reason, hold_time=time.time() - trade.timestamp,
                     )
             except Exception as e:

@@ -109,12 +109,20 @@ class ExecutionEngine:
         logger.info(f"[PAPER] OPENED: {direction} {volume} {symbol} @ {price:.5f}")
         return trade
 
-    async def close_position(self, position_id, reason="AI close"):
+    async def close_position(self, position_id, reason="AI close", exit_price: float = None):
         if position_id not in self.open_positions:
             return False
         trade = self.open_positions[position_id]
+        if exit_price is None:
+            if self.data is not None:
+                try:
+                    exit_price = self.data.get_price(trade.symbol, "1h")
+                except Exception:
+                    exit_price = trade.entry_price
+            else:
+                exit_price = trade.entry_price
         if self.risk.mode == "PAPER":
-            return self._simulate_close(trade, reason)
+            return self._simulate_close(trade, reason, exit_price)
         symbol_id = self._get_symbol_id(trade.symbol)
         close_side = "SELL" if trade.direction == "BUY" else "BUY"
         order = TradeOrder(
@@ -128,10 +136,7 @@ class ExecutionEngine:
         try:
             result = await self.client.place_order(order)
             if result and result.status == "FILLED":
-                snapshot = self.data.latest_snapshot
-                exit_price = result.filled_price or (
-                    snapshot.bid if snapshot else trade.entry_price
-                )
+                exit_price = result.filled_price or exit_price
                 pnl = self._calculate_pnl(trade, exit_price)
                 trade.exit_price = exit_price
                 trade.pnl = pnl
@@ -145,16 +150,15 @@ class ExecutionEngine:
             logger.error(f"Close error: {e}")
         return False
 
-    def _simulate_close(self, trade, reason):
-        exit_price = trade.entry_price
-        if self.data is not None:
-            try:
-                exit_price = self.data.get_price(trade.symbol, "1h")
-            except Exception:
-                pass
-        if exit_price == trade.entry_price:
-            logger.debug(f"Using entry price as exit for {trade.symbol} (no live data)")
-            return True  # Skip recording zero-PnL trades from missing data
+    def _simulate_close(self, trade, reason, exit_price: float = None):
+        if exit_price is None or exit_price == trade.entry_price:
+            if self.data is not None:
+                try:
+                    exit_price = self.data.get_price(trade.symbol, "1h")
+                except Exception:
+                    exit_price = trade.entry_price
+            else:
+                exit_price = trade.entry_price
         pnl = self._calculate_pnl(trade, exit_price)
         trade.exit_price = exit_price
         trade.pnl = pnl
