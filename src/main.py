@@ -339,11 +339,20 @@ class RTSForexBot:
         import threading
         import uvicorn
         d = self.config.dashboard
-        t = threading.Thread(
-            target=lambda: uvicorn.run(app, host=d.host, port=d.port, log_level="error"),
-            daemon=True,
-        )
+        self._dashboard_loop = None
+        def run_dashboard():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            self._dashboard_loop = loop
+            uvicorn.run(app, host=d.host, port=d.port, log_level="error")
+        t = threading.Thread(target=run_dashboard, daemon=True)
         t.start()
+        # Wait for loop to be set
+        import time
+        for _ in range(50):
+            if self._dashboard_loop:
+                break
+            time.sleep(0.1)
         logger.info(f"Dashboard: http://{d.host}:{d.port}")
 
     # ================================================================
@@ -613,9 +622,9 @@ class RTSForexBot:
             },
         )
         try:
-            asyncio.run_coroutine_threadsafe(
-                broadcast_update(latest_state), asyncio.get_event_loop()
-            )
+            dl = getattr(self, '_dashboard_loop', None)
+            if dl:
+                asyncio.run_coroutine_threadsafe(broadcast_update(latest_state), dl)
         except Exception:
             pass
 
@@ -658,8 +667,14 @@ class RTSForexBot:
 # ================================================================
 
 # Patch in static methods for multi-pair convenience
-HMMRegimeDetector.should_trade_static = staticmethod(lambda regime: HMMRegimeDetector.get_regime_params_static(regime)["pos_mult"] > 0)
-HMMRegimeDetector.get_regime_params_static = staticmethod(HMMRegimeDetector.get_regime_params)
+_REGIME_PARAMS = {
+    "trending": {"sl_pct": 0.025, "tp_pct": 0.05, "pos_mult": 1.0, "min_conf": 0.60},
+    "ranging": {"sl_pct": 0.015, "tp_pct": 0.03, "pos_mult": 1.0, "min_conf": 0.65},
+    "volatile": {"sl_pct": 0.02, "tp_pct": 0.04, "pos_mult": 0.5, "min_conf": 0.75},
+    "crisis": {"sl_pct": 0.01, "tp_pct": 0.02, "pos_mult": 0.0, "min_conf": 0.95},
+}
+HMMRegimeDetector.should_trade_static = staticmethod(lambda regime: _REGIME_PARAMS.get(regime, _REGIME_PARAMS["ranging"])["pos_mult"] > 0)
+HMMRegimeDetector.get_regime_params_static = staticmethod(lambda regime: _REGIME_PARAMS.get(regime, _REGIME_PARAMS["ranging"]))
 
 
 # ================================================================
