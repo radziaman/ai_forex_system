@@ -554,13 +554,15 @@ class RTSForexBot:
             )
             return
 
-        # Place order
+        # Place order with ATR-based SL/TP
+        sl_price = price - atr * regime_params.get("sl_atr", 1.5)
+        tp_price = price + atr * regime_params.get("tp_atr", 3.0)
         trade = await self.execution.open_position(
             symbol=symbol,
             direction=direction,
             volume=volume,
-            sl=price - atr * regime_params["sl_pct"] / (atr / price + 1e-8),
-            tp=price + atr * regime_params["tp_pct"] / (atr / price + 1e-8),
+            sl=sl_price,
+            tp=tp_price,
             reason=f"regime={regime} conf={confidence:.2f} sent={self._current_sentiment:.2f}",
         )
         if trade:
@@ -741,10 +743,10 @@ class RTSForexBot:
 
 # Patch in static methods for multi-pair convenience
 _REGIME_PARAMS = {
-    "trending": {"sl_pct": 0.025, "tp_pct": 0.05, "pos_mult": 1.0, "min_conf": 0.60},
-    "ranging": {"sl_pct": 0.015, "tp_pct": 0.03, "pos_mult": 1.0, "min_conf": 0.65},
-    "volatile": {"sl_pct": 0.02, "tp_pct": 0.04, "pos_mult": 0.5, "min_conf": 0.75},
-    "crisis": {"sl_pct": 0.01, "tp_pct": 0.02, "pos_mult": 0.0, "min_conf": 0.95},
+    "trending": {"sl_atr": 2.0, "tp_atr": 4.0, "pos_mult": 1.0, "min_conf": 0.60},
+    "ranging": {"sl_atr": 1.5, "tp_atr": 3.0, "pos_mult": 1.0, "min_conf": 0.65},
+    "volatile": {"sl_atr": 2.5, "tp_atr": 5.0, "pos_mult": 0.5, "min_conf": 0.75},
+    "crisis": {"sl_atr": 1.0, "tp_atr": 2.0, "pos_mult": 0.0, "min_conf": 0.95},
 }
 HMMRegimeDetector.should_trade_static = staticmethod(lambda regime: _REGIME_PARAMS.get(regime, _REGIME_PARAMS["ranging"])["pos_mult"] > 0)
 HMMRegimeDetector.get_regime_params_static = staticmethod(lambda regime: _REGIME_PARAMS.get(regime, _REGIME_PARAMS["ranging"]))

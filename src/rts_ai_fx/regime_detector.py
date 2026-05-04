@@ -117,10 +117,10 @@ class HMMRegimeDetector:
 
     def get_regime_params(self, regime: str) -> dict:
         params = {
-            "trending": {"sl_pct": 0.025, "tp_pct": 0.05, "pos_mult": 1.0, "min_conf": 0.60},
-            "ranging": {"sl_pct": 0.015, "tp_pct": 0.03, "pos_mult": 1.0, "min_conf": 0.65},
-            "volatile": {"sl_pct": 0.02, "tp_pct": 0.04, "pos_mult": 0.5, "min_conf": 0.75},
-            "crisis": {"sl_pct": 0.01, "tp_pct": 0.02, "pos_mult": 0.0, "min_conf": 0.95},
+            "trending": {"sl_atr": 2.0, "tp_atr": 4.0, "pos_mult": 1.0, "min_conf": 0.60},
+            "ranging": {"sl_atr": 1.5, "tp_atr": 3.0, "pos_mult": 1.0, "min_conf": 0.65},
+            "volatile": {"sl_atr": 2.5, "tp_atr": 5.0, "pos_mult": 0.5, "min_conf": 0.75},
+            "crisis": {"sl_atr": 1.0, "tp_atr": 2.0, "pos_mult": 0.0, "min_conf": 0.95},
         }
         return params.get(regime, params["ranging"])
 
