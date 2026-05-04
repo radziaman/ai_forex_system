@@ -199,14 +199,21 @@ class ExecutionEngine:
             logger.error(f"Order rejected: {result.error}")
 
     async def get_account_info(self):
-        acc = await self.client.get_account_info() if hasattr(self.client, 'get_account_info') and callable(self.client.get_account_info) else self.client.get_account_info()
+        import asyncio
+        if hasattr(self.client, 'get_account_info') and callable(self.client.get_account_info):
+            if asyncio.iscoroutinefunction(self.client.get_account_info):
+                acc = await self.client.get_account_info()
+            else:
+                acc = self.client.get_account_info()
+        else:
+            acc = None
         if acc:
             return {
-                "balance": acc.balance,
-                "equity": acc.equity,
-                "margin": acc.margin,
-                "free_margin": acc.free_margin,
-                "currency": acc.currency,
+                "balance": getattr(acc, 'balance', 100000),
+                "equity": getattr(acc, 'equity', 100000),
+                "margin": getattr(acc, 'margin', 0),
+                "free_margin": getattr(acc, 'free_margin', 100000),
+                "currency": getattr(acc, 'currency', 'USD'),
             }
         return {
             "balance": 100000,

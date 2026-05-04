@@ -23,6 +23,11 @@ connected_clients: List[WebSocket] = []
 # cTrader client instance
 ctrader_client: Optional[object] = None
 
+def update_state(**kwargs):
+    """Update the latest_state dict with provided kwargs. Called by main bot."""
+    latest_state.update(kwargs)
+    latest_state["timestamp"] = time.time()
+
 
 def init_ctrader():
     """Initialize cTrader client with proper IC Markets connection."""
