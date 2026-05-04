@@ -85,11 +85,12 @@ class ExecutionEngine:
         return None
 
     def _simulate_open(self, symbol, direction, volume, sl, tp, reason):
-        snapshot = self.data.latest_snapshot if self.data else None
-        if snapshot and hasattr(snapshot, "bid"):
-            price = snapshot.bid if direction == "SELL" else snapshot.ask
-        else:
-            price = 1.1200
+        price = 1.1200
+        if self.data is not None:
+            try:
+                price = self.data.get_price(symbol, "1h")
+            except Exception:
+                pass
         self._position_counter += 1
         trade = TradeRecord(
             timestamp=time.time(),
@@ -145,11 +146,15 @@ class ExecutionEngine:
         return False
 
     def _simulate_close(self, trade, reason):
-        snapshot = self.data.latest_snapshot if self.data else None
-        if snapshot and hasattr(snapshot, "bid"):
-            exit_price = snapshot.bid if trade.direction == "BUY" else snapshot.ask
-        else:
-            exit_price = trade.entry_price
+        exit_price = trade.entry_price
+        if self.data is not None:
+            try:
+                exit_price = self.data.get_price(trade.symbol, "1h")
+            except Exception:
+                pass
+        if exit_price == trade.entry_price:
+            logger.debug(f"Using entry price as exit for {trade.symbol} (no live data)")
+            return True  # Skip recording zero-PnL trades from missing data
         pnl = self._calculate_pnl(trade, exit_price)
         trade.exit_price = exit_price
         trade.pnl = pnl
@@ -165,11 +170,15 @@ class ExecutionEngine:
             await self.close_position(pid, reason)
 
     def _calculate_pnl(self, trade, exit_price):
+        if exit_price is None or exit_price == 0.0 or exit_price == trade.entry_price:
+            return 0.0
+        pip_size = 0.01 if "JPY" in trade.symbol.upper() else 0.0001
         if trade.direction == "BUY":
-            pips = (exit_price - trade.entry_price) * 10000
+            pips = (exit_price - trade.entry_price) / pip_size
         else:
-            pips = (trade.entry_price - exit_price) * 10000
-        return round(pips * trade.volume * 10, 2)
+            pips = (trade.entry_price - exit_price) / pip_size
+        lots = trade.volume / 100_000.0
+        return round(pips * lots * 10.0, 2)
 
     def _get_symbol_id(self, symbol):
         return {"EURUSD": 1, "GBPUSD": 2, "USDJPY": 3, "XAUUSD": 4, "BTCUSD": 5}.get(
@@ -224,9 +233,6 @@ class ExecutionEngine:
         }
 
     def get_open_positions(self):
-        snap_price = None
-        if self.data and self.data.latest_snapshot and hasattr(self.data.latest_snapshot, "bid"):
-            snap_price = self.data.latest_snapshot.bid
         return [
             {
                 "position_id": t.position_id,
@@ -236,10 +242,18 @@ class ExecutionEngine:
                 "entry_price": t.entry_price,
                 "sl": t.sl,
                 "tp": t.tp,
-                "unrealized_pnl": self._calculate_pnl(t, snap_price or t.entry_price),
+                "unrealized_pnl": self._calculate_pnl(t, self._current_price(t.symbol)),
             }
             for t in self.open_positions.values()
         ]
+
+    def _current_price(self, symbol: str) -> float:
+        if self.data is not None:
+            try:
+                return self.data.get_price(symbol, "1h")
+            except Exception:
+                pass
+        return 0.0
 
     def get_trade_history(self, limit=100):
         return [

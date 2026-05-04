@@ -612,14 +612,16 @@ class RTSForexBot:
                         reason = "Take Profit"
 
                 if sl_hit or tp_hit:
-                    pnl_pips = trade.direction in ("BUY",) and (trade.tp - trade.entry_price) / 0.0001 * 10 \
-                        or (trade.entry_price - trade.tp) / 0.0001 * 10
+                    pip_size = 0.01 if "JPY" in sym.upper() else 0.0001
+                    pnl_pips = ((trade.direction == "BUY" and 1) or -1) * ((price if tp_hit else sl_hit and price or 0) or price - trade.entry_price) / pip_size
+                    lots = trade.volume / 100000.0
+                    pnl_usd = pnl_pips * lots * 10.0
                     logger.info(f"Closing {sym} {trade.direction} @ {price:.5f}: {reason}")
                     await self.execution.close_position(trade.position_id, reason)
                     self.notifier.trade_closed(
                         symbol=sym, direction=trade.direction,
                         entry=trade.entry_price, exit=price,
-                        pnl=pnl_pips, reason=reason, hold_time=time.time() - trade.timestamp,
+                        pnl=pnl_usd, reason=reason, hold_time=time.time() - trade.timestamp,
                     )
             except Exception as e:
                 logger.debug(f"Position mgmt error for {getattr(trade,'symbol','?')}: {e}")
