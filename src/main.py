@@ -389,7 +389,10 @@ class RTSForexBot:
             if decision.get("approved") and not decision.get("blocked_by_correlation"):
                 await self._execute_trade(sym, decision, account_info)
 
-        # 6. Update dashboard
+        # 6. Manage existing positions — check SL/TP against current prices
+        await self._manage_positions()
+
+        # 7. Update dashboard
         self._update_dashboard(account_info, "trading")
 
     def _gather_external_signals(self) -> np.ndarray:
@@ -572,6 +575,54 @@ class RTSForexBot:
                 self.online_learner.request_retrain(
                     sym, fetch_fn, self.feature_pipeline
                 )
+
+    async def _manage_positions(self):
+        """Check all open positions against current prices. Close if SL/TP hit."""
+        positions = list(self.execution.open_positions.values())
+        if not positions:
+            return
+
+        for trade in positions:
+            try:
+                sym = trade.symbol
+                df = self.data_manager.get_ohlcv(sym, "1h")
+                if df is None or len(df) < 3:
+                    continue
+                price = float(df["close"].iloc[-1])
+                high = float(df["high"].iloc[-1])
+                low = float(df["low"].iloc[-1])
+
+                sl_hit = False
+                tp_hit = False
+                reason = ""
+
+                if trade.direction == "BUY":
+                    if low <= trade.sl:
+                        sl_hit = True
+                        reason = "Stop Loss"
+                    elif high >= trade.tp:
+                        tp_hit = True
+                        reason = "Take Profit"
+                else:
+                    if high >= trade.sl:
+                        sl_hit = True
+                        reason = "Stop Loss"
+                    elif low <= trade.tp:
+                        tp_hit = True
+                        reason = "Take Profit"
+
+                if sl_hit or tp_hit:
+                    pnl_pips = trade.direction in ("BUY",) and (trade.tp - trade.entry_price) / 0.0001 * 10 \
+                        or (trade.entry_price - trade.tp) / 0.0001 * 10
+                    logger.info(f"Closing {sym} {trade.direction} @ {price:.5f}: {reason}")
+                    await self.execution.close_position(trade.position_id, reason)
+                    self.notifier.trade_closed(
+                        symbol=sym, direction=trade.direction,
+                        entry=trade.entry_price, exit=price,
+                        pnl=pnl_pips, reason=reason, hold_time=time.time() - trade.timestamp,
+                    )
+            except Exception as e:
+                logger.debug(f"Position mgmt error for {getattr(trade,'symbol','?')}: {e}")
 
     # ================================================================
     # HELPERS
