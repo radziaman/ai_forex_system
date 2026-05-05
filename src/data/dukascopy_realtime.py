@@ -62,7 +62,7 @@ class DukascopyProvider(DataProvider):
         if self._session is None or self._session.closed:
             timeout = aiohttp.ClientTimeout(total=30, connect=10)
             connector = aiohttp.TCPConnector(
-                limit=100,  # Max connections
+                limit=100,
                 ttl_dns_cache=300,
                 keepalive_timeout=30,
             )
@@ -72,6 +72,12 @@ class DukascopyProvider(DataProvider):
                 headers={"User-Agent": "Mozilla/5.0 (compatible; RTS-AI-Forex/4.0)"}
             )
         return self._session
+
+    async def close(self):
+        """Close the aiohttp session."""
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
 
     def _decode_bi5(self, data: bytes) -> List[tuple]:
         """Decode Dukascopy BI5 binary format (20 bytes per tick)."""
@@ -101,10 +107,15 @@ class DukascopyProvider(DataProvider):
             raise ValueError(f"Symbol {symbol} not supported")
         
         dt = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        session = await self._get_session()
+        
+        # Skip future dates and only fetch up to current hour - 1
+        now = datetime.now(timezone.utc)
+        max_hour = 23
+        if dt.date() == now.date():
+            max_hour = now.hour - 1  # Don't fetch current hour (not available yet)
         
         all_ticks = []
-        for hour in range(24):
+        for hour in range(max_hour + 1):
             url = TICK_BI5_URL.format(
                 symbol=duk_symbol, year=dt.year, month=dt.month, day=dt.day, hour=hour
             )
@@ -116,16 +127,17 @@ class DukascopyProvider(DataProvider):
                 data = cache_file.read_bytes()
             else:
                 try:
-                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                    session = await self._get_session()
+                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
                         if resp.status == 200:
                             data = await resp.read()
                             if self.cache_enabled and data and len(data) > 10:
                                 cache_file.write_bytes(data)
+                    if data:
+                        await asyncio.sleep(self.rate_limit)
                 except Exception as e:
-                    logger.debug(f"Dukascopy fetch error for {hour}:00 - {e}")
+                    logger.debug(f"Dukascopy fetch error for {symbol} {date} {hour}:00 - {e}")
                     continue
-                
-                await asyncio.sleep(self.rate_limit)
             
             if not data or len(data) < 10:
                 continue

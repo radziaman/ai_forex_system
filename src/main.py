@@ -510,35 +510,73 @@ class RTSForexBot:
                     sym = download_queue[0]
                     logger.info(f"Background downloading {sym} from Dukascopy...")
                     last_data_download = time.time()
+                    success = False
                     try:
-                        from data.dukascopy_realtime import DukascopyProvider
+                        from data.dukascopy_realtime import DukascopyProvider, CACHE_DIR
                         from datetime import datetime, timezone, timedelta
-                        provider = DukascopyProvider(cache=True)
-                        end = datetime.now(timezone.utc)
-                        start = end - timedelta(days=30)
-                        ohlcv = await provider.fetch_ohlcv(sym, "1h",
-                            start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
-                        if ohlcv and len(ohlcv) > 50:
-                            df = pd.DataFrame([{
-                                "timestamp": o.timestamp, "open": o.open, "high": o.high,
-                                "low": o.low, "close": o.close, "volume": o.volume,
-                            } for o in ohlcv])
-                            self.data_manager.ohlcv[sym]["1h"] = df
-                            # Fit HMM regime for this symbol
-                            if len(df) > 200:
-                                rd = HMMRegimeDetector(n_regimes=4, lookback=60)
-                                rd.fit(df)
-                                self._regimes[sym] = rd.detect_regime(df)
-                            # Update feature pipeline
-                            self.feature_pipeline.fit_all(self.data_manager.ohlcv)
-                            logger.info(f"✅ Background download complete for {sym}: {len(df)} bars")
-                            self._send_alert(f"Data loaded for {sym}: {len(df)} 1h bars", level="info")
+
+                        # Check for cached data first
+                        cache_files = sorted(CACHE_DIR.glob(f"{sym}_*_*.bi5"))
+                        if cache_files:
+                            import lzma, struct, pandas as pd
+                            ticks = []
+                            for cf in cache_files[-720:]:
+                                raw = cf.read_bytes()
+                                try: decompressed = lzma.decompress(raw)
+                                except: decompressed = raw
+                                parts = cf.stem.split("_")
+                                dt_str, hour_str = parts[-2], parts[-1]
+                                base_ts = datetime.strptime(dt_str, "%Y%m%d").timestamp() + int(hour_str) * 3600
+                                for i in range(0, len(decompressed), 20):
+                                    chunk = decompressed[i:i+20]
+                                    if len(chunk) < 20: break
+                                    ms = struct.unpack(">I", chunk[0:4])[0]
+                                    ask_raw = struct.unpack(">I", chunk[4:8])[0]
+                                    bid_raw = struct.unpack(">I", chunk[8:12])[0]
+                                    ticks.append((base_ts + ms/1000.0, bid_raw/100000.0, ask_raw/100000.0))
+                            if len(ticks) > 50:
+                                ticks.sort(key=lambda t: t[0])
+                                df = pd.DataFrame(ticks, columns=["timestamp","bid","ask"])
+                                df["bar"] = (df["timestamp"] // 3600).astype(int)
+                                bars = df.groupby("bar").agg(open=("bid","first"),high=("bid","max"),
+                                    low=("bid","min"),close=("bid","last"),volume=("ask","count")).reset_index()
+                                bars["timestamp"] = bars["bar"] * 3600
+                                bars = bars.drop(columns=["bar"])
+                                self.data_manager.ohlcv[sym]["1h"] = bars
+                                if len(bars) > 200:
+                                    rd = HMMRegimeDetector(n_regimes=4, lookback=60)
+                                    rd.fit(bars)
+                                    self._regimes[sym] = rd.detect_regime(bars)
+                                self.feature_pipeline.fit_all(self.data_manager.ohlcv)
+                                logger.info(f"✅ Background loaded {sym}: {len(bars)} bars (cached)")
+                                success = True
                         else:
-                            logger.warning(f"Background download for {sym}: insufficient data ({len(ohlcv) if ohlcv else 0} bars)")
+                            # Download from network (end=yesterday avoids current-day timeouts)
+                            provider = DukascopyProvider(cache=True)
+                            end = datetime.now(timezone.utc) - timedelta(days=1)
+                            start = end - timedelta(days=30)
+                            ohlcv = await provider.fetch_ohlcv(sym, "1h",
+                                start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
+                            await provider.close()
+                            if ohlcv and len(ohlcv) > 50:
+                                df = pd.DataFrame([{
+                                    "timestamp": o.timestamp, "open": o.open, "high": o.high,
+                                    "low": o.low, "close": o.close, "volume": o.volume,
+                                } for o in ohlcv])
+                                self.data_manager.ohlcv[sym]["1h"] = df
+                                if len(df) > 200:
+                                    rd = HMMRegimeDetector(n_regimes=4, lookback=60)
+                                    rd.fit(df)
+                                    self._regimes[sym] = rd.detect_regime(df)
+                                self.feature_pipeline.fit_all(self.data_manager.ohlcv)
+                                logger.info(f"✅ Background download complete for {sym}: {len(df)} bars")
+                                success = True
                     except Exception as e:
                         logger.warning(f"Background download failed for {sym}: {e}")
-                    finally:
+                    
+                    if success:
                         download_queue.pop(0)
+                        self._send_alert(f"Data loaded for {sym}", level="info")
                     if not download_queue:
                         logger.info("✅ Background downloader: all symbols complete")
 
