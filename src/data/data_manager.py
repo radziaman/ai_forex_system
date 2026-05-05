@@ -102,8 +102,11 @@ class DataManager:
 
     def _aggregate_1m(self, symbol: str, ts: float, price: float, volume: float):
         df = self.ohlcv[symbol]["1m"]
+        # Ensure timestamp column is numeric (float)
+        if not df.empty and df["timestamp"].dtype == "object":
+            df["timestamp"] = pd.to_numeric(df["timestamp"], errors="coerce")
         bar_ts = pd.Timestamp.fromtimestamp(ts).floor("1min").timestamp()
-        if df.empty or df.iloc[-1]["timestamp"] < bar_ts:
+        if df.empty or float(df.iloc[-1]["timestamp"]) < bar_ts:
             new = pd.DataFrame([{
                 "timestamp": bar_ts, "open": price, "high": price,
                 "low": price, "close": price, "volume": volume,
@@ -134,7 +137,7 @@ class DataManager:
         df_1m = df_1m.set_index("datetime")
         for tf, minutes in [("5m", 5), ("15m", 15), ("1h", 60), ("4h", 240)]:
             res = (
-                df_1m.resample(f"{minutes}T")
+                df_1m.resample(f"{minutes}min")
                 .agg({"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"})
                 .dropna()
             )
@@ -192,7 +195,7 @@ class DataManager:
         tf_map = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
         secs = tf_map.get(tf, 3600)
         periods = days * 86400 // secs
-        dates = pd.date_range(end=pd.Timestamp.now(), periods=periods, freq=f"{secs}S")
+        dates = pd.date_range(end=pd.Timestamp.now(), periods=periods, freq=f"{secs}s")
         base = BASE_PRICES.get(symbol, 1.12)
         prices = base * np.exp(np.cumsum(np.random.normal(0, 0.0001, periods)))
         spread = 0.0001 if "JPY" not in symbol.upper() else 0.01

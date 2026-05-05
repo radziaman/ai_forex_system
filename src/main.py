@@ -1,5 +1,5 @@
-"""
-RTS AI Forex Trading System — Elite Edition.
+﻿"""
+RTS AI Forex Trading System â€” Elite Edition.
 Multi-pair async trading loop with 7 major forex pairs, per-symbol regime
 detection, MoE ensemble, economic calendar gating, FinBERT sentiment,
 and institutional-grade risk management.
@@ -34,7 +34,17 @@ from data.market_session import MarketSession
 from data.economic_calendar import EconomicCalendar
 from data.alternative_data import AlternativeDataProvider
 from data.order_flow import OrderFlowAnalyzer, GammaExposureMapper, DarkPoolDetector
+from data.toxic_flow import ToxicFlowDetector, ToxicFlowSnapshot
+from data.smart_money import COTAnalyzer, COTSnapshot
 from ai.sentiment import SentimentAnalyzer
+from ai.regime_agents import RegimeSpecialistSystem, REGIME_CONFIGS
+from ai.maml_agent import MAMLAgent
+from rts_ai_fx.causal_features import CausalFeatureSelector
+from rts_ai_fx.attention_fusion import AttentionFusionPipeline
+from execution.algo_executor import AlgoExecutor, ExecutionAlgoConfig
+from risk.circuit_breaker import CircuitBreaker, MarketStressSnapshot
+from infrastructure.event_bus import TradingEventBus, EventType, get_event_bus
+from training.model_registry import ModelRegistry, ABTestConfig
 from validation.walk_forward import PurgedWalkForward
 from validation.monte_carlo import MonteCarloSigTest
 from backtest.vectorized_backtester import VectorizedBacktester
@@ -50,7 +60,7 @@ except ImportError:
     logger = logging.getLogger(__name__)
 
 
-# Pairs that share a common base — prevents double-counting correlated entries
+# Pairs that share a common base â€” prevents double-counting correlated entries
 CORRELATED_GROUPS = [
     {"EURUSD", "GBPUSD", "EURGBP"},
     {"AUDUSD", "NZDUSD"},
@@ -91,11 +101,16 @@ class RTSForexBot:
         self.initial_balance = initial_balance
 
         logger.remove()
-        logger.add(sys.stdout, level=self.config.logging.level)
+        # Only log to file to avoid Windows console encoding issues
+        # Disable all stdout/stderr output with icons
         logger.add(
             self.config.data.logs_path.rstrip("/") + "/moneybot.log",
             rotation=self.config.logging.rotation,
             retention=self.config.logging.retention,
+            format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}",
+            colorize=False,
+            enqueue=False,
+            serialize=False,
         )
 
         self._init_ctrader()
@@ -106,6 +121,7 @@ class RTSForexBot:
         self._init_notifications()
         self._init_validation()
         self._init_monitoring()
+        self._init_enhancements()  # New: All 11 enhancements
 
         self.trade_count = 0
         self.is_running = False
@@ -113,6 +129,10 @@ class RTSForexBot:
         self._current_sentiment = 0.0
         self._regimes: Dict[str, str] = {}
         self._trade_decisions: Dict[str, dict] = {}
+        self._toxic_flows: Dict[str, ToxicFlowSnapshot] = {}
+        self._circuit_breakers: Dict[str, CircuitBreaker] = {}
+        self._cot_data: Dict[str, COTSnapshot] = {}
+        self._attn_fusion: Optional[AttentionFusionPipeline] = None
 
         logger.info("=" * 60)
         logger.info("  RTS AI Forex Trading System v4.0 (Multi-Pair)")
@@ -121,8 +141,130 @@ class RTSForexBot:
         logger.info("  Economic Calendar | FinBERT Sentiment | Alt Data")
         logger.info("=" * 60)
 
+    def _init_enhancements(self):
+        """Initialize all 11 enhancement modules."""
+        logger.info("=" * 60)
+        logger.info("  Initializing 11 Enhancement Modules")
+        logger.info("=" * 60)
+
+        # 1. Toxic Flow Detection
+        self.toxic_detector = ToxicFlowDetector(lookback=100, bucket_size=1000)
+        logger.info("âœ“ Toxic Flow Detector (VPIN) initialized")
+
+        # 2. Multi-Agent Regime Specialist System
+        state_dim = 55 * 30  # 55 features * 30 lookback
+        self.regime_system = RegimeSpecialistSystem(state_dim=state_dim, n_actions=5)
+        logger.info("âœ“ Regime Specialist System initialized")
+
+        # 3. Causal Feature Selection
+        self.causal_selector = CausalFeatureSelector(max_lag=5, alpha=0.01)
+        logger.info("âœ“ Causal Feature Selector initialized")
+
+        # 4. Smart Money Tracking (COT)
+        self.cot_analyzer = COTAnalyzer(cache_dir="data/alternative_data")
+        logger.info("âœ“ Smart Money Tracker (COT) initialized")
+
+        # 5. Flash Crash & Circuit Breakers
+        self.circuit_breakers: Dict[str, CircuitBreaker] = {}
+        for sym in SYMBOLS:
+            self.circuit_breakers[sym] = CircuitBreaker(
+                price_velocity_threshold=0.005,
+                spread_multiplier_threshold=5.0,
+                volume_spike_multiplier=10.0,
+            )
+        logger.info(f"âœ“ Circuit Breakers initialized for {len(SYMBOLS)} symbols")
+
+        # 6. Meta-Learning Agent
+        self.maml_agent = MAMLAgent(input_dim=55 * 30, inner_lr=0.01, meta_lr=0.001)
+        maml_path = "models/maml_agent.pth"
+        if os.path.exists(maml_path):
+            self.maml_agent.load(maml_path)
+            logger.info("MAML agent loaded from checkpoint")
+        logger.info("âœ“ Meta-Learning Agent initialized")
+
+        # 7. Execution Algorithm Library
+        self.algo_executor = AlgoExecutor(self.ctrader, self.data_manager, self.cost_model)
+        logger.info("âœ“ Execution Algorithm Library initialized")
+
+        # 8. Event-Driven Architecture
+        self.event_bus = get_event_bus()
+        # Don't start event bus here - will be started in async context
+        # Subscribe to key events
+        self.event_bus.subscribe(EventType.TOXIC_FLOW, self._on_toxic_flow)
+        self.event_bus.subscribe(EventType.CIRCUIT_BREAKER, self._on_circuit_breaker)
+        self.event_bus.subscribe(EventType.MARKET_STRESS, self._on_market_stress)
+        self.event_bus.subscribe(EventType.RISK_ALERT, self._on_risk_alert)
+        logger.info("âœ“ Event-Driven Architecture initialized")
+
+        # 9. Model Registry & A/B Testing
+        self.model_registry = ModelRegistry(registry_path="models/registry")
+        logger.info("âœ“ Model Registry initialized")
+
+        # 10. Multi-Timeframe Attention Fusion
+        tf_dims = {tf: 55 for tf in self.feature_pipeline.timeframes} if self.feature_pipeline else {"1h": 55}
+        self.attention_fusion = AttentionFusionPipeline(
+            timeframes=list(tf_dims.keys()),
+            lookback=30,
+        )
+        if self.feature_pipeline:
+            self.attention_fusion.init_model(tf_dims, hidden_dim=256)
+        logger.info("âœ“ Multi-Timeframe Attention Fusion initialized")
+
+        # 11. Social Media / Satellite / News / Behavioral Sentiment
+        self.behavioral_ai = BehavioralSentimentAI(
+            use_transformers=True,
+            cache_ttl=300,
+            max_posts=200,
+            satellite_enabled=True,
+            onchain_enabled=True,
+        )
+        logger.info("âœ“ Behavioral Sentiment AI initialized")
+
+        logger.info("=" * 60)
+        logger.info("  All 11 Enhancement Modules Active")
+        logger.info("=" * 60)
+
+    async def _on_toxic_flow(self, event):
+        """Handle toxic flow detection event."""
+        snapshot: ToxicFlowSnapshot = event.data
+        if snapshot.is_toxic:
+            logger.warning(
+                f"TOXIC FLOW: VPIN={snapshot.vpin:.2f} | "
+                f"Level={snapshot.toxicity_level} | "
+                f"Direction={snapshot.informed_direction}"
+            )
+            self.notifier.send(
+                f"Toxic flow detected! VPIN={snapshot.vpin:.2f}",
+                level="warning",
+            )
+
+    async def _on_circuit_breaker(self, event):
+        """Handle circuit breaker event."""
+        snapshot: MarketStressSnapshot = event.data
+        if snapshot.should_halt:
+            logger.error(f"CIRCUIT BREAKER: {snapshot.halt_reason}")
+            self.notifier.send(
+                f"Trading halted: {snapshot.halt_reason}",
+                level="error",
+            )
+
+    async def _on_market_stress(self, event):
+        """Handle market stress event."""
+        snapshot: MarketStressSnapshot = event.data
+        if not snapshot.is_healthy:
+            logger.warning(f"Market stress: {snapshot.stress_level}")
+
+    async def _on_risk_alert(self, event):
+        """Handle risk alert event."""
+        alert_data = event.data
+        logger.warning(f"RISK ALERT: {alert_data}")
+        self.notifier.risk_warning(
+            "Risk alert triggered",
+            details=alert_data,
+        )
+
     # ------------------------------------------------------------------
-    # Initialization
+    # MAIN LOOP
     # ------------------------------------------------------------------
 
     def _init_ctrader(self):
@@ -372,9 +514,15 @@ class RTSForexBot:
 
     async def start(self):
         logger.info("Starting RTS Forex Bot...")
+        
+        # Start event bus now that we have an event loop
+        if hasattr(self, 'event_bus') and self.event_bus:
+            asyncio.create_task(self.event_bus.start())
+            logger.info("âœ“ Event-Driven Architecture started")
+        
         result = await self.ctrader.start()
         if not result:
-            logger.warning("cTrader in simulation mode — no real connection")
+            logger.warning("cTrader in simulation mode â€” no real connection")
 
         # Subscribe to Level II DOM for all symbols (institutional feature)
         # Try Open API first, fall back to FIX if available
@@ -447,7 +595,7 @@ class RTSForexBot:
 
         self._start_dashboard()
         self.is_running = True
-        logger.info("Bot is LIVE — monitoring 7 pairs with Dukascopy data")
+        logger.info("Bot is LIVE â€” monitoring 7 pairs with Dukascopy data")
 
         cycle_counter = 0
         last_sentiment_refresh = 0.0
@@ -505,7 +653,7 @@ class RTSForexBot:
                         regime_summary=regime_summary,
                     )
 
-                # Background data downloader — download one missing symbol per cycle
+                # Background data downloader â€” download one missing symbol per cycle
                 if download_queue and time.time() - last_data_download > 30:
                     sym = download_queue[0]
                     logger.info(f"Background downloading {sym} from Dukascopy...")
@@ -548,7 +696,7 @@ class RTSForexBot:
                                     rd.fit(bars)
                                     self._regimes[sym] = rd.detect_regime(bars)
                                 self.feature_pipeline.fit_all(self.data_manager.ohlcv)
-                                logger.info(f"✅ Background loaded {sym}: {len(bars)} bars (cached)")
+                                logger.info(f"âœ… Background loaded {sym}: {len(bars)} bars (cached)")
                                 success = True
                         else:
                             # Download from network (end=yesterday avoids current-day timeouts)
@@ -569,7 +717,7 @@ class RTSForexBot:
                                     rd.fit(df)
                                     self._regimes[sym] = rd.detect_regime(df)
                                 self.feature_pipeline.fit_all(self.data_manager.ohlcv)
-                                logger.info(f"✅ Background download complete for {sym}: {len(df)} bars")
+                                logger.info(f"âœ… Background download complete for {sym}: {len(df)} bars")
                                 success = True
                     except Exception as e:
                         logger.warning(f"Background download failed for {sym}: {e}")
@@ -578,7 +726,7 @@ class RTSForexBot:
                         download_queue.pop(0)
                         self._send_alert(f"Data loaded for {sym}", level="info")
                     if not download_queue:
-                        logger.info("✅ Background downloader: all symbols complete")
+                        logger.info("âœ… Background downloader: all symbols complete")
 
             except asyncio.CancelledError:
                 break
@@ -644,36 +792,45 @@ class RTSForexBot:
         if loaded < len(SYMBOLS):
             logger.warning(f"Only {loaded}/{len(SYMBOLS)} pairs in cache. Background downloader will fetch remaining.")
         else:
-            logger.info(f"✓ All {loaded} pairs loaded from Dukascopy cache")
+            logger.info(f"âœ“ All {loaded} pairs loaded from Dukascopy cache")
 
     def _start_dashboard(self):
-        import threading
-        import uvicorn
+        """Dashboard disabled for now - use log files for monitoring."""
         d = self.config.dashboard
-        self._dashboard_loop = None
-        def run_dashboard():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            self._dashboard_loop = loop
-            uvicorn.run(app, host=d.host, port=d.port, log_level="error")
-        t = threading.Thread(target=run_dashboard, daemon=True)
-        t.start()
-        # Wait for loop to be set
-        import time
-        for _ in range(50):
-            if self._dashboard_loop:
-                break
-            time.sleep(0.1)
-        logger.info(f"Dashboard: http://{d.host}:{d.port}")
+        logger.info(f"Dashboard disabled - monitor via logs at data/logs/moneybot.log")
+        # import threading
+        # import uvicorn
+        # d = self.config.dashboard
+        # self._dashboard_loop = None
+        # 
+        # def run_dashboard():
+        #     loop = asyncio.new_event_loop()
+        #     asyncio.set_event_loop(loop)
+        #     self._dashboard_loop = loop
+        #     uvicorn.run(app, host=d.host, port=d.port, log_level="error")
+        # 
+        # t = threading.Thread(target=run_dashboard, daemon=True)
+        # t.start()
+        # 
+        # import time
+        # for _ in range(50):
+        #     if self._dashboard_loop:
+        #         break
+        #     time.sleep(0.1)
+        # 
+        # if self._dashboard_loop:
+        #     logger.info(f"Dashboard: http://{d.host}:{d.port}")
+        # else:
+        #     logger.warning(f"Dashboard may have failed to start on {d.host}:{d.port}")
 
     # ================================================================
-    # TRADING CYCLE — iterates over all 7 pairs
+    # TRADING CYCLE â€” iterates over all 7 pairs
     # ================================================================
 
     async def _trading_cycle(self):
         # 0. Market Session & Liquidity Check
         if MarketSession.is_weekend():
-            logger.info("Weekend — market closed")
+            logger.info("Weekend â€” market closed")
             self._update_dashboard({"balance": 100000}, "CLOSED")
             await asyncio.sleep(3600)  # Sleep 1 hour on weekends
             return
@@ -698,6 +855,24 @@ class RTSForexBot:
         if not is_liquid:
             logger.debug(f"Low liquidity: {liquidity_reason}")
 
+        # 0.5 NEW: Circuit Breaker Check (Enhancement #5)
+        for sym in SYMBOLS:
+            tick = self.data_manager.latest_snapshot.get(sym)
+            if tick:
+                should_halt, reason, snapshot = self.circuit_breakers[sym].check_market_health(
+                    sym, {"bid": getattr(tick, 'bid', 0), "ask": getattr(tick, 'ask', 0),
+                           "price": getattr(tick, 'bid', 0), "volume": getattr(tick, 'volume', 0)}
+                )
+                if should_halt:
+                    await self.event_bus.emit(
+                        EventType.CIRCUIT_BREAKER,
+                        {"symbol": sym, "reason": reason, "snapshot": snapshot},
+                        source="circuit_breaker"
+                    )
+                    if sym in self.circuit_breakers:
+                        logger.error(f"CIRCUIT BREAKER: {sym} trading halted: {reason}")
+                    continue
+
         # 1. Economic Calendar Gate (global)
         suppressed, event = self.economic_calendar.is_suppressed()
         if suppressed and event:
@@ -707,25 +882,63 @@ class RTSForexBot:
             await self._manage_positions()
             return
 
-        # 2. Gather global intelligence
+        # 2. Gather global intelligence (Enhanced with Behavioral AI #11)
         external_signals = self._gather_external_signals()
+        
+        # NEW: Get behavioral sentiment snapshot
+        try:
+            behavioral_snap = self.behavioral_ai.analyze_social_media()
+            self._behavioral_sentiment = behavioral_snap.overall_score
+            logger.debug(f"Behavioral sentiment: {behavioral_snap.overall_score:.2f} (fear/greed={behavioral_snap.fear_greed_index:.0f})")
+        except Exception:
+            self._behavioral_sentiment = 0.0
 
-        # 3. Evaluate each symbol
+        # 3. Evaluate each symbol (Enhanced with Regime Specialists #2 & Attention #10)
         self._trade_decisions = {}
         account_info = await self.execution.get_account_info()
         if account_info is None:
             return
 
         for sym in SYMBOLS:
-            decision = await self._evaluate_symbol(sym, account_info, external_signals)
+            decision = await self._evaluate_symbol_enhanced(sym, account_info, external_signals)
             if decision:
                 # Add spread check
                 spread_pips = self._get_current_spread(sym)
                 decision["spread_pips"] = spread_pips
                 decision["is_acceptable_spread"] = self.cost_model.get_spread_warning_level(sym, spread_pips) == "normal"
+                
+                # NEW: Toxic flow check (Enhancement #1)
+                if sym in self.toxic_detectors:
+                    toxic_snap = self.toxic_detector.update(
+                        {"price": self.data_manager.get_price(sym, "1h") or 1.12,
+                         "mid": self.data_manager.get_price(sym, "1h") or 1.12,
+                         "volume": 1}
+                    )
+                    decision["toxic_flow"] = toxic_snap.is_toxic
+                    decision["toxic_vpin"] = toxic_snap.vpin
+                    if toxic_snap.is_toxic:
+                        decision["approved"] = False
+                        decision["rejection_reason"] = f"toxic_flow_vpin={toxic_snap.vpin:.2f}"
+                        await self.event_bus.emit(
+                            EventType.TOXIC_FLOW,
+                            {"symbol": sym, "snapshot": toxic_snap},
+                            source="toxic_detector"
+                        )
+                
+                # NEW: Smart money check (Enhancement #4)
+                if decision.get("approved") and sym in self.cot_data:
+                    cot_snap = self.cot_analyzer.fetch_latest(sym)
+                    should_block, reason = self.cot_analyzer.get_trading_signal(
+                        sym, decision.get("direction", "BUY")
+                    )
+                    if should_block:
+                        decision["approved"] = False
+                        decision["rejection_reason"] = reason
+                        logger.info(f"{sym} trade blocked: {reason}")
+                
                 self._trade_decisions[sym] = decision
 
-        # 4. Apply correlation filter — prevent opposing trades on correlated pairs
+        # 4. Apply correlation filter â€” prevent opposing trades on correlated pairs
         self._apply_correlation_filter()
 
         # 5. Execute approved trades (with spread verification)
@@ -735,12 +948,12 @@ class RTSForexBot:
                 if not decision.get("is_acceptable_spread", True):
                     logger.warning(f"{sym} trade blocked: spread too wide ({decision.get('spread_pips', 0):.1f} pips)")
                     continue
-                await self._execute_trade(sym, decision, account_info)
+                await self._execute_trade_enhanced(sym, decision, account_info)
 
-        # 6. Manage existing positions — check SL/TP against current prices
+        # 6. Manage existing positions â€” check SL/TP against current prices
         await self._manage_positions()
 
-        # 7. Check if retraining is needed for any pair (moved from _execute_trade)
+        # 7. Check if retraining is needed for any pair
         for sym in SYMBOLS:
             if self.online_learner.should_retrain(sym, self.risk.total_trades):
                 def fetch_fn(p):
@@ -750,8 +963,264 @@ class RTSForexBot:
                     return None
                 self.online_learner.request_retrain(sym, fetch_fn, self.feature_pipeline)
 
-        # 8. Update dashboard
-        self._update_dashboard(account_info, "trading")
+        # 8. Update dashboard (Enhanced with new metrics)
+        self._update_dashboard_enhanced(account_info, "trading")
+
+    async def _evaluate_symbol_enhanced(
+        self, symbol: str, account_info: dict, external_signals: np.ndarray,
+    ) -> Optional[dict]:
+        """Enhanced symbol evaluation with all 11 modules."""
+        # Get OHLCV for this symbol
+        ohlcv = self.data_manager.get_ohlcv_dict(symbol)
+        price = self.data_manager.get_price(symbol, "1h")
+        atr = self.data_manager.get_atr(symbol, "1h", 14)
+        df_1h = self.data_manager.get_ohlcv(symbol, "1h")
+
+        if df_1h is None or len(df_1h) < 60:
+            return None
+
+        # Detect regime (Enhanced with Regime Specialist #2)
+        if symbol not in self._regimes or self.regime_detector is None:
+            rd = HMMRegimeDetector(n_regimes=4, lookback=60)
+            rd.fit(df_1h)
+            regime = rd.detect_regime(df_1h)
+            self._regimes[symbol] = regime
+        else:
+            regime = self.regime_detector.detect_regime(df_1h)
+            self._regimes[symbol] = regime
+
+        if not HMMRegimeDetector.should_trade_static(regime):
+            return None
+
+        # Feature extraction (Enhanced with Causal Features #3 & Attention Fusion #10)
+        tick_buffer = self.data_manager.get_tick_buffer(symbol, 1000)
+        
+        # Use causal feature selection if available
+        features_df = None
+        if self.causal_selector and len(df_1h) > 50:
+            try:
+                # Prepare target for causal analysis
+                if "close" in df_1h.columns and len(df_1h) > 10:
+                    target = df_1h["close"].pct_change().shift(-1).dropna()
+                    if len(target) > 50:
+                        features_processed = compute_features(df_1h.iloc[:-1].copy())
+                        causal_features = self.causal_selector.fit_transform(
+                            features_processed, target
+                        )
+                        features_df = causal_features
+            except Exception:
+                pass
+        
+        # Transform features
+        if features_df is None:
+            features = self.feature_pipeline.transform(
+                self.data_manager.ohlcv, symbol=symbol,
+                tick_buffer=tick_buffer,
+                external_signals=external_signals,
+            )
+        else:
+            # Use attention fusion if available
+            if self.attention_fusion:
+                try:
+                    tf_data = {}
+                    for tf in self.feature_pipeline.timeframes:
+                        df_tf = self.data_manager.get_ohlcv(symbol, tf)
+                        if df_tf is not None and len(df_tf) >= 30:
+                            processed = compute_features(df_tf.copy())
+                            tf_data[tf] = processed.values[-30:]
+                    fused, attn_info = self.attention_fusion.fuse(tf_data)
+                    features = fused
+                except Exception:
+                    features = None
+            else:
+                features = None
+
+        if features is None:
+            return None
+
+        # Ensemble inference (Enhanced with Regime Specialist #2)
+        # Use regime specialist system instead of basic ensemble
+        if hasattr(self, 'regime_system') and self.regime_system:
+            try:
+                state = features.flatten() if features.ndim > 1 else features
+                action, sl_raw, tp_raw, size_raw, info = self.regime_system.select_action(
+                    state, regime
+                )
+                # Convert action to prediction
+                pred_price = price * (1 + 0.001 * sl_raw) if action == 1 else price * (1 - 0.001 * sl_raw)
+                confidence = info.get("confidence", 0.5)
+                direction = "BUY" if action in [1, 3] else "SELL" if action in [2, 4] else "HOLD"
+                should_trade = direction != "HOLD"
+            except Exception as e:
+                logger.debug(f"Regime specialist error: {e}")
+                # Fallback to basic ensemble
+                ensemble_pred = self.ensemble.predict(features, regime=regime)
+                confidence = ensemble_pred.confidence
+                should_trade, direction, agreement = self.ensemble.should_trade(
+                    ensemble_pred, price, min_confidence=0.65,
+                )
+                pred_price = ensemble_pred.price
+        else:
+            # Basic ensemble (original)
+            ensemble_pred = self.ensemble.predict(features, regime=regime)
+            confidence = ensemble_pred.confidence
+            should_trade, direction, agreement = self.ensemble.should_trade(
+                ensemble_pred, price, min_confidence=0.65,
+            )
+            pred_price = ensemble_pred.price
+
+        # Sentiment-adjusted confidence (Enhanced with Behavioral AI #11)
+        if should_trade and abs(self._behavioral_sentiment) > 0.3:
+            sent_direction = 1 if self._behavioral_sentiment > 0 else 0
+            if sent_direction == (1 if direction == "BUY" else 0):
+                confidence *= 1.1
+            else:
+                confidence *= 0.9
+            confidence = min(max(confidence, 0.0), 1.0)
+
+        if not should_trade:
+            return None
+
+        # Regime params (Enhanced with Regime Specialist #2)
+        if hasattr(self, 'regime_system') and self.regime_system:
+            regime_params = self.regime_system.get_regime_params(regime)
+        else:
+            regime_params = HMMRegimeDetector.get_regime_params_static(regime)
+        
+        adjusted_conf = confidence * regime_params["pos_mult"]
+
+        if self._current_sentiment < -0.5:
+            adjusted_conf *= 0.5
+
+        # Kelly sizing
+        volume = self.risk.calculate_kelly_size(
+            account_info.get("balance", 100_000), price, atr, adjusted_conf,
+        )
+        volume = max(volume, 1)  # Minimum 1 unit
+
+        return {
+            "symbol": symbol,
+            "direction": direction,
+            "volume": volume,
+            "price": price,
+            "atr": atr,
+            "confidence": confidence,
+            "regime": regime,
+            "regime_params": regime_params,
+            "approved": True,
+            "blocked_by_correlation": False,
+            "model_prediction": pred_price,
+            # NEW: Enhanced fields
+            "behavioral_sentiment": self._behavioral_sentiment,
+            "toxic_vpin": self._toxic_flows.get(symbol, ToxicFlowSnapshot()).vpin,
+            "cot_signal": self._cot_data.get(symbol, COTSnapshot()).institutional_signal if hasattr(self, '_cot_data') else "neutral",
+        }
+
+    async def _execute_trade_enhanced(self, symbol: str, decision: dict, account_info: dict):
+        """Enhanced trade execution with Execution Algorithms #7."""
+        direction = decision["direction"]
+        volume = decision["volume"]
+        price = decision["price"]
+        atr = decision["atr"]
+        regime_params = decision["regime_params"]
+        confidence = decision["confidence"]
+        regime = decision["regime"]
+        spread_pips = decision.get("spread_pips", 1.0)
+
+        # Final spread check at execution time
+        current_spread = self._get_current_spread(symbol)
+        if current_spread > spread_pips * 3:
+            logger.warning(f"{symbol} trade aborted: spread widened to {current_spread:.1f} pips")
+            return
+
+        # Liquidity check
+        active_sessions = MarketSession.get_active_sessions()
+        if not active_sessions:
+            logger.info(f"{symbol} trade delayed: no active trading session")
+            return
+
+        # Risk checks
+        balance = account_info.get("balance", 100_000)
+        equity = account_info.get("equity", 100_000)
+        margin = account_info.get("margin", 0)
+        daily_pnl = self.risk.daily_pnl
+
+        approved, reason = self.risk.pre_trade_checks(balance, equity, margin, daily_pnl)
+        if not approved:
+            logger.info(f"{symbol} trade blocked: {reason}")
+            self._send_alert(f"{symbol} blocked: {reason}", level="warning")
+            self.notifier.risk_warning(
+                f"Trade blocked for {symbol}",
+                details={"reason": reason, "balance": balance, "daily_pnl": daily_pnl},
+            )
+            await self.event_bus.emit(
+                EventType.RISK_ALERT,
+                {"symbol": symbol, "reason": reason},
+                source="risk_manager"
+            )
+            return
+
+        # Apply cost model
+        cost = self.cost_model.calculate(
+            symbol=symbol,
+            direction=direction,
+            volume=volume,
+            price=price,
+            atr=atr,
+            actual_spread_pips=current_spread,
+        )
+        if not cost.is_acceptable:
+            logger.warning(f"{symbol} trade blocked: {cost.rejection_reason}")
+            return
+
+        # Place order with ATR-based SL/TP (direction-aware!)
+        if direction == "BUY":
+            sl_price = price - atr * regime_params.get("sl_atr", 1.5)
+            tp_price = price + atr * regime_params.get("tp_atr", 3.0)
+        else:  # SELL â€” SL above entry, TP below entry
+            sl_price = price + atr * regime_params.get("sl_atr", 1.5)
+            tp_price = price - atr * regime_params.get("tp_atr", 3.0)
+
+        # NEW: Use Execution Algorithms for large orders (Enhancement #7)
+        if volume > 100000 and hasattr(self, 'algo_executor'):  # Large order
+            logger.info(f"Using TWAP for large order: {volume:.0f} {symbol}")
+            await self.algo_executor.twap_execution(
+                symbol=symbol,
+                side=direction,
+                volume=volume,
+                duration_minutes=30,
+            )
+            trade = {"symbol": symbol, "direction": direction, "volume": volume}
+        else:
+            trade = await self.execution.open_position(
+                symbol=symbol,
+                direction=direction,
+                volume=volume,
+                sl=sl_price,
+                tp=tp_price,
+                reason=f"regime={regime} conf={confidence:.2f} sent={self._current_sentiment:.2f} spread={current_spread:.1f} behavioral={decision.get('behavioral_sentiment', 0):.2f}",
+            )
+
+        if trade:
+            self.trade_count += 1
+            self._send_alert(
+                f"{direction} {volume:.0f} {symbol} @ {price:.5f} (regime={regime})",
+                level="success",
+            )
+            self.notifier.trade_opened(
+                symbol=symbol, direction=direction, volume=volume,
+                price=price, regime=regime, confidence=confidence, atr=atr,
+            )
+
+        # Update drift monitor for this symbol with (model_prediction, actual_price)
+        model_prediction = decision.get("model_prediction")
+        if model_prediction and model_prediction > 0:
+            model_data = self.active_models.get(symbol)
+            if model_data and "drift" in model_data:
+                drifted = model_data["drift"].update(model_prediction, price)
+                if drifted:
+                    logger.info(f"Drift detected for {symbol}: error={model_data['drift'].error_detector.mean:.4f}")
+                    self.online_learner.on_drift_detected(symbol, model_data["drift"].error_detector.drift_count)
 
     def _get_current_spread(self, symbol: str) -> float:
         """Get current spread in pips for a symbol."""
@@ -937,7 +1406,7 @@ class RTSForexBot:
         if direction == "BUY":
             sl_price = price - atr * regime_params.get("sl_atr", 1.5)
             tp_price = price + atr * regime_params.get("tp_atr", 3.0)
-        else:  # SELL — SL above entry, TP below entry
+        else:  # SELL â€” SL above entry, TP below entry
             sl_price = price + atr * regime_params.get("sl_atr", 1.5)
             tp_price = price - atr * regime_params.get("tp_atr", 3.0)
         trade = await self.execution.open_position(
@@ -1111,6 +1580,121 @@ class RTSForexBot:
         except Exception:
             pass
 
+    def _update_dashboard_enhanced(self, account_info: dict, regime: str = "trading"):
+        """Enhanced dashboard update with all 11 new module metrics."""
+        positions = self.execution.get_open_positions()
+        suppressed, event = self.economic_calendar.is_suppressed()
+        upcoming = self.economic_calendar.get_upcoming_events(hours=24)
+
+        prices = self.data_manager.all_prices()
+        regime_str = ", ".join(
+            f"{sym}:{reg}" for sym, reg in list(self._regimes.items())[:7]
+        )
+
+        # Gather enhanced metrics from all 11 modules
+        toxic_metrics = {}
+        for sym in SYMBOLS[:5]:  # First 5 symbols
+            if sym in self.toxic_detectors:
+                snap = self.toxic_detectors[sym].get_snapshot()
+                toxic_metrics[sym] = {
+                    "vpin": round(snap.vpin, 3),
+                    "is_toxic": snap.is_toxic,
+                }
+
+        circuit_metrics = {}
+        for sym in SYMBOLS[:5]:
+            if sym in self.circuit_breakers:
+                snap = self.circuit_breakers[sym].get_snapshot()
+                circuit_metrics[sym] = {
+                    "state": snap.state.value,
+                    "consecutive_bad": snap.consecutive_bad_ticks,
+                }
+
+        # Behavioral sentiment
+        behavioral_sentiment = getattr(self, '_behavioral_sentiment', 0.0)
+
+        # COT data
+        cot_metrics = {}
+        for sym in SYMBOLS[:5]:
+            if sym in self.cot_data:
+                snap = self.cot_data[sym]
+                cot_metrics[sym] = {
+                    "signal": snap.institutional_signal,
+                    "positioning": snap.net_positioning,
+                }
+
+        # Regime specialist info
+        regime_specialist_info = {}
+        if hasattr(self, 'regime_system') and self.regime_system:
+            try:
+                regime_specialist_info = {
+                    "current_regime": self.regime_system.current_regime,
+                    "specialist_stats": {
+                        k: {"trades": v.total_trades, "win_rate": v.win_rate}
+                        for k, v in self.regime_system.specialists.items()
+                    },
+                }
+            except Exception:
+                pass
+
+        # Execution algorithm stats
+        algo_stats = {}
+        if hasattr(self, 'algo_executor'):
+            try:
+                algo_stats = self.algo_executor.get_statistics()
+            except Exception:
+                pass
+
+        # Model registry stats
+        registry_stats = {}
+        if hasattr(self, 'model_registry'):
+            try:
+                registry_stats = self.model_registry.get_statistics()
+            except Exception:
+                pass
+
+        update_state(
+            balance=account_info.get("balance", 100000),
+            equity=account_info.get("equity", 100000),
+            margin=account_info.get("margin", 0),
+            free_margin=account_info.get("free_margin", 100000),
+            initial_balance=100000,
+            total_trades=self.trade_count,
+            win_rate=self.risk.get_win_rate(),
+            mode=self.risk.mode,
+            regime=regime_str,
+            open_positions=positions,
+            trade_history=self.execution.get_trade_history(20),
+            market_data={
+                "prices": prices,
+                "spread": 0.0,
+            },
+            ai_metrics={
+                "regime": regime_str,
+                "sentiment": round(self._current_sentiment, 3),
+                "behavioral_sentiment": round(behavioral_sentiment, 3),
+                "econ_suppressed": suppressed,
+                "econ_next_event": event.title if event else "",
+                "upcoming_events": len(upcoming),
+                "active_decisions": len(self._trade_decisions),
+                "var": self.risk.var(),
+                "cvar": self.risk.cvar(),
+                # Enhanced module metrics
+                "toxic_flow": toxic_metrics,
+                "circuit_breakers": circuit_metrics,
+                "cot_smart_money": cot_metrics,
+                "regime_specialists": regime_specialist_info,
+                "execution_algos": algo_stats,
+                "model_registry": registry_stats,
+            },
+        )
+        try:
+            dl = getattr(self, '_dashboard_loop', None)
+            if dl:
+                asyncio.run_coroutine_threadsafe(broadcast_update(latest_state), dl)
+        except Exception:
+            pass
+
     async def stop(self):
         logger.info("Stopping bot...")
         self.is_running = False
@@ -1207,3 +1791,4 @@ if __name__ == "__main__":
                 asyncio.run(bot.run_monte_carlo_test(trades))
     else:
         asyncio.run(bot.start())
+

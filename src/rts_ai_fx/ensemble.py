@@ -70,7 +70,10 @@ class MoEEnsemble:
         if not predictions:
             return EnsemblePrediction()
         weights = np.array(weights)
-        weights = weights / weights.sum()
+        total = weights.sum()
+        if total == 0:
+            return EnsemblePrediction()
+        weights = weights / total
         ensemble_price = float(np.average(predictions, weights=weights))
         ensemble_conf = float(np.average(confidences, weights=weights))
         return EnsemblePrediction(

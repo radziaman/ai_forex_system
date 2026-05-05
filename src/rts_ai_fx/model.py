@@ -2,12 +2,16 @@
 LSTM-CNN Hybrid + ProfitabilityClassifier with CORRECT label construction.
 Predicts FUTURE price direction, not past.
 """
+from __future__ import annotations
 import numpy as np
-from typing import Optional, Tuple
+from typing import TYPE_CHECKING, Optional, Tuple
+
+if TYPE_CHECKING:
+    from tensorflow.keras import Model
 
 try:
     import tensorflow as tf
-    from tensorflow.keras import Model, Input
+    from tensorflow.keras import Input
     from tensorflow.keras.layers import (
         LSTM, Dense, Dropout, Concatenate, GlobalMaxPooling1D,
         Conv1D, BatchNormalization,
@@ -25,9 +29,9 @@ class LSTMCNNHybrid:
         self.n_features = n_features
         self.lstm_units = lstm_units
         self.cnn_filters = cnn_filters
-        self.model: Optional[Model] = None
+        self.model = None  # type: Optional[Model]
 
-    def build(self) -> Model:
+    def build(self):
         if not TENSORFLOW_AVAILABLE:
             raise ImportError("TensorFlow required")
         inputs = Input(shape=(self.lookback, self.n_features), name="input")
@@ -41,7 +45,7 @@ class LSTMCNNHybrid:
         fused = BatchNormalization()(fused)
         fused = Dropout(0.2)(fused)
         outputs = Dense(1, activation="linear", name="output")(fused)
-        self.model = Model(inputs=inputs, outputs=outputs, name="lstm_cnn_hybrid")
+        self.model = tf.keras.models.Model(inputs=inputs, outputs=outputs, name="lstm_cnn_hybrid")
         self.model.compile(optimizer=tf.keras.optimizers.Adam(0.001), loss="mse", metrics=["mae"])
         return self.model
 
@@ -80,9 +84,9 @@ class ProfitabilityClassifier:
     def __init__(self, lookback: int = 30, n_features: int = 51):
         self.lookback = lookback
         self.n_features = n_features
-        self.model: Optional[Model] = None
+        self.model = None  # type: Optional[Model]
 
-    def build(self) -> Model:
+    def build(self):
         if not TENSORFLOW_AVAILABLE:
             raise ImportError("TensorFlow required")
         inputs = Input(shape=(self.lookback, self.n_features))
@@ -92,7 +96,7 @@ class ProfitabilityClassifier:
         x = Dropout(0.2)(x)
         x = Dense(16, activation="relu")(x)
         outputs = Dense(1, activation="sigmoid")(x)
-        self.model = Model(inputs=inputs, outputs=outputs)
+        self.model = tf.keras.models.Model(inputs=inputs, outputs=outputs)
         self.model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
         return self.model
 
