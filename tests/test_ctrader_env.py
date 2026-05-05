@@ -20,23 +20,26 @@ class TestCTraderEnvClient:
     def test_init_without_env(self):
         """Test initialization without environment variables."""
         with patch.dict(os.environ, {}, clear=True):
-            client = cTraderEnvClient()
+            client = cTraderEnvClient(env_file="nonexistent.env")
             assert client.access_token is None
-            assert client.client_id == "15217_h8WxunXX70m6O6qsnIx9ZO3GZraTdO0wnLjL3dTKyYG6fkbUca"
+            assert client.client_id == ""
             assert client.host == "demo.ctraderapi.com"
 
     def test_init_with_env(self):
         """Test initialization with environment variables."""
         test_token = "test_access_token_12345"
         test_account = "9999999"
+        test_client_id = "test_client_id_123"
 
         with patch.dict(os.environ, {
             "CTRADER_ACCESS_TOKEN": test_token,
-            "CTRADER_ACCOUNT_ID": test_account
+            "CTRADER_ACCOUNT_ID": test_account,
+            "CTRADER_CLIENT_ID": test_client_id
         }):
-            client = cTraderEnvClient()
+            client = cTraderEnvClient(env_file="nonexistent.env")
             assert client.access_token == test_token
             assert client.account_id == test_account
+            assert client.client_id == test_client_id
 
     def test_load_env_from_file(self, tmp_path):
         """Test loading environment variables from .env file."""

@@ -61,8 +61,8 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     # Price dynamics
     df["body"] = abs(df["close"] - df["open"]) / df["open"].replace(0, np.nan)
     df["range"] = (df["high"] - df["low"]) / df["open"].replace(0, np.nan)
-    df["upper_shadow"] = (df["high"] - df[["open", "close"]].max(1)) / df["open"].replace(0, np.nan)
-    df["lower_shadow"] = (df[["open", "close"]].min(1) - df["low"]) / df["open"].replace(0, np.nan)
+    df["upper_shadow"] = (df["high"] - df[["open", "close"]].max(axis=1)) / df["open"].replace(0, np.nan)
+    df["lower_shadow"] = (df[["open", "close"]].min(axis=1) - df["low"]) / df["open"].replace(0, np.nan)
 
     # Momentum
     df["rsi_14"] = _rsi(df["close"], 14)
@@ -351,8 +351,14 @@ class FeaturePipeline:
         symbol: str = "EURUSD",
         tick_buffer: Optional[List[Dict]] = None,
         external_signals: Optional[np.ndarray] = None,
+        flatten: bool = False,
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """Create sequences for supervised learning."""
+        """Create sequences for supervised learning.
+
+        Args:
+            flatten: If True, returns 2D (batch, lookback*n_features) for Dense models.
+                     If False, returns 3D (batch, lookback, n_features) for LSTM/CNN models.
+        """
         symbol_data = self._extract_symbol_data(dfs, symbol)
         if not self._feature_cols:
             self.fit(dfs, symbol)
@@ -374,7 +380,7 @@ class FeaturePipeline:
                 tf_data[tf] = df.iloc[start:i]
             feat = self.transform(tf_data, symbol, tick_buffer, external_signals)
             if feat is not None:
-                sequences.append(feat.flatten())
+                sequences.append(feat.flatten() if flatten else feat)
                 targets.append(prices[i])
         if not sequences:
             return np.array([]), np.array([])
@@ -386,108 +392,9 @@ class FeaturePipeline:
         symbol: str = "EURUSD",
         tick_buffer: Optional[List[Dict]] = None,
         external_signals: Optional[np.ndarray] = None,
+        flatten: bool = False,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Fit and transform in one call."""
         self.fit(dfs, symbol)
-        return self.create_sequences(dfs, symbol, tick_buffer, external_signals)
+        return self.create_sequences(dfs, symbol, tick_buffer, external_signals, flatten=flatten)
 
-
-TARGET_COLS = {"open", "high", "low", "close", "volume"}
-
-
-class FeaturePipeline:
-    """
-    Multi-timeframe feature pipeline.
-    Computes features independently on each timeframe, then fuses via flattening.
-    """
-
-    def __init__(self, lookback: int = 30, timeframes: Optional[List[str]] = None):
-        self.lookback = lookback
-        self.timeframes = timeframes or ["1h"]
-        self._means: Dict[str, np.ndarray] = {}
-        self._stds: Dict[str, np.ndarray] = {}
-        self._feature_cols: List[str] = []
-
-    def _get_feature_columns(self, df: pd.DataFrame) -> List[str]:
-        return [c for c in df.columns if c not in TARGET_COLS]
-
-    def fit(self, dfs: Dict[str, pd.DataFrame]):
-        """Fit scalers on training data for each timeframe."""
-        all_features = []
-        for tf in self.timeframes:
-            df = dfs.get(tf)
-            if df is None or len(df) < self.lookback + 5:
-                continue
-            processed = compute_features(df)
-            cols = self._get_feature_columns(processed)
-            if not self._feature_cols:
-                self._feature_cols = cols
-            vals = processed[cols].values
-            # Remove NaN rows
-            mask = ~np.any(np.isnan(vals), axis=1)
-            vals = vals[mask]
-            if len(vals) > self.lookback:
-                all_features.append(vals)
-        if not all_features:
-            return
-        stacked = np.vstack(all_features)
-        self._means[tf] = np.nanmean(stacked, axis=0)
-        self._stds[tf] = np.nanstd(stacked, axis=0)
-        self._stds[tf] = np.where(self._stds[tf] == 0, 1.0, self._stds[tf])
-
-    def transform(self, dfs: Dict[str, pd.DataFrame]) -> Optional[np.ndarray]:
-        """Transform multi-timeframe data into a single fused feature vector (last lookback window)."""
-        tf_vectors = []
-        for tf in self.timeframes:
-            df = dfs.get(tf)
-            if df is None or len(df) < self.lookback:
-                return None
-            processed = compute_features(df)
-            cols = self._feature_cols if self._feature_cols else self._get_feature_columns(processed)
-            missing = [c for c in cols if c not in processed.columns]
-            if missing:
-                return None
-            vals = processed[cols].values
-            # Z-score normalize
-            if tf in self._means and tf in self._stds:
-                vals = (vals - self._means[tf]) / self._stds[tf]
-            # Get last lookback window
-            window = vals[-self.lookback:]
-            if len(window) < self.lookback:
-                return None
-            # Mean-pool to handle any remaining NaN
-            window = np.nan_to_num(window, nan=0.0)
-            tf_vectors.append(window)
-        if not tf_vectors:
-            return None
-        # Flatten: (lookback, n_features * n_timeframes)
-        return np.concatenate(tf_vectors, axis=1)
-
-    def create_sequences(self, dfs: Dict[str, pd.DataFrame]) -> Tuple[np.ndarray, np.ndarray]:
-        """Create sequences for supervised learning."""
-        if not self._feature_cols:
-            self.fit(dfs)
-            if not self._feature_cols:
-                return np.array([]), np.array([])
-        # Get the primary timeframe data for labels
-        primary_tf = self.timeframes[0]
-        primary = dfs.get(primary_tf)
-        if primary is None:
-            return np.array([]), np.array([])
-        prices = primary["close"].values
-        sequences, targets = [], []
-        for i in range(self.lookback, len(prices)):
-            tf_data = {}
-            for tf in self.timeframes:
-                df = dfs.get(tf)
-                if df is None:
-                    continue
-                start = max(0, i - self.lookback)
-                tf_data[tf] = df.iloc[start:i]
-            feat = self.transform(tf_data)
-            if feat is not None:
-                sequences.append(feat.flatten())
-                targets.append(prices[i])
-        if not sequences:
-            return np.array([]), np.array([])
-        return np.array(sequences), np.array(targets)

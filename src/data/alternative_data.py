@@ -26,11 +26,7 @@ try:
 except ImportError:
     TRANSFORMERS_AVAILABLE = False
 
-try:
-    import yfinance as yf
-    YFINANCE_AVAILABLE = True
-except ImportError:
-    YFINANCE_AVAILABLE = False
+YFINANCE_AVAILABLE = False  # Removed — use FIX API + Dukascopy instead
 
 try:
     import feedparser
@@ -318,20 +314,8 @@ class AlternativeDataProvider:
             return cached
 
         returns = {}
-        for name, ticker in CROSS_ASSET_TICKERS.items():
-            if not YFINANCE_AVAILABLE:
-                returns[name] = 0.0
-                continue
-            try:
-                data = yf.download(ticker, period="5d", interval="1d", progress=False)
-                if not data.empty:
-                    close = data["Close"].values
-                    ret = (close[-1] - close[0]) / close[0] * 100 if len(close) > 1 else 0.0
-                else:
-                    ret = 0.0
-                returns[name] = round(float(ret), 4)
-            except Exception:
-                returns[name] = 0.0
+        for name in CROSS_ASSET_TICKERS:
+            returns[name] = 0.0  # Cross-asset data: use FIX API + Dukascopy instead
 
         self._cross_asset_cache = returns
         self._save_cache(CROSS_ASSET_CACHE_PATH, returns)

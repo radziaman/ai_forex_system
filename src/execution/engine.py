@@ -32,6 +32,20 @@ class ExecutionEngine:
         self.total_trades = 0
         self._position_counter = 0
         self.client.on_market_data = self._on_market_data
+        
+    @property
+    def on_market_data(self):
+        """Delegate to underlying client's on_market_data callback."""
+        return self.client.on_market_data
+    
+    @on_market_data.setter
+    def on_market_data(self, callback):
+        self.client.on_market_data = callback
+
+    @property
+    def raw(self):
+        """Access underlying client."""
+        return self.client
         self.client.on_order_update = self._on_order_update
         logger.info("ExecutionEngine initialized")
 
@@ -53,7 +67,7 @@ class ExecutionEngine:
             symbol_id=symbol_id,
             side="BUY" if direction == "BUY" else "SELL",
             order_type="MARKET",
-            volume=int(volume * 100000),
+            volume=max(int(volume), 1),  # Kelly returns units, use directly
             price=price,
             sl=sl,
             tp=tp,
@@ -176,20 +190,35 @@ class ExecutionEngine:
     def _calculate_pnl(self, trade, exit_price):
         if exit_price is None or exit_price == 0.0 or exit_price == trade.entry_price:
             return 0.0
-        pip_size = 0.01 if "JPY" in trade.symbol.upper() else 0.0001
+        # Pip value depends on pair type
+        sym = trade.symbol.upper()
+        if "JPY" in sym:
+            pip_size = 0.01
+            pip_value_per_lot = 1000 / exit_price if "USD" not in sym else 9.0  # USDJPY ~$9/lot
+        elif sym in ("XAUUSD", "XAGUSD"):
+            pip_size = 0.1  # XAUUSD pip is 0.1
+            pip_value_per_lot = 10.0
+        elif "BTC" in sym or "ETH" in sym or "XRP" in sym or "LTC" in sym:
+            pip_size = 1.0  # Crypto quoted in whole dollars
+            pip_value_per_lot = 1.0
+        elif "USD" in sym:  # XXXUSD pairs
+            pip_size = 0.0001
+            pip_value_per_lot = 10.0
+        else:  # Crosses and indices
+            pip_size = 0.0001
+            pip_value_per_lot = 10.0
         if trade.direction == "BUY":
             pips = (exit_price - trade.entry_price) / pip_size
         else:
             pips = (trade.entry_price - exit_price) / pip_size
-        lots = trade.volume / 100_000.0
-        return round(pips * lots * 10.0, 2)
+        return round(pips * (trade.volume / 100_000.0) * pip_value_per_lot, 2)
 
     def _get_symbol_id(self, symbol):
-        return {"EURUSD": 1, "GBPUSD": 2, "USDJPY": 3, "XAUUSD": 4, "BTCUSD": 5}.get(
+        return {"EURUSD": 1, "GBPUSD": 2, "USDJPY": 4, "XAUUSD": 41, "BTCUSD": 114}.get(
             symbol.upper(), 1
         )
 
-    def _on_market_data(self, depth):
+    async def _on_market_data(self, depth):
         prices = {depth.symbol: depth.bid}
         self.risk.update_trailing_stops(prices)
         for pid, trade in list(self.open_positions.items()):
@@ -197,13 +226,13 @@ class ExecutionEngine:
                 continue
             current_price = depth.bid if trade.direction == "BUY" else depth.ask
             if trade.direction == "BUY" and current_price <= trade.sl:
-                self.close_position(pid, "Stop Loss")
+                await self.close_position(pid, "Stop Loss")
             elif trade.direction == "SELL" and current_price >= trade.sl:
-                self.close_position(pid, "Stop Loss")
+                await self.close_position(pid, "Stop Loss")
             if trade.direction == "BUY" and current_price >= trade.tp:
-                self.close_position(pid, "Take Profit")
+                await self.close_position(pid, "Take Profit")
             elif trade.direction == "SELL" and current_price <= trade.tp:
-                self.close_position(pid, "Take Profit")
+                await self.close_position(pid, "Take Profit")
 
     def _on_order_update(self, result):
         if result.status == "FILLED":

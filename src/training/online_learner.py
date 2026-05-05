@@ -30,11 +30,10 @@ class ModelSnapshot:
     def is_better_than(self, other: Optional['ModelSnapshot']) -> bool:
         if other is None:
             return True
-        if self.val_loss < other.val_loss * 0.95:
-            return True
-        if self.val_accuracy > other.val_accuracy * 1.05:
-            return True
-        return False
+        # Require BOTH loss improvement AND accuracy maintained or improved
+        loss_better = self.val_loss < other.val_loss * 0.95
+        accuracy_ok = self.val_accuracy >= other.val_accuracy * 0.98  # allow 2% accuracy drop
+        return loss_better and accuracy_ok
 
 
 class OnlineLearner:
@@ -209,17 +208,26 @@ class OnlineLearner:
             live_lstm = os.path.join(self.model_dir, f"{pair}_lstm_cnn.keras")
             live_clf = os.path.join(self.model_dir, f"{pair}_classifier.keras")
 
-            # Backup old model
-            if os.path.exists(live_lstm):
-                backup_lstm = live_lstm.replace(".keras", "_backup.keras")
-                os.rename(live_lstm, backup_lstm) if os.path.exists(live_lstm) else None
-            if os.path.exists(live_clf):
-                backup_clf = live_clf.replace(".keras", "_backup.keras")
-                os.rename(live_clf, backup_clf) if os.path.exists(live_clf) else None
+            # Backup old model (atomic two-phase: backup both, deploy both)
+            old_backups = {}
+            try:
+                if os.path.exists(live_lstm):
+                    old_backups['lstm'] = (live_lstm, live_lstm.replace(".keras", "_backup.keras"))
+                    os.rename(*old_backups['lstm'])
+                if os.path.exists(live_clf):
+                    old_backups['clf'] = (live_clf, live_clf.replace(".keras", "_backup.keras"))
+                    os.rename(*old_backups['clf'])
 
-            # Deploy new
-            os.rename(lstm_path, live_lstm)
-            os.rename(clf_path, live_clf)
+                # Deploy new (if either fails, rollback)
+                os.rename(lstm_path, live_lstm)
+                os.rename(clf_path, live_clf)
+            except Exception as e:
+                logger.error(f"Model deployment failed, rolling back: {e}")
+                # Rollback: restore old backups
+                for key, (orig, backup) in old_backups.items():
+                    if os.path.exists(backup):
+                        os.rename(backup, orig)
+                raise
 
             new_snap.path_lstm = live_lstm
             new_snap.path_clf = live_clf

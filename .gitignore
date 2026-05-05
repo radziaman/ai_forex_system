@@ -76,3 +76,5 @@ VERSION_COMPARISON.md
 
 # Simulation result files
 sim_*.json
+.venv/
+.env

@@ -9,9 +9,23 @@ trading:
   min_win_rate_live: 0.55
   min_win_rate_paper: 0.45
   base_lot_size: 0.01
-  max_positions: 5
+  max_positions: 10  # Increased for multi-asset
   slippage_pips: 0.5
   commission_per_lot: 7.0
+  # Asset class specific settings
+  asset_classes:
+    forex:
+      max_positions: 5
+      slippage_pips: 0.5
+    crypto:
+      max_positions: 3
+      slippage_pips: 5.0  # Higher for crypto
+    indices:
+      max_positions: 3
+      slippage_pips: 1.0
+    commodities:
+      max_positions: 2
+      slippage_pips: 1.5
 
 # AI Brain (PPO RL Agent)
 ai:

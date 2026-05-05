@@ -30,8 +30,10 @@ from rts_ai_fx.regime_detector import HMMRegimeDetector
 from rts_ai_fx.ensemble import MoEEnsemble
 from rts_ai_fx.drift_detector import DriftMonitor
 from data.data_manager import DataManager, SYMBOLS, BASE_PRICES
+from data.market_session import MarketSession
 from data.economic_calendar import EconomicCalendar
 from data.alternative_data import AlternativeDataProvider
+from data.order_flow import OrderFlowAnalyzer, GammaExposureMapper, DarkPoolDetector
 from ai.sentiment import SentimentAnalyzer
 from validation.walk_forward import PurgedWalkForward
 from validation.monte_carlo import MonteCarloSigTest
@@ -53,17 +55,40 @@ CORRELATED_GROUPS = [
     {"EURUSD", "GBPUSD", "EURGBP"},
     {"AUDUSD", "NZDUSD"},
     {"USDCAD", "USDCHF"},
+    {"EURJPY", "GBPJPY", "USDJPY"},
 ]
+
+# Asset class detection
+CRYPTO_PAIRS = {"BTCUSD", "ETHUSD", "LTCUSD", "XRPUSD"}
+INDEX_PAIRS = {"US500", "US30", "USTEC", "UK100", "DE40"}
+ENERGY_PAIRS = {"XTIUSD", "XBRUSD", "XNGUSD"}
+METAL_PAIRS = {"XAUUSD", "XAGUSD"}
+
+
+def get_asset_class(symbol: str) -> str:
+    """Detect asset class from symbol name."""
+    sym = symbol.upper()
+    if sym in CRYPTO_PAIRS:
+        return "crypto"
+    elif sym in INDEX_PAIRS:
+        return "index"
+    elif sym in ENERGY_PAIRS or sym in METAL_PAIRS:
+        return "commodity"
+    elif "JPY" in sym or "USD" in sym or "EUR" in sym or "GBP" in sym:
+        return "forex"
+    return "unknown"
 
 
 class RTSForexBot:
     """Multi-pair AI forex trading bot with full institutional toolchain."""
 
-    def __init__(self, config_path: str = "config.yaml"):
+    def __init__(self, config_path: str = "config.yaml", mode: str = "paper", initial_balance: float = 100000.0):
         self.config = Config()
         self.config.config_path = config_path
         self.config._load_yaml()
         self.secrets = Secrets()
+        self.mode = mode
+        self.initial_balance = initial_balance
 
         logger.remove()
         logger.add(sys.stdout, level=self.config.logging.level)
@@ -74,8 +99,8 @@ class RTSForexBot:
         )
 
         self._init_ctrader()
-        self._init_risk()
-        self._init_data()
+        self._init_data()    # data_manager first, needed by ExecutionEngine
+        self._init_risk()    # ExecutionEngine needs data_manager
         self._init_models()
         self._init_intelligence()
         self._init_notifications()
@@ -104,6 +129,9 @@ class RTSForexBot:
         self.execution, self.data_provider = create_execution_provider(self.secrets)
         self.execution.on_price = self._on_market_data
         self.ctrader = getattr(self.execution, 'raw', self.execution)
+        # Use Dukascopy for real-time data if available
+        if self.data_provider:
+            logger.info(f"Data provider: {self.data_provider.__class__.__name__}")
 
     def _init_risk(self):
         params = RiskParameters(
@@ -111,13 +139,15 @@ class RTSForexBot:
             max_drawdown=self.config.trading.max_drawdown,
             max_margin_usage=self.config.trading.max_margin_usage,
         )
-        self.risk = RiskManager(params, initial_balance=100_000.0)
+        self.risk = RiskManager(params, initial_balance=self.initial_balance)
+        self.risk.mode = "PAPER" if self.mode == "paper" else "LIVE"
         self.trailing_stop = TrailingStopManager(
             tp_pcts=[0.01, 0.02, 0.03],
             trail_atr_mult=self.config.trading.sl_atr_multiplier,
         )
         self.cost_model = CostModel(commission_per_lot=self.config.trading.commission_per_lot)
-        self.execution = ExecutionEngine(self.ctrader, self.risk, None)
+        # ExecutionEngine wraps the execution provider with SL/TP monitoring
+        self.execution = ExecutionEngine(self.ctrader, self.risk, self.data_manager)
         self.execution.cost_model = self.cost_model
 
     def _init_data(self):
@@ -132,12 +162,48 @@ class RTSForexBot:
 
     def _init_models(self):
         self.ensemble = MoEEnsemble()
+        # Rule-based expert (baseline)
         self.ensemble.add_expert(
             name="rule_based",
             predict_fn=self._rule_prediction,
             confidence_fn=lambda X: 0.7,
             regime="ranging",
         )
+        # PPO RL Agent expert
+        try:
+            from ai.rl_agent import PPOAgent
+            state_dim = 55 * 30  # 55 features * 30 lookback
+            self.ppo_agent = PPOAgent(state_dim=state_dim, n_actions=5)
+            ppo_path = "models/ppo_agent.pth"
+            if os.path.exists(ppo_path):
+                self.ppo_agent.load(ppo_path)
+                logger.info("PPO Agent loaded from checkpoint")
+            self.ensemble.add_expert(
+                name="ppo_agent",
+                predict_fn=self._ppo_prediction,
+                confidence_fn=self._ppo_confidence,
+                regime="trending",
+            )
+        except Exception as e:
+            logger.warning(f"PPO Agent init failed: {e}")
+            self.ppo_agent = None
+        # LSTM-CNN expert
+        try:
+            from rts_ai_fx.model import LSTMCNNHybrid
+            self.lstm_model = LSTMCNNHybrid(lookback=30, n_features=55)
+            lstm_path = "models/lstm_cnn.h5"
+            if os.path.exists(lstm_path):
+                self.lstm_model.load(lstm_path)
+                logger.info("LSTM-CNN model loaded")
+            self.ensemble.add_expert(
+                name="lstm_cnn",
+                predict_fn=self._lstm_prediction,
+                confidence_fn=self._lstm_confidence,
+                regime="ranging",
+            )
+        except Exception as e:
+            logger.warning(f"LSTM-CNN init failed: {e}")
+            self.lstm_model = None
         self.active_models: Dict[str, Any] = {}
         self.drift_monitors: Dict[str, DriftMonitor] = {}
 
@@ -148,6 +214,64 @@ class RTSForexBot:
             return 1.12 + mom * 0.001
         except Exception:
             return 1.12
+
+    def _ppo_prediction(self, X: np.ndarray, symbol: str = "EURUSD") -> float:
+        """PPO agent prediction - returns predicted price for given symbol."""
+        if self.ppo_agent is None:
+            return self.data_manager.get_price(symbol, "1h") or 1.12
+        try:
+            state = X.flatten() if X.ndim > 1 else X
+            action, sl_raw, tp_raw, size_raw, info = self.ppo_agent.select_action(state)
+            # Action mapping: 0=HOLD, 1=BUY, 2=SELL, 3=CLOSE, 4=MODIFY
+            price = self.data_manager.get_price(symbol, "1h")
+            if price is None:
+                return 1.12
+            if action == 1:  # BUY
+                return price * (1 + 0.001 * sl_raw)
+            elif action == 2:  # SELL
+                return price * (1 - 0.001 * sl_raw)
+            return price
+        except Exception as e:
+            logger.debug(f"PPO prediction error for {symbol}: {e}")
+            return 1.12
+
+    def _ppo_confidence(self, X: np.ndarray) -> float:
+        """PPO agent confidence based on action probabilities."""
+        if self.ppo_agent is None:
+            return 0.5
+        try:
+            import torch
+            state = X.flatten() if X.ndim > 1 else X
+            state_t = torch.FloatTensor(state).unsqueeze(0).to(self.ppo_agent.device)
+            with torch.no_grad():
+                act_logits, _, _, value = self.ppo_agent.actor(state_t)
+                probs = torch.softmax(act_logits, dim=1)
+                confidence = probs.max().item()
+            return float(confidence)
+        except Exception:
+            return 0.5
+
+    def _lstm_prediction(self, X: np.ndarray) -> float:
+        """LSTM-CNN model prediction."""
+        if self.lstm_model is None or self.lstm_model.model is None:
+            return 1.12
+        try:
+            pred = self.lstm_model.predict(X.reshape(1, 30, 55))
+            return float(pred[0, 0])
+        except Exception as e:
+            logger.debug(f"LSTM prediction error: {e}")
+            return 1.12
+
+    def _lstm_confidence(self, X: np.ndarray) -> float:
+        """LSTM-CNN confidence (based on prediction magnitude)."""
+        if self.lstm_model is None:
+            return 0.5
+        try:
+            pred = self.lstm_model.predict(X.reshape(1, 30, 55))
+            conf = min(abs(pred[0, 0] - 1.12) * 100, 1.0)
+            return float(conf)
+        except Exception:
+            return 0.5
 
     def _init_intelligence(self):
         self.economic_calendar = EconomicCalendar(
@@ -166,7 +290,11 @@ class RTSForexBot:
             clf_epochs=20,
             notify_callback=lambda msg: self.notifier.send(msg, level="info"),
         )
-        logger.info("Intelligence layer initialized")
+        # Institutional features
+        self.order_flow_analyzer = OrderFlowAnalyzer(n_levels=20)
+        self.gamma_mapper = GammaExposureMapper()
+        self.dark_pool_detector = DarkPoolDetector()
+        logger.info("Intelligence layer initialized (including institutional features)")
 
     def _init_notifications(self):
         self.notifier = TelegramNotifier(
@@ -211,13 +339,63 @@ class RTSForexBot:
     # MAIN LOOP
     # ================================================================
 
+    async def _start_dukascopy_stream(self):
+        """Start real-time Dukascopy tick streaming."""
+        if not self.data_provider:
+            return
+        try:
+            await self.data_provider.stream_prices(SYMBOLS, self._on_dukascopy_tick)
+            logger.info(f"Dukascopy streaming started for {len(SYMBOLS)} symbols")
+        except NotImplementedError:
+            logger.warning("Dukascopy streaming not available, using polling")
+            # Fallback to polling
+            asyncio.create_task(self._poll_dukascopy_prices())
+
+    async def _poll_dukascopy_prices(self):
+        """Poll Dukascopy for latest prices."""
+        while self.is_running:
+            for sym in SYMBOLS:
+                try:
+                    tick = self.data_provider.get_latest_price(sym)
+                    if tick:
+                        self._on_dukascopy_tick(tick)
+                except Exception as e:
+                    logger.debug(f"Poll error for {sym}: {e}")
+            await asyncio.sleep(1.0)
+
+    def _on_dukascopy_tick(self, tick: PriceTick):
+        """Handle incoming Dukascopy tick data."""
+        self.data_manager.update_tick(tick.symbol, tick.bid, tick.ask, tick.volume, tick.timestamp)
+        # Forward to execution engine if needed
+        if hasattr(self.execution, 'on_market_data'):
+            self.execution.on_market_data(tick)
+
     async def start(self):
         logger.info("Starting RTS Forex Bot...")
         result = await self.ctrader.start()
         if not result:
             logger.warning("cTrader in simulation mode — no real connection")
 
-        # Load historical data for ALL symbols
+        # Subscribe to Level II DOM for all symbols (institutional feature)
+        # Try Open API first, fall back to FIX if available
+        if hasattr(self.ctrader, 'subscribe_depth'):
+            # Open API client
+            for sym in SYMBOLS:
+                from api.ctrader_client import SYMBOL_MAP
+                sym_id = SYMBOL_MAP.get(sym)
+                if sym_id:
+                    await self.ctrader.subscribe_depth(sym_id)
+            self.ctrader.on_depth_update = self._on_depth_update
+            logger.info(f"Level II DOM (Open API) subscribed for {len(SYMBOLS)} symbols")
+        elif hasattr(self.ctrader, 'raw') and hasattr(self.ctrader.raw, 'on_market_data'):
+            # FIX client - wire market data to DataManager
+            self.ctrader.raw.on_market_data = self._on_fix_market_data
+            # Subscribe to market data
+            if hasattr(self.ctrader, 'start'):
+                await self.ctrader.start()
+            logger.info(f"Level II DOM (FIX API) wired for {len(SYMBOLS)} symbols")
+
+        # Load historical data for ALL symbols from Dukascopy
         await self._load_historical_data()
 
         # Fit regime detector per symbol + init drift monitors
@@ -228,6 +406,9 @@ class RTSForexBot:
                 rd.fit(df)
                 self._regimes[sym] = rd.detect_regime(df)
                 logger.info(f"HMM regime detector fitted for {sym}")
+                # Fit shared regime detector on first available symbol
+                if not hasattr(self.regime_detector, 'model') or self.regime_detector.model is None:
+                    self.regime_detector.fit(df)
             # Initialize drift monitor for online learning
             self.active_models[sym] = {
                 "drift": DriftMonitor(error_threshold=0.02),
@@ -254,7 +435,10 @@ class RTSForexBot:
         except Exception:
             pass
 
-        # Start WebSocket streaming
+        # Start Dukascopy real-time streaming
+        await self._start_dukascopy_stream()
+
+        # Fallback: Also try cTrader streaming if available
         if hasattr(self.execution, 'stream_prices'):
             try:
                 await self.execution.stream_prices(SYMBOLS)
@@ -263,32 +447,50 @@ class RTSForexBot:
 
         self._start_dashboard()
         self.is_running = True
-        logger.info("Bot is LIVE — monitoring 7 pairs")
+        logger.info("Bot is LIVE — monitoring 7 pairs with Dukascopy data")
 
         cycle_counter = 0
+        last_sentiment_refresh = 0.0
+        last_calendar_fetch = 0.0
+        last_summary_day = pd.Timestamp.now().day
+        last_data_download = 0.0
+        download_queue = [s for s in SYMBOLS if self.data_manager.get_ohlcv(s, "1h") is None or len(self.data_manager.get_ohlcv(s, "1h")) < 50]
+        if download_queue:
+            logger.info(f"Background downloader: {len(download_queue)} symbols queued")
+
         while self.is_running:
             try:
+                cycle_start = time.time()
+                
                 await self._trading_cycle()
-                await asyncio.sleep(1.0)
+                
+                # Adaptive sleep to maintain ~1 second cycles (with jitter protection)
+                cycle_time = time.time() - cycle_start
+                sleep_time = max(1.0 - cycle_time, 0.5)  # Min 0.5s to avoid hammering
+                await asyncio.sleep(sleep_time)
                 cycle_counter += 1
 
-                # Periodic refresh
-                if cycle_counter % 300 == 0:
+                # Periodic refresh (time-based)
+                now = time.time()
+                if now - last_sentiment_refresh > 300:  # Every 5 minutes
                     try:
-                        self.sentiment_analyzer.get_latest(force_refresh=True)
+                        snapshot = self.sentiment_analyzer.get_latest(force_refresh=True)
+                        self._current_sentiment = snapshot.overall_score if hasattr(snapshot, 'overall_score') else float(snapshot)
+                        last_sentiment_refresh = now
                     except Exception:
                         pass
-                if cycle_counter % 3600 == 0:
+                if now - last_calendar_fetch > 3600:  # Every hour
                     try:
                         self.economic_calendar.fetch(days_forward=7)
                         self.alternative_data.fetch_all()
+                        last_calendar_fetch = now
                     except Exception:
                         pass
 
                 # Daily summary (send once per day)
                 today = pd.Timestamp.now().day
-                if today != self._last_daily_summary_day:
-                    self._last_daily_summary_day = today
+                if today != last_summary_day:
+                    last_summary_day = today
                     balance = self.risk.initial_balance + self.risk.daily_pnl
                     regime_summary = ", ".join(
                         f"{s}:{r}" for s, r in sorted(self._regimes.items())[:7]
@@ -303,6 +505,43 @@ class RTSForexBot:
                         regime_summary=regime_summary,
                     )
 
+                # Background data downloader — download one missing symbol per cycle
+                if download_queue and time.time() - last_data_download > 30:
+                    sym = download_queue[0]
+                    logger.info(f"Background downloading {sym} from Dukascopy...")
+                    last_data_download = time.time()
+                    try:
+                        from data.dukascopy_realtime import DukascopyProvider
+                        from datetime import datetime, timezone, timedelta
+                        provider = DukascopyProvider(cache=True)
+                        end = datetime.now(timezone.utc)
+                        start = end - timedelta(days=30)
+                        ohlcv = await provider.fetch_ohlcv(sym, "1h",
+                            start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
+                        if ohlcv and len(ohlcv) > 50:
+                            df = pd.DataFrame([{
+                                "timestamp": o.timestamp, "open": o.open, "high": o.high,
+                                "low": o.low, "close": o.close, "volume": o.volume,
+                            } for o in ohlcv])
+                            self.data_manager.ohlcv[sym]["1h"] = df
+                            # Fit HMM regime for this symbol
+                            if len(df) > 200:
+                                rd = HMMRegimeDetector(n_regimes=4, lookback=60)
+                                rd.fit(df)
+                                self._regimes[sym] = rd.detect_regime(df)
+                            # Update feature pipeline
+                            self.feature_pipeline.fit_all(self.data_manager.ohlcv)
+                            logger.info(f"✅ Background download complete for {sym}: {len(df)} bars")
+                            self._send_alert(f"Data loaded for {sym}: {len(df)} 1h bars", level="info")
+                        else:
+                            logger.warning(f"Background download for {sym}: insufficient data ({len(ohlcv) if ohlcv else 0} bars)")
+                    except Exception as e:
+                        logger.warning(f"Background download failed for {sym}: {e}")
+                    finally:
+                        download_queue.pop(0)
+                    if not download_queue:
+                        logger.info("✅ Background downloader: all symbols complete")
+
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -311,48 +550,63 @@ class RTSForexBot:
 
     async def _load_historical_data(self):
         loaded = 0
-        # Try yfinance first for all symbols
-        try:
-            import yfinance as yf
-            yf_pairs = {s: f"{s}=X" for s in SYMBOLS}
-            for sym, yf_sym in yf_pairs.items():
-                if self.data_manager.get_ohlcv(sym, "1h") is not None and len(self.data_manager.get_ohlcv(sym, "1h")) > 200:
-                    loaded += 1
-                    continue
-                data = yf.download(yf_sym, period="2y", interval="1h", progress=False)
-                if not data.empty and len(data) > 200:
-                    df = data.copy()
-                    df.columns = [c[0] for c in df.columns]
-                    df = df.rename(columns={"Open": "open", "High": "high", "Low": "low", "Close": "close", "Volume": "volume"})
-                    df["timestamp"] = df.index.astype(np.int64) // 10**9
-                    df = df.reset_index(drop=True)
-                    self.data_manager.ohlcv[sym]["1h"] = df
-                    loaded += 1
-                    logger.info(f"Loaded {len(df)} 1h bars for {sym} (yfinance)")
-        except Exception as e:
-            logger.warning(f"yfinance fetch failed: {e}")
+        from pathlib import Path
+        from data.dukascopy_realtime import CACHE_DIR
+        import lzma, struct
+        from datetime import datetime
 
-        # Try data provider for anything still missing
-        if self.data_provider is not None and loaded < len(SYMBOLS):
-            try:
-                for sym in SYMBOLS:
-                    if self.data_manager.get_ohlcv(sym, "1h") is not None and len(self.data_manager.get_ohlcv(sym, "1h")) > 200:
-                        continue
-                    ohlcv = await self.data_provider.fetch_ohlcv(sym, "1h", "2025-06-01", "2026-03-31")
-                    if ohlcv:
-                        df = pd.DataFrame([{
-                            "timestamp": o.timestamp, "open": o.open, "high": o.high,
-                            "low": o.low, "close": o.close, "volume": o.volume,
-                        } for o in ohlcv])
-                        if len(df) > 100:
-                            self.data_manager.ohlcv[sym]["1h"] = df
-                            loaded += 1
-                            logger.info(f"Loaded {len(df)} 1h bars for {sym} (data provider)")
-            except Exception as e:
-                logger.warning(f"Data provider failed: {e}")
+        logger.info("Loading cached historical data from Dukascopy...")
+
+        for sym in SYMBOLS:
+            if self.data_manager.get_ohlcv(sym, "1h") is not None and len(self.data_manager.get_ohlcv(sym, "1h")) > 200:
+                loaded += 1
+                continue
+
+            cache_files = sorted(CACHE_DIR.glob(f"{sym}_*_*.bi5"))
+            if not cache_files:
+                logger.debug(f"No cached data for {sym}")
+                continue
+
+            ticks = []
+            for cf in cache_files[-168:]:
+                try:
+                    raw = cf.read_bytes()
+                    decompressed = lzma.decompress(raw)
+                except Exception:
+                    decompressed = raw
+                parts = cf.stem.split("_")
+                dt_str, hour_str = parts[-2], parts[-1]
+                base_ts = datetime.strptime(dt_str, "%Y%m%d").timestamp() + int(hour_str) * 3600
+                for i in range(0, len(decompressed), 20):
+                    chunk = decompressed[i:i+20]
+                    if len(chunk) < 20:
+                        break
+                    ms = struct.unpack(">I", chunk[0:4])[0]
+                    ask_raw = struct.unpack(">I", chunk[4:8])[0]
+                    bid_raw = struct.unpack(">I", chunk[8:12])[0]
+                    ticks.append((base_ts + ms/1000.0, bid_raw/100000.0, ask_raw/100000.0))
+
+            if len(ticks) < 10:
+                logger.debug(f"Too few cached ticks for {sym}")
+                continue
+
+            ticks.sort(key=lambda t: t[0])
+            df = pd.DataFrame(ticks, columns=["timestamp", "bid", "ask"])
+            df["bar"] = (df["timestamp"] // 3600).astype(int)
+            bars = df.groupby("bar").agg(
+                open=("bid", "first"), high=("bid", "max"), low=("bid", "min"),
+                close=("bid", "last"), volume=("ask", "count")
+            ).reset_index()
+            bars["timestamp"] = bars["bar"] * 3600
+            bars = bars.drop(columns=["bar"])
+            self.data_manager.ohlcv[sym]["1h"] = bars
+            loaded += 1
+            logger.info(f"Loaded {len(bars)} 1h bars for {sym} (cached)")
 
         if loaded < len(SYMBOLS):
-            logger.warning(f"Only {loaded}/{len(SYMBOLS)} pairs loaded. Missing pairs will use limited data.")
+            logger.warning(f"Only {loaded}/{len(SYMBOLS)} pairs in cache. Background downloader will fetch remaining.")
+        else:
+            logger.info(f"✓ All {loaded} pairs loaded from Dukascopy cache")
 
     def _start_dashboard(self):
         import threading
@@ -379,11 +633,40 @@ class RTSForexBot:
     # ================================================================
 
     async def _trading_cycle(self):
+        # 0. Market Session & Liquidity Check
+        if MarketSession.is_weekend():
+            logger.info("Weekend — market closed")
+            self._update_dashboard({"balance": 100000}, "CLOSED")
+            await asyncio.sleep(3600)  # Sleep 1 hour on weekends
+            return
+
+        if not MarketSession.is_market_open():
+            logger.info("Market closed (outside 24/5 window)")
+            self._update_dashboard({"balance": 100000}, "CLOSED")
+            await asyncio.sleep(1800)  # Sleep 30 min
+            return
+
+        should_pause, pause_reason = MarketSession.should_pause_trading()
+        if should_pause:
+            logger.info(f"Trading paused: {pause_reason}")
+            self._update_dashboard({"balance": 100000}, "PAUSED")
+            # Still check existing positions even if not trading new
+            await self._manage_positions()
+            return
+
+        # Log active sessions
+        active_sessions = MarketSession.get_active_sessions()
+        is_liquid, liquidity_reason = MarketSession.is_high_liquidity()
+        if not is_liquid:
+            logger.debug(f"Low liquidity: {liquidity_reason}")
+
         # 1. Economic Calendar Gate (global)
         suppressed, event = self.economic_calendar.is_suppressed()
         if suppressed and event:
             logger.info(f"Trading suppressed: {event.title}")
             self._update_dashboard({"balance": 100000}, "SUPPRESSED")
+            # Still manage existing positions
+            await self._manage_positions()
             return
 
         # 2. Gather global intelligence
@@ -398,21 +681,52 @@ class RTSForexBot:
         for sym in SYMBOLS:
             decision = await self._evaluate_symbol(sym, account_info, external_signals)
             if decision:
+                # Add spread check
+                spread_pips = self._get_current_spread(sym)
+                decision["spread_pips"] = spread_pips
+                decision["is_acceptable_spread"] = self.cost_model.get_spread_warning_level(sym, spread_pips) == "normal"
                 self._trade_decisions[sym] = decision
 
         # 4. Apply correlation filter — prevent opposing trades on correlated pairs
         self._apply_correlation_filter()
 
-        # 5. Execute approved trades
+        # 5. Execute approved trades (with spread verification)
         for sym, decision in self._trade_decisions.items():
             if decision.get("approved") and not decision.get("blocked_by_correlation"):
+                # Double-check spread before execution
+                if not decision.get("is_acceptable_spread", True):
+                    logger.warning(f"{sym} trade blocked: spread too wide ({decision.get('spread_pips', 0):.1f} pips)")
+                    continue
                 await self._execute_trade(sym, decision, account_info)
 
         # 6. Manage existing positions — check SL/TP against current prices
         await self._manage_positions()
 
-        # 7. Update dashboard
+        # 7. Check if retraining is needed for any pair (moved from _execute_trade)
+        for sym in SYMBOLS:
+            if self.online_learner.should_retrain(sym, self.risk.total_trades):
+                def fetch_fn(p):
+                    df = self.data_manager.get_ohlcv(p, "1h")
+                    if df is not None and len(df) > 200:
+                        return df
+                    return None
+                self.online_learner.request_retrain(sym, fetch_fn, self.feature_pipeline)
+
+        # 8. Update dashboard
         self._update_dashboard(account_info, "trading")
+
+    def _get_current_spread(self, symbol: str) -> float:
+        """Get current spread in pips for a symbol."""
+        try:
+            tick = self.data_manager.latest_snapshot.get(symbol)
+            if tick and hasattr(tick, 'bid') and hasattr(tick, 'ask'):
+                pip_size = 0.0001 if "JPY" not in symbol.upper() else 0.01
+                spread = (tick.ask - tick.bid) / pip_size
+                return float(spread)
+            # Fallback to CostModel
+            return self.cost_model.pip_to_price(symbol) * 10000  # Rough estimate
+        except Exception:
+            return 1.0
 
     def _gather_external_signals(self) -> np.ndarray:
         try:
@@ -491,7 +805,7 @@ class RTSForexBot:
         volume = self.risk.calculate_kelly_size(
             account_info.get("balance", 100_000), price, atr, adjusted_conf,
         )
-        volume = max(volume, 100)
+        volume = max(volume, 1)  # Minimum 1 unit
 
         return {
             "symbol": symbol,
@@ -504,6 +818,7 @@ class RTSForexBot:
             "regime_params": regime_params,
             "approved": True,
             "blocked_by_correlation": False,
+            "model_prediction": ensemble_pred.price,
         }
 
     def _apply_correlation_filter(self):
@@ -537,6 +852,19 @@ class RTSForexBot:
         regime_params = decision["regime_params"]
         confidence = decision["confidence"]
         regime = decision["regime"]
+        spread_pips = decision.get("spread_pips", 1.0)
+
+        # Final spread check at execution time
+        current_spread = self._get_current_spread(symbol)
+        if current_spread > spread_pips * 3:
+            logger.warning(f"{symbol} trade aborted: spread widened to {current_spread:.1f} pips")
+            return
+
+        # Liquidity check
+        active_sessions = MarketSession.get_active_sessions()
+        if not active_sessions:
+            logger.info(f"{symbol} trade delayed: no active trading session")
+            return
 
         # Risk checks
         balance = account_info.get("balance", 100_000)
@@ -554,16 +882,33 @@ class RTSForexBot:
             )
             return
 
-        # Place order with ATR-based SL/TP
-        sl_price = price - atr * regime_params.get("sl_atr", 1.5)
-        tp_price = price + atr * regime_params.get("tp_atr", 3.0)
+        # Apply cost model
+        cost = self.cost_model.calculate(
+            symbol=symbol,
+            direction=direction,
+            volume=volume,
+            price=price,
+            atr=atr,
+            actual_spread_pips=current_spread,
+        )
+        if not cost.is_acceptable:
+            logger.warning(f"{symbol} trade blocked: {cost.rejection_reason}")
+            return
+
+        # Place order with ATR-based SL/TP (direction-aware!)
+        if direction == "BUY":
+            sl_price = price - atr * regime_params.get("sl_atr", 1.5)
+            tp_price = price + atr * regime_params.get("tp_atr", 3.0)
+        else:  # SELL — SL above entry, TP below entry
+            sl_price = price + atr * regime_params.get("sl_atr", 1.5)
+            tp_price = price - atr * regime_params.get("tp_atr", 3.0)
         trade = await self.execution.open_position(
             symbol=symbol,
             direction=direction,
             volume=volume,
             sl=sl_price,
             tp=tp_price,
-            reason=f"regime={regime} conf={confidence:.2f} sent={self._current_sentiment:.2f}",
+            reason=f"regime={regime} conf={confidence:.2f} sent={self._current_sentiment:.2f} spread={current_spread:.1f}",
         )
         if trade:
             self.trade_count += 1
@@ -576,26 +921,15 @@ class RTSForexBot:
                 price=price, regime=regime, confidence=confidence, atr=atr,
             )
 
-        # Update drift monitors + online learner
-        for name, model_data in self.active_models.items():
-            if "drift" in model_data:
-                drifted = model_data["drift"].update(price, price)
-                if drifted and name in SYMBOLS:
-                    self.online_learner.on_drift_detected(
-                        name, model_data["drift"].error_detector.drift_count
-                    )
-
-        # Check if retraining is needed for any pair
-        for sym in SYMBOLS:
-            if self.online_learner.should_retrain(sym, self.risk.total_trades):
-                def fetch_fn(p):
-                    df = self.data_manager.get_ohlcv(p, "1h")
-                    if df is not None and len(df) > 200:
-                        return df
-                    return None
-                self.online_learner.request_retrain(
-                    sym, fetch_fn, self.feature_pipeline
-                )
+        # Update drift monitor for this symbol with (model_prediction, actual_price)
+        model_prediction = decision.get("model_prediction")
+        if model_prediction and model_prediction > 0:
+            model_data = self.active_models.get(symbol)
+            if model_data and "drift" in model_data:
+                drifted = model_data["drift"].update(model_prediction, price)
+                if drifted:
+                    logger.info(f"Drift detected for {symbol}: error={model_data['drift'].error_detector.mean:.4f}")
+                    self.online_learner.on_drift_detected(symbol, model_data["drift"].error_detector.drift_count)
 
     async def _manage_positions(self):
         """Check all open positions against current prices. Close if SL/TP hit."""
@@ -654,6 +988,42 @@ class RTSForexBot:
 
     def _on_market_data(self, tick: PriceTick):
         self.data_manager.update_tick(tick.symbol, tick.bid, tick.ask, tick.volume)
+        # Feed to order flow analyzer
+        self.order_flow_analyzer.update_tick(
+            tick.symbol, tick.bid, tick.ask, tick.volume,
+            tick.timestamp if hasattr(tick, 'timestamp') else time.time()
+        )
+        # Update gamma mapper with spot price
+        self.gamma_mapper.update_spot(tick.symbol, (tick.bid + tick.ask) / 2.0)
+
+    def _on_fix_market_data(self, fix_data):
+        """Handle market data from FIX API and convert to MarketDepthData."""
+        from src.data.data_manager import MarketDepthData
+
+        if fix_data.bid > 0 or fix_data.ask > 0:
+            md = MarketDepthData(
+                symbol=fix_data.symbol or f"ID_{fix_data.symbol_id}",
+                bids=[(fix_data.bid, fix_data.bid_size)] if fix_data.bid > 0 else [],
+                asks=[(fix_data.ask, fix_data.ask_size)] if fix_data.ask > 0 else [],
+                timestamp=fix_data.timestamp,
+            )
+            self.data_manager.update_market_depth(md)
+
+            if fix_data.symbol:
+                price = fix_data.bid if fix_data.bid > 0 else fix_data.ask
+                self.data_manager.update_price(fix_data.symbol, price, "1h")
+
+    def _on_depth_update(self, depth):
+        """Handle Level II DOM updates from cTrader."""
+        try:
+            self.data_manager.update_market_depth(depth)
+            # Log DOM imbalance for institutional analysis
+            for sym in SYMBOLS:
+                imbalance = self.data_manager.get_dom_imbalance(sym, levels=5)
+                if abs(imbalance) > 0.3:  # Significant imbalance
+                    logger.debug(f"DOM imbalance {sym}: {imbalance:.2f}")
+        except Exception as e:
+            logger.debug(f"DOM update handler error: {e}")
 
     def _send_alert(self, message: str, level: str = "info"):
         logger.info(f"[ALERT] {message}")
@@ -758,14 +1128,17 @@ HMMRegimeDetector.get_regime_params_static = staticmethod(lambda regime: _REGIME
 
 def signal_handler(sig, frame):
     if "bot" in globals():
-        asyncio.create_task(bot.stop())
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.call_soon_threadsafe(lambda: asyncio.ensure_future(bot.stop()))
 
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="RTS AI Forex Trading System")
-    parser.add_argument("--mode", choices=["live", "backtest", "validate", "train"], default="live")
+    parser.add_argument("--mode", choices=["live", "paper", "backtest", "validate", "train"], default="paper")
     parser.add_argument("--config", default="config.yaml", help="Path to config YAML")
+    parser.add_argument("--capital", type=float, default=100000.0, help="Starting capital")
     parser.add_argument("--walk-forward", action="store_true")
     parser.add_argument("--mc-test", action="store_true")
     parser.add_argument("--bt-sensitivity", action="store_true")
@@ -776,7 +1149,7 @@ if __name__ == "__main__":
     for d in ["data/logs", "data/trades", "models", "data/alternative_data"]:
         os.makedirs(d, exist_ok=True)
 
-    bot = RTSForexBot(args.config)
+    bot = RTSForexBot(args.config, mode=args.mode, initial_balance=args.capital)
 
     if args.mode in ("backtest",) or args.bt_sensitivity:
         prices = bot.data_manager.get_ohlcv("EURUSD", "1h")

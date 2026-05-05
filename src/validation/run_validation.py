@@ -29,27 +29,28 @@ from backtest.vectorized_backtester import VectorizedBacktester
 
 
 def load_test_data(symbol: str = "EURUSD", days: int = 365 * 3) -> dict:
-    """Load test data for validation."""
+    """Load test data from Dukascopy for validation."""
+    from data.dukascopy_provider import DukascopyProvider
+    provider = DukascopyProvider(cache=True)
     try:
-        import yfinance as yf
-        ticker = f"{symbol}=X"
-        data = yf.download(ticker, period=f"{days}d", interval="1h", progress=False)
-        if data.empty:
+        ohlcv = provider.fetch_ohlcv(symbol, "1h", days=days)
+        if not ohlcv or len(ohlcv) < 100:
             raise ValueError("No data returned")
-        prices = data["Close"].values
-        high = data["High"].values
-        low = data["Low"].values
+        closes = np.array([o.close for o in ohlcv])
+        highs = np.array([o.high for o in ohlcv])
+        lows = np.array([o.low for o in ohlcv])
         tr = np.maximum(
-            high[1:] - low[1:],
+            highs[1:] - lows[1:],
             np.maximum(
-                np.abs(high[1:] - prices[:-1]),
-                np.abs(low[1:] - prices[:-1]),
+                np.abs(highs[1:] - closes[:-1]),
+                np.abs(lows[1:] - closes[:-1]),
             ),
         )
         atr = np.concatenate([[np.mean(tr[:14])], tr])
-        return {"prices": prices, "atr": atr, "df": data}
+        df = pd.DataFrame({"Close": closes, "High": highs, "Low": lows})
+        return {"prices": closes, "atr": atr, "df": df}
     except Exception as e:
-        logger.warning(f"yfinance failed: {e}, generating synthetic data")
+        logger.warning(f"Dukascopy failed: {e}, generating synthetic data")
         n = days
         base = 1.12
         prices = base * np.exp(np.cumsum(np.random.normal(0, 0.0002, n)))

@@ -79,23 +79,33 @@ class TelegramNotifier:
         elapsed = time.time() - self._last_send
         if elapsed < self._min_interval:
             time.sleep(self._min_interval - elapsed)
-        try:
-            text = notif.html or notif.message
-            resp = requests.post(
-                BOT_API.format(token=self.bot_token),
-                json={
-                    "chat_id": self.chat_id,
-                    "text": text,
-                    "parse_mode": "HTML",
-                    "disable_web_page_preview": True,
-                },
-                timeout=10,
-            )
-            self._last_send = time.time()
-            if resp.status_code != 200:
-                logger.warning(f"Telegram API error: {resp.status_code} {resp.text[:100]}")
-        except Exception as e:
-            logger.debug(f"Telegram send failed: {e}")
+        last_error = None
+        for attempt in range(3):  # Retry up to 3 times
+            try:
+                text = notif.html or notif.message
+                resp = requests.post(
+                    BOT_API.format(token=self.bot_token),
+                    json={
+                        "chat_id": self.chat_id,
+                        "text": text,
+                        "parse_mode": "HTML",
+                        "disable_web_page_preview": True,
+                    },
+                    timeout=10,
+                )
+                self._last_send = time.time()
+                if resp.status_code != 200:
+                    logger.warning(f"Telegram API error (attempt {attempt+1}): {resp.status_code} {resp.text[:100]}")
+                    last_error = f"HTTP {resp.status_code}"
+                    time.sleep(1)
+                    continue
+                return  # Success
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(f"Telegram send failed (attempt {attempt+1}): {e}")
+                time.sleep(1)
+        if last_error:
+            logger.error(f"Telegram send failed after 3 attempts: {last_error}")
 
     def send(self, message: str, level: str = "info", html: Optional[str] = None):
         if not self._enabled:

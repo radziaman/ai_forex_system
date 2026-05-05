@@ -7,6 +7,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List
 
+from infrastructure.secrets import Secrets
 from api.ctrader_client import CtraderClient, AccountInfo
 
 logger = logging.getLogger(__name__)
@@ -60,11 +61,12 @@ FOREX_PAIRS = [
 class FixedCtraderClient:
     def __init__(self, demo: bool = True):
         self.demo = demo
+        self._secrets = Secrets()
         self._client = CtraderClient(
-            app_id="15217_h8WxunXX70m6O6qsnIx9ZO3GZraTdO0wnLjL3dTKyYG6fkbUca",
-            app_secret="Zb8tEW4Axzq0AJqCNS8ubniYzsgp2kxuRkYBRD9XXOcLAj5aOT",
-            access_token="",
-            account_id=6100830,
+            app_id=self._secrets.ctrader_app_id,
+            app_secret=self._secrets.ctrader_app_secret,
+            access_token=self._secrets.ctrader_access_token,
+            account_id=self._secrets.ctrader_account_id,
             demo=demo,
         )
         self._broker_info = BrokerInfo()

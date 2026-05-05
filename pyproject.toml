@@ -41,3 +41,8 @@ ignore = ["E203", "W503"]
 python_version = "3.9"
 warn_return_any = true
 warn_unused_configs = true
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore:urllib3 v2 only supports OpenSSL:urllib3.exceptions.NotOpenSSLWarning",
+]

@@ -28,6 +28,7 @@ class RiskParameters:
     trailing_distance_rr: float = 0.5
     max_consecutive_losses: int = 5
     max_daily_loss: float = 0.05
+    max_positions: int = 5
 
 
 @dataclass
@@ -49,6 +50,7 @@ class RiskManager:
     def __init__(self, params: RiskParameters, initial_balance: float = 100_000.0):
         self.params = params
         self.initial_balance = initial_balance
+        self.peak_balance = initial_balance  # Track peak for accurate drawdown
         self.mode: str = TRADE_MODE_PAPER
         self.kill_switch_triggered = False
         self.daily_pnl = 0.0
@@ -60,6 +62,7 @@ class RiskManager:
         self.trade_history: List[TradeRecord] = []
         self._price_history: List[float] = []
         self._var_lookback = 60
+        self._on_trade_close = None
 
     def calculate_kelly_size(
         self, balance: float, price: float, atr: float, confidence: float
@@ -68,8 +71,11 @@ class RiskManager:
         if atr <= 0:
             atr = price * 0.001
         win_rate = self.get_win_rate() or 0.55
-        avg_win = 0.02
-        avg_loss = 0.01
+        # Compute actual payoff ratio from trade history
+        wins = [t.pnl for t in self.trade_history if t.status == "CLOSED" and t.pnl > 0]
+        losses = [t.pnl for t in self.trade_history if t.status == "CLOSED" and t.pnl < 0]
+        avg_win = np.mean(wins) if wins else 0.02
+        avg_loss = abs(np.mean(losses)) if losses else 0.01
         b = avg_win / avg_loss if avg_loss > 0 else 2.0
         kelly = (win_rate * b - (1 - win_rate)) / b
         kelly = np.clip(kelly * self.params.kelly_fraction, 0.01, 0.25)
@@ -115,7 +121,10 @@ class RiskManager:
         """Run all pre-trade risk checks. Returns (approved, reason)."""
         if self.kill_switch_triggered:
             return False, "Kill switch active"
-        drawdown = (self.initial_balance - balance) / self.initial_balance
+        # Track peak balance for accurate drawdown
+        if balance > self.peak_balance:
+            self.peak_balance = balance
+        drawdown = (self.peak_balance - balance) / self.peak_balance if self.peak_balance > 0 else 0.0
         if drawdown > self.params.max_drawdown:
             self.kill_switch_triggered = True
             return False, f"Max drawdown exceeded: {drawdown:.1%}"
@@ -145,6 +154,7 @@ class RiskManager:
         trade.status = "CLOSED"
         self.trade_history.append(trade)
         self.total_trades += 1
+        self.daily_pnl += pnl  # Track daily PnL for daily loss limit
         if pnl > 0:
             self.wins += 1
             self.consecutive_losses = 0
@@ -156,8 +166,6 @@ class RiskManager:
                 self._on_trade_close(trade)
             except Exception:
                 pass
-
-    _on_trade_close: Optional[callable] = None
 
     def update_price_history(self, price: float):
         self._price_history.append(price)

@@ -155,7 +155,7 @@ async def ctrader_status():
         "connection_status": ctrader.connection_status if ctrader else "not_initialized",
         "has_token": has_token,
         "token_status": "valid" if has_token else "missing",
-        "oauth_url": "https://id.ctrader.com/my/settings/openapi/grantingaccess/?client_id=15217_h8WxunXX70m6O6qsnIx9ZO3GZraTdO0wnLjL3dTKyYG6fkbUca&redirect_uri=https://spotware.com&scope=trading&product=web" if not has_token else None
+        "oauth_url": "https://id.ctrader.com/my/settings/openapi/grantingaccess/?client_id=YOUR_APP_CLIENT_ID&redirect_uri=https://spotware.com&scope=trading&product=web" if not has_token else None
     }
 
 @app.websocket("/ws")
@@ -201,7 +201,7 @@ async def get_ctrader_accounts():
     return {
         "status": "pending",
         "message": "Complete OAuth flow to see accounts",
-        "oauth_url": f"https://id.ctrader.com/my/settings/openapi/grantingaccess/?client_id=15217_h8WxunXX70m6O6qsnIx9ZO3GZraTdO0wnLjL3dTKyYG6fkbUca&redirect_uri=https://spotware.com&scope=trading&product=web"
+        "oauth_url": f"https://id.ctrader.com/my/settings/openapi/grantingaccess/?client_id=YOUR_APP_CLIENT_ID&redirect_uri=https://spotware.com&scope=trading&product=web"
     }
 
 

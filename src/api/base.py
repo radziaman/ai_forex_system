@@ -24,14 +24,21 @@ class AccountInfo:
 
 @dataclass
 class OrderRequest:
+    """Standardized order request."""
     symbol: str = ""
     side: str = "BUY"  # BUY or SELL
     order_type: str = "MARKET"  # MARKET, LIMIT, STOP
     volume: float = 0.0  # in units
-    price: float = 0.0
-    stop_loss: float = 0.0
-    take_profit: float = 0.0
-    position_id: int = 0  # for closing/modifying
+    price: float = 0.0  # limit price or stop price
+    stop_loss: float = 0.0  # Absolute SL (tag 1002)
+    take_profit: float = 0.0  # Absolute TP (tag 1000)
+    position_id: int = 0  # for closing/modifying (tag 721)
+    # cTrader-specific SL/TP options (tags 1000-1006)
+    relative_sl: float = 0.0  # Relative SL in pips (tag 1003)
+    relative_tp: float = 0.0  # Relative TP in pips (tag 1001)
+    trailing_sl: bool = False  # Trailing stop loss (tag 1004)
+    trigger_method_sl: int = 1  # SL trigger method (tag 1005): 1-4
+    guaranteed_sl: bool = False  # Guaranteed SL (tag 1006)
 
 
 @dataclass

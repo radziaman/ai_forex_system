@@ -36,9 +36,9 @@ class cTraderEnvClient:
 
         self.access_token = os.getenv("CTRADER_ACCESS_TOKEN")
         self.refresh_token = os.getenv("CTRADER_REFRESH_TOKEN")
-        self.client_id = os.getenv("CTRADER_CLIENT_ID", "15217_h8WxunXX70m6O6qsnIx9ZO3GZraTdO0wnLjL3dTKyYG6fkbUca")  # noqa: E501
-        self.client_secret = os.getenv("CTRADER_CLIENT_SECRET", "Zb8tEW4Axzq0AJqCNS8ubniYzsgp2kxuRkYBRD9XXOcLAj5aOT")  # noqa: E501
-        self.account_id = os.getenv("CTRADER_ACCOUNT_ID", "6100830")
+        self.client_id = os.getenv("CTRADER_CLIENT_ID", "")
+        self.client_secret = os.getenv("CTRADER_CLIENT_SECRET", "")
+        self.account_id = os.getenv("CTRADER_ACCOUNT_ID", "")
 
         self.host = "demo.ctraderapi.com"
         self.port = 5035

@@ -1,12 +1,12 @@
 """
-cTrader Open API Client — Async-safe SSL+Protobuf with retry and order lifecycle tracking.
+cTrader Open API Client — Async-safe SSL+Protobuf with retry, Level II DOM, and order lifecycle tracking.
 """
 import ssl
 import asyncio
 import time
 import logging
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Callable, Any
+from typing import Optional, Dict, Callable, Any, List, Tuple
 from concurrent.futures import ThreadPoolExecutor
 
 try:
@@ -18,6 +18,10 @@ try:
         ProtoOATraderRes,
         ProtoOANewOrderReq,
         ProtoOAExecutionEvent,
+        ProtoOASubscribeDepthQuotesReq,
+        ProtoOAUnsubscribeDepthQuotesReq,
+        ProtoOADepthEvent,
+        ProtoOADepthQuote,
     )
     _HAS_PROTOBUF = True
 except ImportError:
@@ -25,33 +29,70 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# Symbol mapping: symbol -> cTrader symbol_id
+# Symbol mapping: symbol -> cTrader symbol_id (Open API uses numeric IDs too)
+# ⚠️  VERIFIED from cTrader Symbol Info (Right-click → Symbol Info → FIX Symbol ID)
+# Symbol IDs VERIFIED by user from cTrader Symbol Info
 SYMBOL_MAP = {
-    "EURUSD": 1,
-    "GBPUSD": 2,
-    "USDJPY": 3,
-    "XAUUSD": 4,
-    "BTCUSD": 5,
-    "AUDUSD": 6,
-    "USDCAD": 7,
-    "USDCHF": 8,
-    "NZDUSD": 9,
-    "EURJPY": 10,
-    "GBPJPY": 11,
-    "EURGBP": 12,
+    # Forex Majors (VERIFIED)
+    "EURUSD": 1,       # VERIFIED
+    "GBPUSD": 2,       # VERIFIED
+    "USDJPY": 4,       # VERIFIED (was 3)
+    "XAUUSD": 41,      # VERIFIED
+    "BTCUSD": 114,     # VERIFIED (was 5)
+    "AUDUSD": 5,       # VERIFIED (was 6)
+    "USDCAD": 8,       # VERIFIED (was 7)
+    "USDCHF": 6,       # VERIFIED (was 8)
+    "NZDUSD": 12,      # VERIFIED (was 9)
+    # Forex Minors (VERIFIED)
+    "EURJPY": 3,       # VERIFIED (was 10)
+    "GBPJPY": 7,       # VERIFIED (was 11)
+    "EURGBP": 9,       # VERIFIED (was 12)
+    # Commodities (Metals & Energy) - VERIFIED
+    "XAGUSD": 42,      # VERIFIED (was 13)
+    "XTIUSD": 99,      # VERIFIED (was 14)
+    "XBRUSD": 100,     # VERIFIED (was 15)
+    "XNGUSD": 121,     # VERIFIED (was 16)
+    # Indices - VERIFIED
+    "US500": 115,      # VERIFIED (was 17)
+    "US30": 125,       # VERIFIED (was 18)
+    "USTEC": 108,      # VERIFIED (was 19)
+    "UK100": 116,      # VERIFIED (was 20)
+    "DE40": 139,       # VERIFIED (was 21)
+    # Crypto - VERIFIED
+    "ETHUSD": 105,     # VERIFIED (was 22)
+    "LTCUSD": 112,     # VERIFIED (was 23)
+    "XRPUSD": 215,     # VERIFIED (was 24)
 }
 
 REVERSE_SYMBOL_MAP = {v: k for k, v in SYMBOL_MAP.items()}
 
+# Message type constants
+PROTO_OA_DEPTH_EVENT = 2155
+PROTO_OA_SUBSCRIBE_DEPTH_QUOTES_REQ = 2156
+PROTO_OA_SUBSCRIBE_DEPTH_QUOTES_RES = 2157
+PROTO_OA_UNSUBSCRIBE_DEPTH_QUOTES_REQ = 2158
+PROTO_OA_UNSUBSCRIBE_DEPTH_QUOTES_RES = 2159
+
+
+@dataclass
+class DepthLevel:
+    """Single price level in the order book."""
+    price: float = 0.0
+    size: float = 0.0  # in units
+
 
 @dataclass
 class MarketDepth:
+    """Full Level II market depth with bid/ask stacks."""
     symbol: str = ""
     bid: float = 0.0
     ask: float = 0.0
     spread: float = 0.0
     volume: float = 0.0
     timestamp: float = field(default_factory=time.time)
+    bids: List[DepthLevel] = field(default_factory=list)  # Sorted best first
+    asks: List[DepthLevel] = field(default_factory=list)  # Sorted best first
+    symbol_id: int = 0
 
 
 @dataclass
@@ -96,8 +137,7 @@ class AccountInfo:
 
 
 class CtraderClient:
-    """Async-safe cTrader client with thread-pool IO and retry logic."""
-
+    """Async-safe cTrader client with thread-pool IO, Level II DOM, and retry logic."""
     def __init__(
         self,
         app_id: str = "",
@@ -123,11 +163,13 @@ class CtraderClient:
         self._authenticated = False
         self._account_info: Optional[AccountInfo] = None
         self._last_market_depth: Dict[int, MarketDepth] = {}
+        self._subscribed_depth: Dict[int, bool] = {}  # symbol_id -> subscribed
 
         self.on_market_data: Optional[Callable] = None
         self.on_account_update: Optional[Callable] = None
         self.on_order_update: Optional[Callable] = None
         self.on_positions_update: Optional[Callable] = None
+        self.on_depth_update: Optional[Callable] = None  # Callback for DOM updates
 
     async def start(self) -> bool:
         try:
@@ -147,7 +189,9 @@ class CtraderClient:
                 return self._start_simulation()
             await self._fetch_account_info()
             self._is_connected = True
-            logger.info("cTrader client connected and authenticated")
+            # Start background listener for DOM and other events
+            await self.start_background_listener()
+            logger.info("cTrader client connected, authenticated, and listening")
             return True
         except Exception as e:
             logger.warning(f"cTrader start failed: {e}, using simulation")
@@ -317,6 +361,9 @@ class CtraderClient:
 
     async def disconnect(self):
         self._is_connected = False
+        # Unsubscribe from all depth subscriptions
+        for sym_id in list(self._subscribed_depth.keys()):
+            await self.unsubscribe_depth(sym_id)
         if self._writer:
             try:
                 self._writer.close()
@@ -329,3 +376,136 @@ class CtraderClient:
 
     def is_connected(self) -> bool:
         return self._is_connected
+
+    async def start_background_listener(self):
+        """Start background listener for async events (Depth, Spot, etc.)."""
+        asyncio.create_task(self._background_listener())
+
+    async def _background_listener(self):
+        """Continuously read messages and dispatch to handlers."""
+        while self._is_connected and self._reader:
+            try:
+                length_bytes = await asyncio.wait_for(
+                    self._reader.readexactly(4), timeout=30
+                )
+                msg_length = int.from_bytes(length_bytes, "big")
+                data = await asyncio.wait_for(
+                    self._reader.readexactly(msg_length), timeout=30
+                )
+                response = ProtoMessage()
+                response.ParseFromString(data)
+                await self._handle_message(response)
+            except asyncio.TimeoutError:
+                continue
+            except Exception as e:
+                if self._is_connected:
+                    logger.debug(f"Background listener error: {e}")
+                break
+
+    async def _handle_message(self, msg):
+        """Dispatch incoming messages to appropriate handlers."""
+        if msg.payloadType == PROTO_OA_DEPTH_EVENT:
+            await self._handle_depth_event(msg)
+        elif msg.payloadType == 2103:  # ProtoOAAccountAuthRes
+            logger.debug("Received account auth response")
+        elif msg.payloadType == 2101:  # ProtoOAApplicationAuthRes
+            logger.debug("Received app auth response")
+        else:
+            logger.debug(f"Unhandled message type: {msg.payloadType}")
+
+    async def _handle_depth_event(self, msg):
+        """Process Level II DOM update from ProtoOADepthEvent."""
+        try:
+            depth_event = ProtoOADepthEvent()
+            depth_event.ParseFromString(msg.payload)
+            symbol_id = depth_event.symbolId
+            symbol = REVERSE_SYMBOL_MAP.get(symbol_id, str(symbol_id))
+
+            # Initialize or update market depth
+            if symbol_id not in self._last_market_depth:
+                self._last_market_depth[symbol_id] = MarketDepth(
+                    symbol=symbol, symbol_id=symbol_id
+                )
+            md = self._last_market_depth[symbol_id]
+            md.timestamp = time.time()
+
+            # Process new/updated quotes
+            bids_dict = {b.price: b for b in md.bids}
+            asks_dict = {a.price: a for a in md.asks}
+
+            for quote in depth_event.newQuotes:
+                price = quote.bid / 100000.0 if quote.HasField("bid") else quote.ask / 100000.0
+                size = quote.size / 100.0  # Convert cents to units
+                level = DepthLevel(price=price, size=size)
+                if quote.HasField("bid"):
+                    bids_dict[price] = level
+                elif quote.HasField("ask"):
+                    asks_dict[price] = level
+
+            # Process deleted quotes
+            deleted_prices = set()
+            for quote_id in depth_event.deletedQuotes:
+                deleted_prices.add(quote_id)
+            bids_dict = {p: l for p, l in bids_dict.items() if p not in deleted_prices}
+            asks_dict = {p: l for p, l in asks_dict.items() if p not in deleted_prices}
+
+            # Sort: bids descending (best bid first), asks ascending (best ask first)
+            md.bids = sorted(bids_dict.values(), key=lambda x: x.price, reverse=True)[:20]
+            md.asks = sorted(asks_dict.values(), key=lambda x: x.price)[:20]
+
+            # Update best bid/ask
+            md.bid = md.bids[0].price if md.bids else 0.0
+            md.ask = md.asks[0].price if md.asks else 0.0
+            md.spread = (md.ask - md.bid) if (md.ask and md.bid) else 0.0
+            md.volume = sum(b.size for b in md.bids) + sum(a.size for a in md.asks)
+
+            # Notify callback
+            if self.on_depth_update:
+                self.on_depth_update(md)
+
+            logger.debug(f"DOM update {symbol}: {len(md.bids)} bids, {len(md.asks)} asks")
+        except Exception as e:
+            logger.warning(f"Failed to parse depth event: {e}")
+
+    async def subscribe_depth(self, symbol_id: int) -> bool:
+        """Subscribe to Level II DOM for a symbol."""
+        if not _HAS_PROTOBUF or not self._authenticated:
+            return False
+        if symbol_id in self._subscribed_depth:
+            return True
+        try:
+            req = ProtoOASubscribeDepthQuotesReq()
+            req.ctidTraderAccountId = self.account_id
+            req.symbolId.append(symbol_id)
+            if await self._send_msg(PROTO_OA_SUBSCRIBE_DEPTH_QUOTES_REQ, req):
+                self._subscribed_depth[symbol_id] = True
+                logger.info(f"Subscribed to Level II DOM for {REVERSE_SYMBOL_MAP.get(symbol_id, symbol_id)}")
+                return True
+            return False
+        except Exception as e:
+            logger.warning(f"Failed to subscribe to depth: {e}")
+            return False
+
+    async def unsubscribe_depth(self, symbol_id: int) -> bool:
+        """Unsubscribe from Level II DOM for a symbol."""
+        if not _HAS_PROTOBUF or symbol_id not in self._subscribed_depth:
+            return False
+        try:
+            req = ProtoOAUnsubscribeDepthQuotesReq()
+            req.ctidTraderAccountId = self.account_id
+            req.symbolId.append(symbol_id)
+            if await self._send_msg(PROTO_OA_UNSUBSCRIBE_DEPTH_QUOTES_REQ, req):
+                del self._subscribed_depth[symbol_id]
+                logger.info(f"Unsubscribed from Level II DOM for {REVERSE_SYMBOL_MAP.get(symbol_id, symbol_id)}")
+                return True
+            return False
+        except Exception as e:
+            logger.warning(f"Failed to unsubscribe from depth: {e}")
+            return False
+
+    def get_market_depth(self, symbol: str) -> Optional[MarketDepth]:
+        """Get latest Level II market depth for a symbol."""
+        symbol_id = SYMBOL_MAP.get(symbol.upper())
+        if symbol_id and symbol_id in self._last_market_depth:
+            return self._last_market_depth[symbol_id]
+        return None

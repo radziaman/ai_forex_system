@@ -20,7 +20,7 @@ install: setup
 	@echo "Installation complete"
 
 test:
-	. venv/bin/activate && pytest tests/ -v
+	. venv/bin/activate && pytest tests/ -v -W ignore::urllib3.exceptions.NotOpenSSLWarning
 
 lint:
 	. venv/bin/activate && flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics

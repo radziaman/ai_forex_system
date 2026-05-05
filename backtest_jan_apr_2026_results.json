@@ -1,0 +1,26 @@
+{
+  "EURUSD": {
+    "return_pct": -4.48,
+    "final": 95520.52,
+    "trades": 50,
+    "win_rate": "54.0%",
+    "profit_factor": 0.69,
+    "sharpe": -2.14,
+    "avg_win": 371.19,
+    "avg_loss": -630.51,
+    "max_dd_pct": 6.81,
+    "total_pnl": -4479.48
+  },
+  "GBPUSD": {
+    "return_pct": -4.46,
+    "final": 95538.29,
+    "trades": 56,
+    "win_rate": "46.4%",
+    "profit_factor": 0.73,
+    "sharpe": -1.82,
+    "avg_win": 471.75,
+    "avg_loss": -557.58,
+    "max_dd_pct": 6.32,
+    "total_pnl": -4461.72
+  }
+}

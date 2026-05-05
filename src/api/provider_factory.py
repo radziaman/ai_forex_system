@@ -59,7 +59,7 @@ class CtraderExecutionAdapter(ExecutionProvider):
         from api.ctrader_client import TradeOrder
         trade_order = TradeOrder(
             symbol=order.symbol,
-            symbol_id={"EURUSD": 1, "GBPUSD": 2, "USDJPY": 3, "XAUUSD": 4, "BTCUSD": 5}.get(order.symbol.upper(), 1),
+            symbol_id={"EURUSD": 1, "GBPUSD": 2, "USDJPY": 4, "XAUUSD": 41, "BTCUSD": 114}.get(order.symbol.upper(), 1),
             side=order.side, order_type=order.order_type,
             volume=int(order.volume),
             price=order.price, sl=order.stop_loss, tp=order.take_profit,
@@ -95,12 +95,17 @@ class CtraderExecutionAdapter(ExecutionProvider):
 
 def create_execution_provider(secrets: Secrets) -> Tuple[ExecutionProvider, Optional[DataProvider]]:
     provider = secrets.provider
-
+    
     if provider == "dukascopy":
-        logger.info("Provider: Dukascopy data + cTrader execution")
-        from data.dukascopy_provider import DukascopyDataProvider
-        return CtraderExecutionAdapter(secrets), DukascopyDataProvider()
-
+        logger.info("Provider: Dukascopy (real-time data) + cTrader (execution)")
+        from data.dukascopy_realtime import DukascopyProvider
+        return CtraderExecutionAdapter(secrets), DukascopyProvider(cache=True, poll_interval=1.0)
+    
+    elif provider == "fix":
+        logger.info("Provider: FIX API (live trading)")
+        from api.fix_adapter import FIXExecutionAdapter
+        return FIXExecutionAdapter(secrets), None
+    
     else:
         logger.info("Provider: cTrader Open API (default)")
         return CtraderExecutionAdapter(secrets), None

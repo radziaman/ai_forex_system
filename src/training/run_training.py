@@ -31,24 +31,23 @@ def load_training_data(
     frac: float = 1.0,
 ):
     timeframes = timeframes or ["1h", "4h"]
-    logger.info(f"Loading {years} years of {symbol} data...")
+    logger.info(f"Loading {years} years of {symbol} data from Dukascopy...")
 
     try:
-        import yfinance as yf
+        from data.dukascopy_provider import DukascopyProvider
+        provider = DukascopyProvider(cache=True)
         dfs = {}
         for tf in timeframes:
-            interval = "1h" if tf == "1h" else "4h" if tf == "4h" else "1d"
-            period = f"{max(years, 2)}y" if interval == "1h" else f"{max(years, 5)}y"
-            ticker = f"{symbol}=X"
-            data = yf.download(ticker, period=period, interval=interval, progress=False)
-            if data.empty:
-                raise ValueError(f"No data for {ticker}")
-            df = data.rename(columns={
-                "Open": "open", "High": "high", "Low": "low",
-                "Close": "close", "Volume": "volume",
-            })
-            df["timestamp"] = df.index.astype(np.int64) // 10**9
-            df = df.reset_index(drop=True)
+            interval_map = {"1h": "1h", "4h": "4h", "1d": "1d"}
+            interval = interval_map.get(tf, "1h")
+            days = int(years * 365)
+            ohlcv = provider.fetch_ohlcv(symbol, interval, days=days)
+            if not ohlcv or len(ohlcv) < 100:
+                raise ValueError(f"Insufficient Dukascopy data for {symbol} {tf}")
+            df = pd.DataFrame([{
+                "timestamp": o.timestamp, "open": o.open, "high": o.high,
+                "low": o.low, "close": o.close, "volume": o.volume,
+            } for o in ohlcv])
             if frac < 1.0:
                 cut = int(len(df) * frac)
                 df = df.iloc[-cut:].reset_index(drop=True)
