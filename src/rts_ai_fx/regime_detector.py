@@ -123,6 +123,13 @@ class HMMRegimeDetector:
             "crisis": {"sl_atr": 1.0, "tp_atr": 2.0, "pos_mult": 0.0, "min_conf": 0.95},
         }
         return params.get(regime, params["ranging"])
+    
+    def get_position_size_multiplier(self, regime: str, sentiment_score: float = 0.0) -> float:
+        """Get position size multiplier based on regime and sentiment."""
+        base_mult = self.get_regime_params(regime).get("pos_mult", 1.0)
+        # Adjust based on sentiment (positive sentiment = increase size)
+        sentiment_adj = 0.5 + 0.5 * max(-1, min(1, sentiment_score))
+        return base_mult * sentiment_adj
 
     def should_trade(self, regime: str) -> bool:
         return self.get_regime_params(regime)["pos_mult"] > 0

@@ -128,6 +128,12 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     df["hurst"] = df["close"].rolling(50).apply(lambda x: _hurst(x.values), raw=False)
 
     df = df.replace([np.inf, -np.inf], np.nan)
+    nan_count = df.isna().sum().sum()
+    if nan_count > 0:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"NaN count before fill: {nan_count}")
+    df = df.ffill().bfill().fillna(0)
     return df
 
 
@@ -153,6 +159,7 @@ def compute_microstructure_features(df: pd.DataFrame, tick_data: Optional[pd.Dat
     if tick_data is not None and len(tick_data) > 100:
         df = _add_tick_features(df, tick_data)
     df = df.replace([np.inf, -np.inf], np.nan)
+    df = df.ffill().bfill().fillna(0)
     return df
 
 
@@ -194,32 +201,43 @@ def _add_tick_features(df: pd.DataFrame, ticks: pd.DataFrame) -> pd.DataFrame:
 def compute_cross_asset_features(
     df: pd.DataFrame,
     external_data: Optional[Dict[str, pd.DataFrame]] = None,
+    sentiment_scores: Optional[Dict[str, float]] = None,
 ) -> pd.DataFrame:
-    """Add cross-asset features: correlations, ratios, spreads."""
+    """Add cross-asset features: correlations, ratios, spreads, and sentiment."""
     df = df.copy()
-    if external_data is None:
+    if external_data is None and sentiment_scores is None:
         return df
-    for name, ext_df in external_data.items():
-        if ext_df is None or len(ext_df) < 20:
-            continue
-        ext_close = ext_df["close"].values
-        min_len = min(len(df), len(ext_close))
-        if min_len < 20:
-            continue
-        our_close = df["close"].values[-min_len:]
-        their_close = ext_close[-min_len:]
-        corr = np.corrcoef(our_close, their_close)[0, 1]
-        df[f"corr_{name}"] = corr
-        ratio = our_close / (their_close + 1e-10)
-        df[f"ratio_{name}"] = ratio[-1] if hasattr(ratio, "__len__") else ratio
-        ret_diff = (
-            np.diff(our_close) / our_close[:-1]
-            - np.diff(their_close) / their_close[:-1]
-        )
-        df[f"ret_divergence_{name}"] = np.mean(ret_diff[-10:]) if len(ret_diff) >= 10 else 0.0
-        spread = our_close - their_close
-        z = (spread[-1] - np.mean(spread)) / (np.std(spread) + 1e-10)
-        df[f"zscore_{name}"] = z
+    
+    # Cross-asset correlations
+    if external_data:
+        for name, ext_df in external_data.items():
+            if ext_df is None or len(ext_df) < 20:
+                continue
+            ext_close = ext_df["close"].values
+            min_len = min(len(df), len(ext_close))
+            if min_len < 20:
+                continue
+            our_close = df["close"].values[-min_len:]
+            their_close = ext_close[-min_len:]
+            corr = np.corrcoef(our_close, their_close)[0, 1]
+            df[f"corr_{name}"] = corr
+            ratio = our_close / (their_close + 1e-10)
+            df[f"ratio_{name}"] = ratio[-1] if hasattr(ratio, "__len__") else ratio
+            ret_diff = (
+                np.diff(our_close) / our_close[:-1]
+                - np.diff(their_close) / their_close[:-1]
+            )
+            df[f"ret_divergence_{name}"] = np.mean(ret_diff[-10:]) if len(ret_diff) >= 10 else 0.0
+            spread = our_close - their_close
+            z = (spread[-1] - np.mean(spread)) / (np.std(spread) + 1e-10)
+            df[f"zscore_{name}"] = z
+    
+    # Sentiment features
+    if sentiment_scores:
+        for currency, score in sentiment_scores.items():
+            df[f"sentiment_{currency}"] = score
+        df["sentiment_overall"] = np.mean(list(sentiment_scores.values()))
+    
     return df
 
 
@@ -308,8 +326,9 @@ class FeaturePipeline:
         symbol: str = "EURUSD",
         tick_buffer: Optional[List[Dict]] = None,
         external_signals: Optional[np.ndarray] = None,
+        sentiment_scores: Optional[Dict[str, float]] = None,
     ) -> Optional[np.ndarray]:
-        """Transform multi-timeframe data into a fused feature vector."""
+        """Transform multi-timeframe data into a fused feature vector with sentiment."""
         symbol_data = self._extract_symbol_data(dfs, symbol)
         tf_vectors = []
         for tf in self.timeframes:
@@ -323,7 +342,9 @@ class FeaturePipeline:
                     ticks_df = pd.DataFrame(tick_buffer)
                 processed = compute_microstructure_features(processed, ticks_df)
             if self.use_cross_asset and self.cross_asset_data:
-                processed = compute_cross_asset_features(processed, self.cross_asset_data)
+                processed = compute_cross_asset_features(processed, self.cross_asset_data, sentiment_scores)
+            elif sentiment_scores:
+                processed = compute_cross_asset_features(processed, None, sentiment_scores)
             cols = self._feature_cols if self._feature_cols else self._get_feature_columns(processed)
             missing = [c for c in cols if c not in processed.columns]
             if missing:

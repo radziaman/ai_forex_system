@@ -90,10 +90,13 @@ def run_live(args):
 
     try:
         print("Loading trained model...")
-        trader.model = trader.model.load("models/lstm_cnn_model.h5")
+        from rts_ai_fx.model import LSTMCNNHybrid
+
+        trader.model = LSTMCNNHybrid.load("models/lstm_cnn_model.h5")
         trader.model_trained = True
-    except Exception:
-        print("No trained model found. Training new model...")
+        print("Model loaded successfully.")
+    except Exception as e:
+        print(f"No trained model found: {e}. Training new model...")
         trader.train_models()
 
     print("\nStarting live trading simulation...")

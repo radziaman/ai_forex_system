@@ -51,18 +51,15 @@ class MoEEnsemble:
             try:
                 pred = float(np.array(expert.predict(X)).flatten()[0])
                 conf = float(np.array(expert.confidence(X)).flatten()[0])
-            except Exception:
+            except Exception as e:
                 continue
-            # Regime-based weighting: experts for current regime get boost
-            regime_weight = 2.0 if expert.regime == regime else 0.5
-            if regime_posteriors is not None:
-                # Use HMM posterior probability for this regime
-                regime_idx = ["trending", "ranging", "volatile", "crisis"].index(expert.regime) \
-                    if expert.regime in ["trending", "ranging", "volatile", "crisis"] else 1
-                if regime_idx < len(regime_posteriors):
-                    regime_weight = regime_posteriors[regime_idx] * 2 + 0.5
+            # Dynamic regime-based weighting
+            regime_weight = self._calculate_regime_weight(expert, regime, regime_posteriors)
+            # Elo rating weight (performance-based)
             elo_weight = self.elo_ratings.get(expert.name, 1200.0) / 1200.0
-            weight = regime_weight * elo_weight
+            # Confidence-adjusted weight
+            conf_weight = 0.5 + 0.5 * conf
+            weight = regime_weight * elo_weight * conf_weight
             predictions.append(pred)
             confidences.append(conf)
             weights.append(weight)
@@ -76,10 +73,12 @@ class MoEEnsemble:
         weights = weights / total
         ensemble_price = float(np.average(predictions, weights=weights))
         ensemble_conf = float(np.average(confidences, weights=weights))
+        # Determine direction based on weighted ensemble
+        direction = self._determine_direction(ensemble_price, confidences, weights)
         return EnsemblePrediction(
             price=ensemble_price,
             confidence=ensemble_conf,
-            direction="HOLD",
+            direction=direction,
             expert_outputs=expert_outputs,
         )
 
@@ -110,6 +109,40 @@ class MoEEnsemble:
         elif sell_ratio > 0.6 and sell_ratio > buy_ratio and pred.confidence >= min_confidence:
             return True, "SELL", sell_ratio
         return False, "HOLD", 0.0
+
+    def _calculate_regime_weight(
+        self, expert: Expert, regime: str, regime_posteriors: Optional[np.ndarray]
+    ) -> float:
+        """Calculate regime-based weight for expert."""
+        base_weight = 1.0
+        if expert.regime == regime:
+            base_weight = 2.0
+        elif expert.regime != "ranging":  # Non-rangng experts get penalty
+            base_weight = 0.5
+        
+        if regime_posteriors is not None:
+            regime_idx = 0
+            try:
+                regime_names = ["trending", "ranging", "volatile", "crisis"]
+                regime_idx = regime_names.index(expert.regime) if expert.regime in regime_names else 1
+                if regime_idx < len(regime_posteriors):
+                    base_weight = regime_posteriors[regime_idx] * 2 + 0.5
+            except (ValueError, IndexError):
+                pass
+        
+        return base_weight
+
+    def _determine_direction(
+        self, ensemble_price: float, confidences: list, weights: np.ndarray
+    ) -> str:
+        """Determine trading direction based on weighted predictions."""
+        # Use simple majority of weighted predictions
+        avg_conf = np.average(confidences, weights=weights) if weights.sum() > 0 else 0.0
+        if avg_conf > 0.6:
+            return "BUY"
+        elif avg_conf < 0.4:
+            return "SELL"
+        return "HOLD"
 
     def update_elo(self, name: str, was_correct: bool, k: float = 32.0):
         self.elo_ratings[name] = self.elo_ratings.get(name, 1200.0) + (k if was_correct else -k)

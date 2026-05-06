@@ -98,18 +98,38 @@ class RiskManager:
         returns = np.diff(self._price_history) / self._price_history[:-1]
         if len(returns) < 10:
             return self.initial_balance * 0.02
-        return float(np.percentile(returns, (1 - confidence) * 100)) * self.initial_balance
+        var_val = float(np.percentile(returns, (1 - confidence) * 100)) * self.initial_balance
+        return max(var_val, -self.initial_balance * 0.10)  # Cap at 10% loss
 
     def cvar(self, confidence: float = 0.95) -> float:
-        """Conditional VaR (expected shortfall)."""
-        var_val = self.var(confidence)
+        """Conditional VaR (expected shortfall) — average loss beyond VaR."""
         if len(self._price_history) < 20:
-            return var_val * 1.5
+            return self.initial_balance * 0.03
         returns = np.diff(self._price_history) / self._price_history[:-1]
+        var_val = self.var(confidence)
         tail = returns[returns <= var_val / self.initial_balance]
         if len(tail) == 0:
             return var_val
-        return float(np.mean(tail)) * self.initial_balance
+        cvar_val = float(np.mean(tail)) * self.initial_balance
+        return max(cvar_val, -self.initial_balance * 0.15)  # Cap at 15% loss
+
+    def stress_test(
+        self, scenario_returns: List[float]
+    ) -> dict:
+        """Run stress test against historical crisis scenarios."""
+        if not scenario_returns:
+            return {"max_loss": 0, "impact": 0}
+        current_balance = self.initial_balance
+        max_loss = 0
+        for ret in scenario_returns:
+            loss = current_balance * abs(ret)
+            if loss > max_loss:
+                max_loss = loss
+        return {
+            "max_loss": max_loss,
+            "max_loss_pct": max_loss / self.initial_balance,
+            "scenarios_tested": len(scenario_returns),
+        }
 
     def get_win_rate(self) -> float:
         total = self.wins + self.losses

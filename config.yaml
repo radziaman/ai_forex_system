@@ -27,29 +27,32 @@ trading:
       max_positions: 2
       slippage_pips: 1.5
 
-# AI Brain (PPO RL Agent)
+# AI Brain (Currently using LSTM-CNN Hybrid Model)
+# TODO: PPO RL Agent integration pending
 ai:
-  algorithm: "PPO"
-  device: "auto"
-  policy: "MlpPolicy"
-  policy_kwargs:
-    net_arch: [1024, 512, 256, 128]
-    activation_fn: "tanh"
-  learning_rate: 3.0e-4
-  n_steps: 2048
-  batch_size: 64
-  n_epochs: 10
-  gamma: 0.99
-  gae_lambda: 0.95
-  clip_range: 0.2
-  ent_coef: 0.01
-  vf_coef: 0.5
-  max_grad_norm: 0.5
-  total_timesteps: 1000000
-  eval_freq: 10000
-  save_freq: 50000
-  online_finetune: true
-  finetune_freq: 100
+  algorithm: "LSTM-CNN"
+  # PPO settings (unused in current implementation)
+  # algorithm: "PPO"
+  # device: "auto"
+  # policy: "MlpPolicy"
+  # policy_kwargs:
+  #   net_arch: [1024, 512, 256, 128]
+  #   activation_fn: "tanh"
+  # learning_rate: 3.0e-4
+  # n_steps: 2048
+  # batch_size: 64
+  # n_epochs: 10
+  # gamma: 0.99
+  # gae_lambda: 0.95
+  # clip_range: 0.2
+  # ent_coef: 0.01
+  # vf_coef: 0.5
+  # max_grad_norm: 0.5
+  # total_timesteps: 1000000
+  # eval_freq: 10000
+  # save_freq: 50000
+  # online_finetune: true
+  # finetune_freq: 100
 
 # Features
 features:
