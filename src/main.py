@@ -598,6 +598,7 @@ class RTSForexBot:
         logger.info("Bot is LIVE -- monitoring 7 pairs with Dukascopy data")
 
         cycle_counter = 0
+        last_heartbeat = 0.0
         last_sentiment_refresh = 0.0
         last_calendar_fetch = 0.0
         last_summary_day = pd.Timestamp.now().day
@@ -610,6 +611,12 @@ class RTSForexBot:
             try:
                 cycle_start = time.time()
                 
+                # Heartbeat every 60s so user knows bot is alive
+                now = time.time()
+                if now - last_heartbeat > 60:
+                    last_heartbeat = now
+                    logger.info(f"[heartbeat] cycle={cycle_counter} positions={len(self.execution.get_open_positions())} regime={list(self._regimes.values())[:3]}")
+
                 await self._trading_cycle()
                 
                 # Adaptive sleep to maintain ~1 second cycles (with jitter protection)
