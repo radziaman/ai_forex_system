@@ -666,7 +666,7 @@ class RTSForexBot:
                         # Check for cached data first
                         cache_files = sorted(CACHE_DIR.glob(f"{sym}_*_*.bi5"))
                         if cache_files:
-                            import lzma, struct, pandas as pd
+                            import lzma, struct, pandas as _pd
                             ticks = []
                             for cf in cache_files[-720:]:
                                 raw = cf.read_bytes()
@@ -684,7 +684,7 @@ class RTSForexBot:
                                     ticks.append((base_ts + ms/1000.0, bid_raw/100000.0, ask_raw/100000.0))
                             if len(ticks) > 50:
                                 ticks.sort(key=lambda t: t[0])
-                                df = pd.DataFrame(ticks, columns=["timestamp","bid","ask"])
+                                df = _pd.DataFrame(ticks, columns=["timestamp","bid","ask"])
                                 df["bar"] = (df["timestamp"] // 3600).astype(int)
                                 bars = df.groupby("bar").agg(open=("bid","first"),high=("bid","max"),
                                     low=("bid","min"),close=("bid","last"),volume=("ask","count")).reset_index()
@@ -908,22 +908,21 @@ class RTSForexBot:
                 decision["is_acceptable_spread"] = self.cost_model.get_spread_warning_level(sym, spread_pips) == "normal"
                 
                 # NEW: Toxic flow check (Enhancement #1)
-                if sym in self.toxic_detectors:
-                    toxic_snap = self.toxic_detector.update(
-                        {"price": self.data_manager.get_price(sym, "1h") or 1.12,
-                         "mid": self.data_manager.get_price(sym, "1h") or 1.12,
-                         "volume": 1}
+                toxic_snap = self.toxic_detector.update(
+                    {"price": self.data_manager.get_price(sym, "1h") or 1.12,
+                     "mid": self.data_manager.get_price(sym, "1h") or 1.12,
+                     "volume": 1}
+                )
+                decision["toxic_flow"] = toxic_snap.is_toxic
+                decision["toxic_vpin"] = toxic_snap.vpin
+                if toxic_snap.is_toxic:
+                    decision["approved"] = False
+                    decision["rejection_reason"] = f"toxic_flow_vpin={toxic_snap.vpin:.2f}"
+                    await self.event_bus.emit(
+                        EventType.TOXIC_FLOW,
+                        {"symbol": sym, "snapshot": toxic_snap},
+                        source="toxic_detector"
                     )
-                    decision["toxic_flow"] = toxic_snap.is_toxic
-                    decision["toxic_vpin"] = toxic_snap.vpin
-                    if toxic_snap.is_toxic:
-                        decision["approved"] = False
-                        decision["rejection_reason"] = f"toxic_flow_vpin={toxic_snap.vpin:.2f}"
-                        await self.event_bus.emit(
-                            EventType.TOXIC_FLOW,
-                            {"symbol": sym, "snapshot": toxic_snap},
-                            source="toxic_detector"
-                        )
                 
                 # NEW: Smart money check (Enhancement #4)
                 if decision.get("approved") and sym in self.cot_data:
@@ -1524,10 +1523,10 @@ class RTSForexBot:
         """Handle Level II DOM updates from cTrader."""
         try:
             self.data_manager.update_market_depth(depth)
-            # Log DOM imbalance for institutional analysis
-            for sym in SYMBOLS:
+            sym = getattr(depth, 'symbol', None) or getattr(depth, 'symbol_id', None)
+            if sym:
                 imbalance = self.data_manager.get_dom_imbalance(sym, levels=5)
-                if abs(imbalance) > 0.3:  # Significant imbalance
+                if abs(imbalance) > 0.5:
                     logger.debug(f"DOM imbalance {sym}: {imbalance:.2f}")
         except Exception as e:
             logger.debug(f"DOM update handler error: {e}")
@@ -1594,20 +1593,21 @@ class RTSForexBot:
         # Gather enhanced metrics from all 11 modules
         toxic_metrics = {}
         for sym in SYMBOLS[:5]:  # First 5 symbols
-            if sym in self.toxic_detectors:
-                snap = self.toxic_detectors[sym].get_snapshot()
-                toxic_metrics[sym] = {
-                    "vpin": round(snap.vpin, 3),
-                    "is_toxic": snap.is_toxic,
-                }
+            should_fade, reason = self.toxic_detector.should_fade(sym)
+            toxic_metrics[sym] = {
+                "should_fade": should_fade,
+                "reason": reason,
+            }
 
         circuit_metrics = {}
         for sym in SYMBOLS[:5]:
             if sym in self.circuit_breakers:
                 snap = self.circuit_breakers[sym].get_snapshot()
                 circuit_metrics[sym] = {
-                    "state": snap.state.value,
-                    "consecutive_bad": snap.consecutive_bad_ticks,
+                    "is_healthy": snap.is_healthy,
+                    "stress_level": snap.stress_level,
+                    "should_halt": snap.should_halt,
+                    "halt_reason": snap.halt_reason,
                 }
 
         # Behavioral sentiment

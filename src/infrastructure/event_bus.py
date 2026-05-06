@@ -77,7 +77,7 @@ class TradingEventBus:
         self._max_history = 1000
         self._event_stats: Dict[EventType, int] = {}
         self._running = False
-        self._event_queue: asyncio.Queue = asyncio.Queue()
+        self._event_queue: Optional[asyncio.Queue] = None
         self._worker_task: Optional[asyncio.Task] = None
         
     def subscribe(self, event_type: EventType, callback: Callable):
@@ -107,18 +107,23 @@ class TradingEventBus:
     
     async def emit(self, event_type: EventType, data: Any = None, source: str = ""):
         """Emit an event (non-blocking)."""
+        if not self._event_queue:
+            return
         event = Event(type=event_type, data=data, source=source)
         await self._event_queue.put(event)
         self._event_stats[event_type] = self._event_stats.get(event_type, 0) + 1
         
     def emit_sync(self, event_type: EventType, data: Any = None, source: str = ""):
         """Emit an event synchronously (for non-async contexts)."""
+        if not self._event_queue:
+            return
         event = Event(type=event_type, data=data, source=source)
         asyncio.create_task(self._event_queue.put(event))
         self._event_stats[event_type] = self._event_stats.get(event_type, 0) + 1
         
     async def start(self):
         """Start the event processing worker."""
+        self._event_queue = asyncio.Queue()
         self._running = True
         self._worker_task = asyncio.create_task(self._process_events())
         logger.info("Event bus started")

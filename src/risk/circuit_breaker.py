@@ -59,6 +59,7 @@ class CircuitBreaker:
         """
         snapshot = MarketStressSnapshot()
         snapshot.timestamp = time.time()
+        self._last_snapshot = snapshot
 
         bid = tick.get("bid", 0)
         ask = tick.get("ask", 0)
@@ -238,3 +239,7 @@ class CircuitBreaker:
                     "cooldown_remaining": max(0, self.cooldown_seconds - elapsed),
                 }
         return summary
+
+    def get_snapshot(self):
+        """Return last market health snapshot for dashboard."""
+        return getattr(self, '_last_snapshot', MarketStressSnapshot())

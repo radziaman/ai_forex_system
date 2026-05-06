@@ -21,10 +21,11 @@ try:
         ProtoOASubscribeDepthQuotesReq,
         ProtoOAUnsubscribeDepthQuotesReq,
         ProtoOADepthEvent,
-        ProtoOADepthQuote,
     )
     _HAS_PROTOBUF = True
-except ImportError:
+    print("✅ cTrader Open API protobuf loaded successfully")
+except ImportError as e:
+    print(f"⚠️ cTrader protobuf import failed: {e}")
     _HAS_PROTOBUF = False
 
 logger = logging.getLogger(__name__)
@@ -181,11 +182,11 @@ class CtraderClient:
                 return self._start_simulation()
             if not await self._auth_application():
                 logger.warning("App auth failed, using simulation")
-                await self._disconnect()
+                await self.disconnect()
                 return self._start_simulation()
             if not await self._auth_account():
                 logger.warning("Account auth failed, using simulation")
-                await self._disconnect()
+                await self.disconnect()
                 return self._start_simulation()
             await self._fetch_account_info()
             self._is_connected = True
@@ -270,44 +271,87 @@ class CtraderClient:
         return bool(response and response.payloadType == 2101)
 
     async def _auth_account(self) -> bool:
+        # Step 1: Get account list by access token
+        from ctrader_open_api.messages.OpenApiMessages_pb2 import (
+            ProtoOAGetAccountListByAccessTokenReq,
+            ProtoOAGetAccountListByAccessTokenRes,
+        )
+        req = ProtoOAGetAccountListByAccessTokenReq()
+        req.accessToken = self.access_token
+
+        if not await self._send_msg(2149, req):
+            return False
+
+        response = await self._recv_msg()
+        logger.info(f"Account list response: payloadType={response.payloadType if response else 'None'}")
+        if response and response.payloadType == 2150:
+            res = ProtoOAGetAccountListByAccessTokenRes()
+            res.ParseFromString(response.payload)
+
+            # Find the account by traderLogin (or use first)
+            matching = [a for a in res.ctidTraderAccount if a.traderLogin == self.account_id]
+            if matching:
+                self.account_id = matching[0].ctidTraderAccountId
+                logger.info(f"Matched account: traderLogin={matching[0].traderLogin} -> ctidTraderAccountId={self.account_id}")
+            elif res.ctidTraderAccount and len(res.ctidTraderAccount) > 0:
+                self.account_id = res.ctidTraderAccount[0].ctidTraderAccountId
+                logger.info(f"Using first available account: ctidTraderAccountId={self.account_id}")
+        elif response:
+            logger.warning(f"Unexpected response type: {response.payloadType}")
+
+        # Step 2: Authenticate with account ID and access token
         acc_auth = ProtoOAAccountAuthReq()
         acc_auth.ctidTraderAccountId = self.account_id
         acc_auth.accessToken = self.access_token
+
         if not await self._send_msg(2102, acc_auth):
             return False
+
         response = await self._recv_msg()
         if response and response.payloadType == 2103:
             self._authenticated = True
             return True
+        elif response and response.payloadType == 2142:
+            logger.warning(f"Account auth failed: Invalid/expired access token (2142)")
+            return False
+        elif response:
+            logger.warning(f"Account auth unexpected response: payloadType={response.payloadType}")
         return False
 
     async def _fetch_account_info(self):
         if not self._authenticated:
             return
+        from ctrader_open_api.messages.OpenApiMessages_pb2 import ProtoOATraderRes, ProtoOAErrorRes
+        from ctrader_open_api.messages.OpenApiModelMessages_pb2 import ProtoOATrader
         trader_req = ProtoOATraderReq()
         trader_req.ctidTraderAccountId = self.account_id
-        if not await self._send_msg(201, trader_req):
+        if not await self._send_msg(2121, trader_req):
             return
         response = await self._recv_msg()
-        if response and response.payloadType == 202:
+        if response and response.payloadType == 2122:
             trader_res = ProtoOATraderRes()
             trader_res.ParseFromString(response.payload)
+            trader = trader_res.trader
             self._account_info = AccountInfo(
-                account_id=str(self.account_id),
-                ctid_trader_account_id=self.account_id,
-                balance=trader_res.balance / 100,
-                equity=trader_res.equity / 100,
-                margin=trader_res.margin / 100,
-                free_margin=trader_res.freeMargin / 100,
-                margin_level=trader_res.marginLevel,
+                account_id=str(trader.traderLogin),
+                ctid_trader_account_id=trader.ctidTraderAccountId,
+                balance=trader.balance / (10 ** trader.moneyDigits),
+                equity=trader.balance / (10 ** trader.moneyDigits),
+                margin=0.0,
+                free_margin=0.0,
+                margin_level=0.0,
                 currency="USD",
-                leverage=f"1:{int(trader_res.leverageInCents / 100)}"
-                if trader_res.leverageInCents else "1:30",
+                leverage=f"1:{int(trader.leverageInCents / 100)}"
+                if trader.leverageInCents else "1:30",
                 account_type="Demo" if self.demo else "Live",
                 is_live=not self.demo,
             )
             if self.on_account_update:
                 self.on_account_update(self._account_info)
+        elif response and response.payloadType == 2142:
+            err = ProtoOAErrorRes()
+            err.ParseFromString(response.payload)
+            logger.warning(f"Trader info fetch failed: {err.errorCode} - {err.description}")
 
     def get_account_info(self) -> Optional[AccountInfo]:
         return self._account_info

@@ -132,7 +132,7 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     if nan_count > 0:
         import logging
         logger = logging.getLogger(__name__)
-        logger.warning(f"NaN count before fill: {nan_count}")
+        logger.debug(f"NaN count before fill: {nan_count}")
     df = df.ffill().bfill().fillna(0)
     return df
 

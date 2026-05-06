@@ -244,7 +244,7 @@ class DataManager:
     def update_market_depth(self, depth: Any):
         """Update Level II DOM data from cTrader or other provider."""
         try:
-            from src.api.ctrader_client import MarketDepth as CtraderDepth
+            from api.ctrader_client import MarketDepth as CtraderDepth
             if isinstance(depth, CtraderDepth):
                 sym = depth.symbol
                 md = self.market_depth[sym]
@@ -256,7 +256,6 @@ class DataManager:
                 md.timestamp = depth.timestamp
                 md.bids = [DepthLevelData(price=b.price, size=b.size) for b in depth.bids]
                 md.asks = [DepthLevelData(price=a.price, size=a.size) for a in depth.asks]
-                logger.debug(f"DOM updated: {sym} - {len(md.bids)} bids, {len(md.asks)} asks")
         except ImportError:
             logger.debug("cTrader client not available for DOM update")
 
