@@ -176,7 +176,9 @@ class TestExecutionEngine:
     def test_get_symbol_id(self, engine):
         assert engine._get_symbol_id("EURUSD") == 1
         assert engine._get_symbol_id("GBPUSD") == 2
-        assert engine._get_symbol_id("USDJPY") == 3
+        assert engine._get_symbol_id("EURJPY") == 3
+        assert engine._get_symbol_id("USDJPY") == 4
+        assert engine._get_symbol_id("AUDUSD") == 5
         assert engine._get_symbol_id("UNKNOWN") == 1
 
     def test_get_open_positions(self, engine):

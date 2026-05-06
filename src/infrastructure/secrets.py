@@ -75,6 +75,46 @@ class Secrets:
     def provider(self) -> str:
         return os.getenv("TRADING_PROVIDER", "ctrader").lower()
 
+    @property
+    def fix_host(self) -> str:
+        return os.getenv("CTRADER_FIX_HOST", "live-uk-eqx-01.p.c-trader.com")
+
+    @property
+    def fix_sender_comp_id(self) -> str:
+        return os.getenv("CTRADER_FIX_SENDER_COMP_ID", "")
+
+    @property
+    def fix_password(self) -> str:
+        return os.getenv("CTRADER_FIX_PASSWORD", "")
+
+    @property
+    def fix_account_id(self) -> str:
+        return os.getenv("CTRADER_FIX_ACCOUNT_ID", "")
+
+    @property
+    def twitter_bearer_token(self) -> str:
+        return os.getenv("TWITTER_BEARER_TOKEN", "")
+
+    @property
+    def twitter_api_key(self) -> str:
+        return os.getenv("TWITTER_API_KEY", "")
+
+    @property
+    def twitter_api_secret(self) -> str:
+        return os.getenv("TWITTER_API_SECRET", "")
+
+    @property
+    def reddit_client_id(self) -> str:
+        return os.getenv("REDDIT_CLIENT_ID", "")
+
+    @property
+    def reddit_client_secret(self) -> str:
+        return os.getenv("REDDIT_CLIENT_SECRET", "")
+
+    @property
+    def nasa_api_key(self) -> str:
+        return os.getenv("NASA_API_KEY", "DEMO_KEY")
+
     def validate(self) -> list:
         missing = []
         if self.provider in ("ctrader", "dukascopy"):

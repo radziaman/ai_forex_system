@@ -26,13 +26,12 @@ except ImportError:
 
 
 FINANCE_NEWS_FEEDS = [
-    "https://feeds.content.dowjones.io/public/rss/markets",
-    "https://www.investopedia.com/feedbuilder/feed/getfeed?feedName=rss_categories_market_analysis",
-    "https://www.forexfactory.com/news.xml",
-    "https://feeds.reuters.com/reuters/businessNews",
-    "https://www.cnbc.com/id/100003114/device/rss/rss.html",
     "https://feeds.bloomberg.com/markets/news.rss",
-    "https://www.economist.com/finance-and-economics/rss.xml",
+    "https://www.cnbc.com/id/100003114/device/rss/rss.html",
+    "https://www.investing.com/rss/news.rss",
+    "https://feeds.marketwatch.com/marketwatch/topstories",
+    "https://finance.yahoo.com/news/rssindex",
+    "https://feeds.feedburner.com/zerohedge/feed",
 ]
 
 CURRENCY_MAP = {

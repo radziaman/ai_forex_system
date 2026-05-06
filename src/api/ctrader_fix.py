@@ -126,6 +126,7 @@ class CtraderFIXClient:
         # Track order-to-position mappings
         self._order_positions: Dict[str, str] = {}  # ClOrdID -> PosMaintRptID
         self._position_orders: Dict[str, List[str]] = {}  # PosMaintRptID -> [ClOrdID, ...]
+        self._last_prices: Dict[int, dict] = {}  # symbol_id -> {"bid": float, "ask": float}
 
         logger.info(f"CtraderFIXClient initialized for {config.sender_comp_id}")
 
@@ -151,15 +152,21 @@ class CtraderFIXClient:
         return full
 
     def _parse_fix_message(self, raw_bytes: bytes) -> Dict[str, str]:
-        """Parse FIX message bytes into dict."""
+        """Parse FIX message bytes into dict. Handles repeating groups."""
         try:
             msg_str = raw_bytes.decode('utf-8', errors='ignore')
-            fields = {}
+            fields: Dict[str, str] = {}
+            tag_counts: Dict[str, int] = {}
             parts = msg_str.split(SOH)
             for part in parts:
-                if "=" in part:
-                    tag, value = part.split("=", 1)
+                if "=" not in part:
+                    continue
+                tag, value = part.split("=", 1)
+                tag_counts[tag] = tag_counts.get(tag, 0) + 1
+                count = tag_counts[tag]
+                if count == 1:
                     fields[tag] = value
+                fields[f"{tag}_{count}"] = value
             return fields
         except Exception as e:
             logger.error(f"Parse error: {e}")
@@ -308,67 +315,73 @@ class CtraderFIXClient:
         symbol_id = int(fields.get("55", 0))
         symbol = self._symbol_id_map.get(symbol_id, f"UNKNOWN_{symbol_id}")
 
-        # Parse MD entries
+        if symbol_id not in self._last_prices:
+            self._last_prices[symbol_id] = {"bid": 0.0, "ask": 0.0}
+
         no_entries = int(fields.get("268", 0))
         for i in range(1, no_entries + 1):
             entry_type = fields.get(f"269_{i}", fields.get("269"))
             price = float(fields.get(f"270_{i}", fields.get("270", 0)))
-            size = float(fields.get(f"271_{i}", fields.get("271", 0)))
 
-            market_data = FIXMarketData(
-                symbol=symbol,
-                symbol_id=symbol_id,
-            )
+            if entry_type == "0":
+                self._last_prices[symbol_id]["bid"] = price
+            elif entry_type == "1":
+                self._last_prices[symbol_id]["ask"] = price
 
-            if entry_type == "0":  # Bid
-                market_data.bid = price
-                market_data.bid_size = size
-            elif entry_type == "1":  # Offer/Ask
-                market_data.ask = price
-                market_data.ask_size = size
-            elif entry_type == "2":  # Trade
-                market_data.last_trade = price
-                market_data.volume = size
-
-            if self.on_market_data:
-                self.on_market_data(market_data)
+        last = self._last_prices[symbol_id]
+        market_data = FIXMarketData(
+            symbol=symbol,
+            symbol_id=symbol_id,
+            bid=last["bid"],
+            ask=last["ask"],
+        )
+        if self.on_market_data:
+            self.on_market_data(market_data)
 
     def _handle_incremental_refresh(self, fields: Dict[str, str]):
         """Handle Market Data Incremental Refresh (35=X) - LIVE PRICES!"""
         symbol_id = int(fields.get("55", 0))
         symbol = self._symbol_id_map.get(symbol_id, f"UNKNOWN_{symbol_id}")
 
-        # Parse MD entries (repeating group)
+        # Initialize last known prices if needed
+        if symbol_id not in self._last_prices:
+            self._last_prices[symbol_id] = {"bid": 0.0, "ask": 0.0}
+
+        acc_bid = None
+        acc_ask = None
+
         no_entries = int(fields.get("268", 0))
         for i in range(1, no_entries + 1):
             entry_type = fields.get(f"269_{i}", fields.get("269"))
-            update_action = fields.get(f"279_{i}", fields.get("279", "0"))  # NEW TAG 279!
-            md_entry_id = fields.get(f"278_{i}", fields.get("278"))  # NEW TAG 278!
+            update_action = fields.get(f"279_{i}", fields.get("279", "0"))
+            md_entry_id = fields.get(f"278_{i}", fields.get("278"))
             price = float(fields.get(f"270_{i}", fields.get("270", 0)))
             size = float(fields.get(f"271_{i}", fields.get("271", 0)))
 
-            # Handle MDUpdateAction (tag 279) - 0=New, 2=Delete
-            if update_action == "2":  # Delete
+            if update_action == "2":
                 logger.debug(f"Deleting entry {md_entry_id} for {symbol}")
-                continue  # Skip processing deleted entries
+                continue
 
-            market_data = FIXMarketData(
-                symbol=symbol,
-                symbol_id=symbol_id,
-            )
+            if entry_type == "0":
+                acc_bid = price
+            elif entry_type == "1":
+                acc_ask = price
 
-            if entry_type == "0":  # Bid
-                market_data.bid = price
-                market_data.bid_size = size
-            elif entry_type == "1":  # Offer/Ask
-                market_data.ask = price
-                market_data.ask_size = size
-            elif entry_type == "2":  # Trade
-                market_data.last_trade = price
-                market_data.volume = size
+        # Merge with last known prices (only side that changed is sent)
+        last = self._last_prices[symbol_id]
+        if acc_bid is not None:
+            last["bid"] = acc_bid
+        if acc_ask is not None:
+            last["ask"] = acc_ask
 
-            if self.on_market_data:
-                self.on_market_data(market_data)
+        market_data = FIXMarketData(
+            symbol=symbol,
+            symbol_id=symbol_id,
+            bid=last["bid"],
+            ask=last["ask"],
+        )
+        if self.on_market_data:
+            self.on_market_data(market_data)
 
     def subscribe_market_data(self, symbol_ids: List[int]) -> bool:
         """

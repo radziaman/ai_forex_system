@@ -92,6 +92,9 @@ class DukascopyDataProvider(DataProvider):
         if cache:
             CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
+    async def close(self):
+        pass
+
     async def fetch_ticks(self, symbol: str, date: str) -> List[PriceTick]:
         duk = DUKASCOPE_SYMBOLS.get(symbol.upper())
         if not duk:
