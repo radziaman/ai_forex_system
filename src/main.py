@@ -39,6 +39,7 @@ from data.smart_money import COTAnalyzer, COTSnapshot
 from ai.sentiment import SentimentAnalyzer
 from ai.regime_agents import RegimeSpecialistSystem, REGIME_CONFIGS
 from ai.maml_agent import MAMLAgent
+from ai.behavioral_sentiment import BehavioralSentimentAI
 from rts_ai_fx.causal_features import CausalFeatureSelector
 from rts_ai_fx.attention_fusion import AttentionFusionPipeline
 from execution.algo_executor import AlgoExecutor, ExecutionAlgoConfig
@@ -188,8 +189,7 @@ class RTSForexBot:
 
         # 8. Event-Driven Architecture
         self.event_bus = get_event_bus()
-        # Don't start event bus here - will be started in async context
-        # Subscribe to key events
+        # Subscribe to key events (sync operation, safe to do here)
         self.event_bus.subscribe(EventType.TOXIC_FLOW, self._on_toxic_flow)
         self.event_bus.subscribe(EventType.CIRCUIT_BREAKER, self._on_circuit_breaker)
         self.event_bus.subscribe(EventType.MARKET_STRESS, self._on_market_stress)
@@ -517,7 +517,7 @@ class RTSForexBot:
         
         # Start event bus now that we have an event loop
         if hasattr(self, 'event_bus') and self.event_bus:
-            asyncio.create_task(self.event_bus.start())
+            await self.event_bus.start()
             logger.info("[OK] Event-Driven Architecture started")
         
         result = await self.ctrader.start()

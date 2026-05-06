@@ -21,17 +21,18 @@ class TimeframeAttention(nn.Module):
         super().__init__()
         self.feature_dim = feature_dim
         self.n_timeframes = n_timeframes
-        self.num_heads = num_heads
+        # Ensure num_heads divides feature_dim evenly
+        self.num_heads = self._get_valid_heads(feature_dim, num_heads)
         
         # Projection layers
         self.query = nn.Linear(feature_dim, feature_dim)
         self.key = nn.Linear(feature_dim, feature_dim)
         self.value = nn.Linear(feature_dim, feature_dim)
         
-        # Multi-head attention
+        # Multi-head attention - embed_dim must be divisible by num_heads
         self.mha = nn.MultiheadAttention(
             embed_dim=feature_dim,
-            num_heads=num_heads,
+            num_heads=self.num_heads,
             batch_first=True,
         )
         
@@ -40,6 +41,14 @@ class TimeframeAttention(nn.Module):
         
         # Context vector for global market state
         self.context_proj = nn.Linear(feature_dim * n_timeframes, feature_dim)
+    
+    @staticmethod
+    def _get_valid_heads(feature_dim: int, preferred_heads: int = 4) -> int:
+        """Find the largest number of heads that divides feature_dim."""
+        for heads in range(preferred_heads, 0, -1):
+            if feature_dim % heads == 0:
+                return heads
+        return 1
         
     def forward(
         self, 
@@ -88,8 +97,11 @@ class TimeframeAttention(nn.Module):
         
         # Residual connection
         context = torch.cat(tf_embeddings, dim=-1)  # [batch, n_timeframes * feature_dim]
-        context = self.context_proj(context)
-        fused = self.output_proj(fused + context)
+        if hasattr(self, 'context_proj'):
+            context = self.context_proj(context)
+            fused = self.output_proj(fused + context)
+        else:
+            fused = self.output_proj(fused)
         
         return fused, attn_dict
 

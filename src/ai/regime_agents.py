@@ -6,6 +6,7 @@ Gating network routes decisions to the correct specialist.
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.optim as optim
 from typing import Dict, Optional, Tuple
 from dataclasses import dataclass, field
 from loguru import logger

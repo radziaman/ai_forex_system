@@ -258,6 +258,7 @@ class BehavioralSentimentAI:
 
     def _twitter_fallback(self, symbols: List[str]) -> List[SocialMediaPost]:
         """Generate synthetic Twitter-style posts when real data unavailable."""
+        logger.warning(f"Using synthetic Twitter data fallback for symbols: {symbols}")
         posts = []
         phrases_bullish = [
             "${} looking strong today! Bullish momentum across all timeframes.",
@@ -404,6 +405,7 @@ class BehavioralSentimentAI:
         return posts
 
     def _news_fallback(self, symbols: List[str]) -> List[SocialMediaPost]:
+        logger.warning(f"Using synthetic news data fallback for symbols: {symbols}")
         posts = []
         headlines = [
             "{sym} volatility expected ahead of central bank decision",
@@ -462,7 +464,7 @@ class BehavioralSentimentAI:
             region = self.SATELLITE_REGIONS.get(symbol, "")
             if symbol == "XTIUSD":
                 api_key = self._get_secrets().fred_api_key
-                if api_key and api_key != "your_fred_api_key_here":
+                if api_key:  # Removed comparison to placeholder string
                     resp = requests.get(
                         "https://api.eia.gov/v2/petroleum/stoc/wstk/data",
                         params={"api_key": api_key, "frequency": "weekly", "data[0]": "value",
@@ -489,6 +491,7 @@ class BehavioralSentimentAI:
         return None
 
     def _satellite_fallback(self, symbol: str) -> SatelliteSignal:
+        logger.warning(f"Using synthetic satellite data fallback for {symbol}")
         region = self.SATELLITE_REGIONS.get(symbol, "global")
         hour = time.localtime().tm_hour
         base = 0.5 + (0.2 if 8 <= hour <= 18 else 0) + (0.05 if time.localtime().tm_wday < 5 else -0.05)
@@ -562,7 +565,7 @@ class BehavioralSentimentAI:
             )
         except Exception as e:
             logger.debug(f"CoinGecko error: {e}")
-        return None
+            return None
 
     def _fetch_blockchair(self, symbol: str) -> Optional[OnChainMetrics]:
         try:
@@ -589,9 +592,10 @@ class BehavioralSentimentAI:
             )
         except Exception as e:
             logger.debug(f"Blockchair error: {e}")
-        return None
+            return None
 
     def _onchain_fallback(self, symbol: str) -> OnChainMetrics:
+        logger.warning(f"Using synthetic on-chain data fallback for {symbol}")
         coin_id = self.CRYPTO_COINGECKO_IDS.get(symbol, "bitcoin")
         nvt = np.random.normal(50, 20)
         sentiment = np.clip((50 - nvt) / 50.0, -0.8, 0.8)
@@ -624,7 +628,8 @@ class BehavioralSentimentAI:
                     post.sentiment_score = score
                     post.confidence = abs(score)
                     scores.append(score)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Transformer classification failed, using lexicon fallback: {e}")
                 scores = self._lexicon_score(texts)
         else:
             scores = self._lexicon_score(texts)
@@ -717,7 +722,8 @@ class BehavioralSentimentAI:
                     "fear_greed_index": snapshot.fear_greed_index, "social_volume": snapshot.social_volume,
                     "source_counts": snapshot.source_counts, "recent_headlines": snapshot.recent_headlines,
                 }, f)
-        except Exception:
+        except (IOError, OSError, TypeError) as e:
+            logger.debug(f"Failed to save behavioral sentiment cache: {e}")
             pass
 
     def _load_cache(self) -> Optional[BehavioralSentimentSnapshot]:
@@ -728,5 +734,6 @@ class BehavioralSentimentAI:
                 return None
             with open(self.cache_path) as f:
                 return BehavioralSentimentSnapshot(**json.load(f))
-        except Exception:
+        except (IOError, OSError, json.JSONDecodeError, TypeError) as e:
+            logger.debug(f"Failed to load behavioral sentiment cache: {e}")
             return None
