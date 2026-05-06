@@ -16,28 +16,25 @@ from typing import Optional, Tuple, Dict, List
 
 
 class ActorNetwork(nn.Module):
-    """Actor network: 3.5M+ params (1024→512→256→128)."""
+    """Actor network with configurable architecture."""
 
-    def __init__(self, input_dim: int, n_actions: int = 5):
+    def __init__(self, input_dim: int, n_actions: int = 5, hidden_dims: list = None):
         super().__init__()
-        self.feature_extractor = nn.Sequential(
-            nn.Linear(input_dim, 1024),
-            nn.LayerNorm(1024),
-            nn.Tanh(),
-            nn.Dropout(0.1),
-            nn.Linear(1024, 512),
-            nn.LayerNorm(512),
-            nn.Tanh(),
-            nn.Dropout(0.1),
-            nn.Linear(512, 256),
-            nn.LayerNorm(256),
-            nn.Tanh(),
-            nn.Dropout(0.1),
-            nn.Linear(256, 128),
-            nn.LayerNorm(128),
-            nn.Tanh(),
-            nn.Dropout(0.1),
-        )
+        if hidden_dims is None:
+            hidden_dims = [1024, 512, 256, 128]
+
+        layers = []
+        prev_dim = input_dim
+        for hidden_dim in hidden_dims:
+            layers.extend([
+                nn.Linear(prev_dim, hidden_dim),
+                nn.LayerNorm(hidden_dim),
+                nn.Tanh(),
+                nn.Dropout(0.1),
+            ])
+            prev_dim = hidden_dim
+
+        self.feature_extractor = nn.Sequential(*layers)
         self.action_head = nn.Linear(128, n_actions)
         self.sl_head = nn.Linear(128, 1)
         self.tp_head = nn.Linear(128, 1)
@@ -71,6 +68,7 @@ class PPOAgent:
         self,
         state_dim: int,
         n_actions: int = 5,
+        hidden_dims: list = None,
         lr: float = 3e-4,
         gamma: float = 0.99,
         gae_lambda: float = 0.95,
@@ -93,8 +91,9 @@ class PPOAgent:
         self.ent_coef = ent_coef
         self.vf_coef = vf_coef
         self.max_grad_norm = max_grad_norm
+        self.hidden_dims = hidden_dims
 
-        self.actor = ActorNetwork(state_dim, n_actions).to(self.device)
+        self.actor = ActorNetwork(state_dim, n_actions, hidden_dims).to(self.device)
         self.optimizer = optim.Adam(self.actor.parameters(), lr=lr)
 
         self.states = []

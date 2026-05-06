@@ -102,16 +102,15 @@ class RegimeSpecialistSystem:
         for regime, config in REGIME_CONFIGS.items():
             try:
                 from ai.rl_agent import PPOAgent
-                # Correct parameters: state_dim and n_actions (not input_dim)
+                # Pass hidden_dims to PPOAgent which passes it to ActorNetwork
                 agent = PPOAgent(
                     state_dim=self.state_dim,
                     n_actions=self.n_actions,
+                    hidden_dims=config.hidden_dims,
+                    clip_range=config.clip_range,
                 )
                 # Set learning rate after init
-                agent.lr = config.learning_rate
-                # Set policy kwargs if needed
-                if hasattr(agent, 'policy_kwargs'):
-                    agent.policy_kwargs = {"net_arch": config.hidden_dims}
+                agent.optimizer = optim.Adam(agent.actor.parameters(), lr=config.learning_rate)
                 agent_path = f"models/{config.name}_agent.pth"
                 # Load pre-trained if exists
                 if os.path.exists(agent_path):
