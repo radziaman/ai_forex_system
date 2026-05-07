@@ -1,4 +1,4 @@
-# RTS AI Forex Trading System v4.0 (Elite)
+# RTS: AI Moneybot System Elite v4.0
 
 Multi-timeframe AI forex trading system with HMM regime detection, Monte Carlo Dropout uncertainty quantification, concept drift detection, and institutional-grade risk management.
 

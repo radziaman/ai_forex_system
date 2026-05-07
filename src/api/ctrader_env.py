@@ -192,3 +192,4 @@ if __name__ == "__main__":
         client.close()
     else:
         print(f"✗ Connection failed: {client.last_error}")
+

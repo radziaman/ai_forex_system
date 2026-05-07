@@ -5,7 +5,7 @@ Adds VaR (Historical Simulation), stress testing, pre-trade checks.
 import numpy as np
 import pandas as pd
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict  # Dict for backward compat
 from enum import Enum
 
 
@@ -59,19 +59,24 @@ class RiskManager:
         self.total_trades = 0
         self.wins = 0
         self.losses = 0
-        self.trade_history: List[TradeRecord] = []
-        self._price_history: List[float] = []
+        self.trade_history = []  # List[TradeRecord] - avoid 3.12 syntax
+        self._price_history = []  # List[float] - avoid 3.12 syntax
         self._var_lookback = 60
         self._on_trade_close = None
 
     def calculate_kelly_size(
-        self, balance: float, price: float, atr: float, confidence: float
+        self, balance: float, price: float, atr: float, confidence: float,
+        symbol: str = None, open_positions: list = None
     ) -> float:
-        """Kelly Criterion position sizing with adaptive win-rate tracking."""
+        """
+        Kelly Criterion position sizing with VaR adjustment.
+        Enhanced with correlation-adjusted portfolio VaR and volatility targeting.
+        """
         if atr <= 0:
             atr = price * 0.001
+
+        # Base Kelly calculation
         win_rate = self.get_win_rate() or 0.55
-        # Compute actual payoff ratio from trade history
         wins = [t.pnl for t in self.trade_history if t.status == "CLOSED" and t.pnl > 0]
         losses = [t.pnl for t in self.trade_history if t.status == "CLOSED" and t.pnl < 0]
         avg_win = np.mean(wins) if wins else 0.02
@@ -79,12 +84,75 @@ class RiskManager:
         b = avg_win / avg_loss if avg_loss > 0 else 2.0
         kelly = (win_rate * b - (1 - win_rate)) / b
         kelly = np.clip(kelly * self.params.kelly_fraction, 0.01, 0.25)
-        risk_amount = balance * kelly * confidence
+
+        # VaR adjustment (Enhancement #10)
+        var_adjustment = self._calculate_var_adjustment(balance, symbol, open_positions)
+        risk_amount = balance * kelly * confidence * var_adjustment
+
+        # Volatility targeting (target 15% annualized)
+        vol_adjustment = self._calculate_volatility_adjustment(atr, price)
+        risk_amount *= vol_adjustment
+
         sl_distance = atr * self.params.sl_atr_multiplier
         if sl_distance / price <= 0:
             sl_distance = price * 0.015
+
         size = risk_amount / (sl_distance / price * price)
         return float(np.clip(size, 0, balance * self.params.max_margin_usage / price))
+
+    def _calculate_var_adjustment(
+        self, balance: float, symbol: str = None, open_positions: List[Dict] = None
+    ) -> float:
+        """Calculate VaR-based adjustment factor."""
+        if len(self._price_history) < 20:
+            return 1.0
+
+        # Calculate portfolio VaR if we have open positions
+        if open_positions and symbol:
+            portfolio_var = self._portfolio_var(open_positions)
+            var_limit = balance * 0.02  # 2% VaR limit
+            if portfolio_var > var_limit:
+                return max(0.5, var_limit / portfolio_var)
+        else:
+            current_var = abs(self.var())
+            var_limit = balance * 0.02
+            if current_var > var_limit:
+                return max(0.5, var_limit / current_var)
+
+        return 1.0
+
+    def _portfolio_var(self, open_positions: List[Dict]) -> float:
+        """Calculate correlation-adjusted portfolio VaR."""
+        if not open_positions:
+            return 0.0
+
+        # Simplified: sum individual VaRs with correlation adjustment
+        # In production, use full covariance matrix
+        total_var = 0.0
+        for pos in open_positions:
+            pos_var = abs(self.var()) * float(pos.get("volume", 0.01)) / 100000.0
+            total_var += pos_var
+
+        # Assume average correlation of 0.5 for simplicity
+        n = len(open_positions)
+        correlation_adjustment = (n + 0.5 * n * (n - 1)) ** 0.5 / n if n > 1 else 1.0
+        return total_var * correlation_adjustment
+
+    def _calculate_volatility_adjustment(self, atr: float, price: float) -> float:
+        """Adjust position size based on volatility targeting."""
+        if atr <= 0 or price <= 0:
+            return 1.0
+
+        # Calculate current volatility (annualized)
+        current_vol = (atr / price) * (252 ** 0.5)  # Approximate annualized vol
+        target_vol = 0.15  # 15% target
+
+        if current_vol <= 0:
+            return 1.0
+
+        # Inverse relationship: higher vol = smaller size
+        adjustment = target_vol / current_vol
+        return float(np.clip(adjustment, 0.25, 2.0))
 
     def calculate_atr_sl_tp(self, entry: float, atr: float) -> Tuple[float, float]:
         sl = entry - (atr * self.params.sl_atr_multiplier)
@@ -205,7 +273,7 @@ class RiskManager:
 class TrailingStopManager:
     """Multi-tier trailing stop (Zenox EA 3-tier system)."""
 
-    def __init__(self, tp_pcts: Optional[List[float]] = None, trail_atr_mult: float = 2.0):
+    def __init__(self, tp_pcts: Optional[list] = None, trail_atr_mult: float = 2.0):
         self.tp_levels = tp_pcts or [0.01, 0.02, 0.03]
         self.trail_mult = trail_atr_mult
         self.tp_hit = [False, False, False]
@@ -225,5 +293,5 @@ class TrailingStopManager:
                     return current - (atr * self.trail_mult) if direction == "long" else current + (atr * self.trail_mult)
         return None
 
-    def partial_close_sizes(self) -> List[float]:
+    def partial_close_sizes(self) -> list:
         return [0.3, 0.3, 0.4]

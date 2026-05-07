@@ -132,7 +132,8 @@ class SentimentAnalyzer:
                             len(CURRENCY_MAP), 1
                         )
                     items.append(item)
-            except Exception:
+            except (Exception, KeyboardInterrupt) as e:
+                logger.debug(f"Failed to parse feed {feed_url}: {e}")
                 continue
         items.sort(key=lambda x: x.published, reverse=True)
         return items[: self.max_articles]
@@ -203,7 +204,8 @@ class SentimentAnalyzer:
                         scores.append(-score)
                     else:
                         scores.append(0.0)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"FinBERT batch classification failed: {e}")
                 scores.extend([0.0] * len(batch))
         return scores
 
@@ -245,7 +247,8 @@ class SentimentAnalyzer:
             if parsed:
                 try:
                     return time.mktime(parsed)
-                except Exception:
+                except (ValueError, TypeError, OverflowError) as e:
+                    logger.debug(f"Date parsing failed: {e}")
                     pass
         return time.time() - 3600
 
@@ -295,7 +298,8 @@ class SentimentAnalyzer:
             }
             with open(SENTIMENT_CACHE_PATH, "w") as f:
                 json.dump(data, f)
-        except Exception:
+        except (IOError, OSError, TypeError, KeyError) as e:
+            logger.debug(f"Failed to save sentiment cache: {e}")
             pass
 
     def _load_cache(self) -> Optional[SentimentSnapshot]:
@@ -314,5 +318,6 @@ class SentimentAnalyzer:
                 news_count=data.get("news_count", 0),
                 recent_headlines=data.get("recent_headlines", []),
             )
-        except Exception:
+        except (IOError, OSError, json.JSONDecodeError, KeyError, TypeError) as e:
+            logger.debug(f"Failed to load sentiment cache: {e}")
             return None

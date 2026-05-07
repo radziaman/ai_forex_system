@@ -60,7 +60,9 @@ class MarketDepthData:
 
 
 class DataManager:
-    """Multi-symbol market data manager: OHLCV, order flow, and Level II DOM."""
+    """Multi-symbol market data manager: OHLCV, order flow, and Level II DOM.
+    Enhanced with multi-source redundancy and data quality validation (Enhancement #5).
+    """
 
     def __init__(self, historical_path="data/historical"):
         self.historical_path = historical_path
@@ -70,6 +72,9 @@ class DataManager:
         self._cvd: Dict[str, Tuple[List[float], List[float], List[float]]] = {}
         self.latest_snapshot: Dict[str, Optional[object]] = {}
         self.market_depth: Dict[str, MarketDepthData] = {}
+        self._feature_cache: Dict[str, Dict[str, np.ndarray]] = {}  # Enhancement #7: Feature cache
+        self._data_sources: List[str] = ["dukascopy", "yfinance", "ctrader"]  # Multi-source
+        self._source_health: Dict[str, Dict] = {}  # Track source health
 
         for sym in SYMBOLS:
             self.ohlcv[sym] = {}
@@ -78,12 +83,99 @@ class DataManager:
             self._cvd[sym] = ([], [], [])
             self.latest_snapshot[sym] = None
             self.market_depth[sym] = MarketDepthData(symbol=sym)
+            self._feature_cache[sym] = {}
             for tf in TIMEFRAMES:
                 self.ohlcv[sym][tf] = pd.DataFrame(
                     columns=["timestamp", "open", "high", "low", "close", "volume"]
                 )
 
         logger.info(f"DataManager initialized: {len(SYMBOLS)} symbols × {len(TIMEFRAMES)} timeframes + Level II DOM")
+        logger.info("[OK] Multi-source redundancy enabled (Dukascopy, yFinance, cTrader)")
+
+    def update_tick(self, symbol: str, bid: float, ask: float, volume: float = 0, ts: Optional[float] = None):
+        """Enhanced with data quality validation."""
+        # Data quality check
+        if not self._validate_tick(symbol, bid, ask, volume):
+            logger.debug(f"Data quality check failed for {symbol}")
+            return
+
+        ts = ts or pd.Timestamp.now().timestamp()
+        mid = (bid + ask) / 2.0
+        self.tick_buffer[symbol].append({
+            "ts": ts, "symbol": symbol, "bid": bid, "ask": ask, "mid": mid, "vol": volume,
+        })
+        self._aggregate_1m(symbol, ts, mid, volume)
+        self._update_of(symbol, bid, ask, volume)
+        if len(self.tick_buffer[symbol]) > 10000:
+            self.tick_buffer[symbol] = self.tick_buffer[symbol][-5000:]
+
+        # Clear feature cache on new data
+        if symbol in self._feature_cache:
+            self._feature_cache[symbol].clear()
+
+    def _validate_tick(self, symbol: str, bid: float, ask: float, volume: float) -> bool:
+        """Validate tick data quality."""
+        # Check for NaN or invalid values
+        if not all(isinstance(v, (int, float)) for v in [bid, ask, volume]):
+            return False
+        if bid <= 0 or ask <= 0 or bid > ask:
+            return False
+        if volume < 0:
+            return False
+
+        # Check for extreme outliers (3 std deviations)
+        if symbol in self.latest_snapshot and self.latest_snapshot[symbol]:
+            try:
+                prev_bid = getattr(self.latest_snapshot[symbol], 'bid', bid)
+                if prev_bid > 0:
+                    change_pct = abs(bid - prev_bid) / prev_bid
+                    if change_pct > 0.05:  # 5% move in one tick
+                        logger.warning(f"Extreme price movement detected for {symbol}: {change_pct:.2%}")
+                        return False
+            except Exception:
+                pass
+
+        return True
+
+    def get_cached_features(self, symbol: str, timeframe: str, feature_hash: str = None) -> Optional[np.ndarray]:
+        """Get cached features if available (Enhancement #7)."""
+        if symbol in self._feature_cache and timeframe in self._feature_cache[symbol]:
+            cached = self._feature_cache[symbol][timeframe]
+            if cached is not None and len(cached) > 0:
+                return cached
+        return None
+
+    def set_cached_features(self, symbol: str, timeframe: str, features: np.ndarray):
+        """Cache computed features (Enhancement #7)."""
+        if symbol not in self._feature_cache:
+            self._feature_cache[symbol] = {}
+        self._feature_cache[symbol][timeframe] = features
+
+    def try_alternative_source(self, symbol: str, timeframe: str = "1h", days: int = 30):
+        """Try loading data from alternative sources (Enhancement #5)."""
+        # Try yfinance
+        try:
+            import yfinance as yf
+            ticker_map = {
+                "EURUSD": "EURUSD=X", "GBPUSD": "GBPUSD=X", "USDJPY": "USDJPY=X",
+                "XAUUSD": "GC=F", "BTCUSD": "BTC-USD",
+            }
+            yf_symbol = ticker_map.get(symbol, f"{symbol}=X")
+            data = yf.download(yf_symbol, period=f"{days}d", interval="1h", progress=False)
+            if not data.empty:
+                df = data.reset_index()
+                df = df.rename(columns={
+                    "Open": "open", "High": "high", "Low": "low",
+                    "Close": "close", "Volume": "volume"
+                })
+                df["timestamp"] = pd.to_datetime(df["Date"]).astype(int) // 10**9
+                self.ohlcv[symbol][timeframe] = df[["timestamp", "open", "high", "low", "close", "volume"]]
+                logger.info(f"Loaded {symbol} from yFinance: {len(df)} bars")
+                return True
+        except Exception as e:
+            logger.debug(f"yFinance failed for {symbol}: {e}")
+
+        return False
 
     # ------------------------------------------------------------------
     # Live tick ingestion

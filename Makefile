@@ -1,7 +1,7 @@
 .PHONY: help install test lint format check setup clean
 
 help:
-	@echo "AI Forex System - Available commands:"
+	@echo "RTS: AI Moneybot System Elite - Available commands:"
 	@echo "  make install  - Install dependencies"
 	@echo "  make test     - Run tests"
 	@echo "  make lint     - Run linter"

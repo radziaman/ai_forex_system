@@ -1,12 +1,23 @@
 """
 Flash Crash Detection & Circuit Breakers.
 Prevents trading during disorderly market conditions to avoid catastrophic losses.
+Enhanced with API recovery, confidence thresholds, and graceful degradation modes.
 """
 import numpy as np
 import time
-from typing import Dict, List, Tuple, Optional
+import asyncio
+from typing import Dict, List, Tuple, Optional, Callable
 from dataclasses import dataclass, field
+from enum import Enum
 from loguru import logger
+
+
+class DegradationMode(Enum):
+    """System degradation modes for graceful degradation."""
+    NORMAL = "normal"
+    DEGRADED = "degraded"  # Some features disabled
+    MINIMAL = "minimal"  # Only essential features
+    HALTED = "halted"  # Full stop
 
 
 @dataclass
@@ -20,12 +31,17 @@ class MarketStressSnapshot:
     spread_ratio: float = 1.0
     volume_anomaly: float = 0.0
     volatility_spike: bool = False
+    degradation_mode: DegradationMode = DegradationMode.NORMAL
+    confidence_threshold: float = 0.5  # Minimum confidence to trade
+    api_health: Dict[str, bool] = field(default_factory=dict)
+    recovery_attempts: int = 0
 
 
 class CircuitBreaker:
     """
     Detect market stress and halt trading.
     Multiple detectors: price velocity, liquidity drought, volume anomalies.
+    Enhanced with API recovery, confidence thresholds, and graceful degradation.
     """
 
     def __init__(
@@ -35,12 +51,16 @@ class CircuitBreaker:
         volume_spike_multiplier: float = 10.0,  # 10x normal volume
         volatility_lookback: int = 20,
         cooldown_seconds: int = 300,  # 5 min cooldown after halt
+        api_timeout_seconds: int = 30,  # API timeout before degradation
+        max_api_retries: int = 3,
     ):
         self.price_velocity_threshold = price_velocity_threshold
         self.spread_multiplier_threshold = spread_multiplier_threshold
         self.volume_spike_multiplier = volume_spike_multiplier
         self.volatility_lookback = volatility_lookback
         self.cooldown_seconds = cooldown_seconds
+        self.api_timeout_seconds = api_timeout_seconds
+        self.max_api_retries = max_api_retries
 
         self.price_history: Dict[str, List[float]] = {}
         self.spread_history: Dict[str, List[float]] = {}
@@ -50,21 +70,33 @@ class CircuitBreaker:
         self.last_halt_time: Dict[str, float] = {}
         self.volatility_history: Dict[str, List[float]] = {}
 
+        # API health tracking
+        self.api_health: Dict[str, Dict] = {}  # api_name -> {status, last_success, failures}
+        self.current_degradation_mode: DegradationMode = DegradationMode.NORMAL
+        self._degradation_history: List[Tuple[float, DegradationMode, str]] = []
+
+        # Confidence threshold adjustment based on market stress
+        self.base_confidence_threshold: float = 0.65
+        self.current_confidence_threshold: float = self.base_confidence_threshold
+
     def check_market_health(
         self, symbol: str, tick: Dict
     ) -> Tuple[bool, str, MarketStressSnapshot]:
         """
         Return (should_halt, reason, snapshot).
         Checks multiple stress indicators.
+        Enhanced with degradation mode and confidence adjustment.
         """
         snapshot = MarketStressSnapshot()
         snapshot.timestamp = time.time()
+        snapshot.degradation_mode = self.current_degradation_mode
+        snapshot.confidence_threshold = self.current_confidence_threshold
         self._last_snapshot = snapshot
 
-        bid = tick.get("bid", 0)
-        ask = tick.get("ask", 0)
+        bid = tick.get("bid",0)
+        ask = tick.get("ask",0)
         price = tick.get("price", (bid + ask) / 2.0)
-        volume = tick.get("volume", 0)
+        volume = tick.get("volume",0)
         spread = ask - bid if ask > bid else 0.0
 
         # Initialize history if needed
@@ -94,6 +126,7 @@ class CircuitBreaker:
         if halt:
             snapshot.should_halt = True
             snapshot.halt_reason = reason
+            self._update_degradation(DegradationMode.HALTED, reason)
             return True, reason, snapshot
 
         # Check 2: Liquidity drought (spread widening)
@@ -101,6 +134,7 @@ class CircuitBreaker:
         if halt:
             snapshot.should_halt = True
             snapshot.halt_reason = reason
+            self._update_degradation(DegradationMode.DEGRADED, reason)
             return True, reason, snapshot
 
         # Check 3: Volume anomaly (potential manipulation)
@@ -108,6 +142,7 @@ class CircuitBreaker:
         if halt:
             snapshot.should_halt = True
             snapshot.halt_reason = reason
+            self._update_degradation(DegradationMode.DEGRADED, reason)
             return True, reason, snapshot
 
         # Check 4: Volatility spike
@@ -115,6 +150,7 @@ class CircuitBreaker:
         if halt:
             snapshot.should_halt = True
             snapshot.halt_reason = reason
+            self._update_degradation(DegradationMode.DEGRADED, reason)
             return True, reason, snapshot
 
         # Check cooldown period
@@ -123,8 +159,66 @@ class CircuitBreaker:
             if elapsed < self.cooldown_seconds:
                 return True, f"cooldown_{elapsed:.0f}s_remaining", snapshot
 
+        # Update degradation mode based on overall health
+        if self.current_degradation_mode != DegradationMode.NORMAL:
+            self._attempt_recovery()
+
         snapshot.is_healthy = True
         return False, "market_healthy", snapshot
+
+    def update_api_health(self, api_name: str, success: bool):
+        """Track API health for circuit breaker decisions."""
+        if api_name not in self.api_health:
+            self.api_health[api_name] = {
+                "failures": 0,
+                "last_success": time.time(),
+                "status": "healthy",
+            }
+
+        if success:
+            self.api_health[api_name]["failures"] = 0
+            self.api_health[api_name]["last_success"] = time.time()
+            self.api_health[api_name]["status"] = "healthy"
+        else:
+            self.api_health[api_name]["failures"] += 1
+            if self.api_health[api_name]["failures"] >= self.max_api_retries:
+                self.api_health[api_name]["status"] = "unhealthy"
+                self._update_degradation(
+                    DegradationMode.DEGRADED,
+                    f"api_{api_name}_unhealthy"
+                )
+
+    def _update_degradation(self, mode: DegradationMode, reason: str):
+        """Update system degradation mode."""
+        if mode.value == "halted":
+            self.current_degradation_mode = DegradationMode.HALTED
+        elif mode.value == "degraded" and self.current_degradation_mode == DegradationMode.NORMAL:
+            self.current_degradation_mode = DegradationMode.DEGRADED
+            # Increase confidence threshold in degraded mode
+            self.current_confidence_threshold = min(self.base_confidence_threshold * 1.5, 0.95)
+        elif mode.value == "normal":
+            self.current_degradation_mode = DegradationMode.NORMAL
+            self.current_confidence_threshold = self.base_confidence_threshold
+
+        self._degradation_history.append((time.time(), mode, reason))
+        if len(self._degradation_history) > 100:
+            self._degradation_history = self._degradation_history[-100:]
+
+        logger.warning(f"Degradation mode: {mode.value} - {reason}")
+
+    def _attempt_recovery(self):
+        """Attempt to recover from degraded state."""
+        all_healthy = all(
+            info["status"] == "healthy"
+            for info in self.api_health.values()
+        )
+
+        if all_healthy and self.current_degradation_mode != DegradationMode.HALTED:
+            # Check if we've been healthy for long enough
+            recent_history = [h for h in self._degradation_history if time.time() - h[0] < 300]
+            if not recent_history or all(h[1] == DegradationMode.NORMAL for h in recent_history):
+                self._update_degradation(DegradationMode.NORMAL, "recovery_success")
+                logger.info("System recovered from degraded state")
 
     def _check_price_velocity(self, symbol: str, snapshot: MarketStressSnapshot) -> Tuple[bool, str]:
         prices = self.price_history[symbol]

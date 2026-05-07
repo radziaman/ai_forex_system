@@ -40,7 +40,7 @@ class FIXConfig:
     sender_sub_id: str = "QUOTE"  # QUOTE for price, TRADE for trading
     password: str = ""  # Set via environment variable FIX_PASSWORD
     account_id: str = ""  # Set via environment variable FIX_ACCOUNT_ID
-    use_ssl: bool = False
+    use_ssl: bool = True
     heartbeat_secs: int = 30
 
 
@@ -513,87 +513,94 @@ class CtraderFIXClient:
             logger.error("Not connected to FIX")
             return None
         
-        try:
-            cl_ord_id = f"{int(time.time() * 1000)}"
-            
-            # Map order type
-            ord_type_map = {
-                "MARKET": "1",  # Market (IOC)
-                "LIMIT": "2",   # Limit (GTC)
-                "STOP": "3",    # Stop (GTC)
-            }
-            ord_type = ord_type_map.get(order_type.upper(), "1")
-            
-            order_fields = {
-                "35": "D",
-                "49": self.config.sender_comp_id,
-                "56": self.config.target_comp_id,
-                "50": "TRADE",  # Must be TRADE for order operations
-                "57": "TRADE",
-                "34": self.seq_num,
-                "52": datetime.now(timezone.utc).strftime("%Y%m%d-%H:%M:%S.%f")[:-3],
-                "11": cl_ord_id,
-                "55": symbol_id,
-                "54": "1" if side.upper() == "BUY" else "2",
-                "38": str(int(volume)),
-                "40": ord_type,
-            }
-            self.seq_num += 1
-            
-            # Price for LIMIT orders (tag 44)
-            if ord_type == "2" and price > 0:
-                order_fields["44"] = f"{price:.5f}"
-            
-            # StopPx for STOP orders (tag 99)
-            if ord_type == "3" and stop_px > 0:
-                order_fields["99"] = f"{stop_px:.5f}"
-            
-            # Stop Loss - Absolute (tag 1002) - FIXED from tag 432!
-            if stop_loss > 0:
-                order_fields["1002"] = f"{stop_loss:.5f}"
-            
-            # Take Profit - Absolute (tag 1000)
-            if take_profit > 0:
-                order_fields["1000"] = f"{take_profit:.5f}"
-            
-            # Relative SL (tag 1003) - distance in pips from entry
-            if relative_sl > 0:
-                order_fields["1003"] = f"{relative_sl:.5f}"
-            
-            # Relative TP (tag 1001)
-            if relative_tp > 0:
-                order_fields["1001"] = f"{relative_tp:.5f}"
-            
-            # Trailing SL (tag 1004)
-            if trailing_sl:
-                order_fields["1004"] = "Y"
-            
-            # SL Trigger Method (tag 1005)
-            if trigger_method_sl in [1, 2, 3, 4]:
-                order_fields["1005"] = str(trigger_method_sl)
-            
-            # Guaranteed SL (tag 1006)
-            if guaranteed_sl:
-                order_fields["1006"] = "Y"
-            
-            # Position ID for placing order to existing position (tag 721)
-            if position_id:
-                order_fields["721"] = position_id
-            
-            # ExpireTime for GTD orders (tag 126)
-            if expire_time:
-                order_fields["126"] = expire_time
-            
-            order_msg = self._build_fix_message(list(order_fields.items()))
-            logger.debug(f"Sending order: {order_msg[:150]}...")
-            
-            self.sock.sendall(order_msg.encode('utf-8'))
-            logger.info(f"✓ Order sent: {side} {volume} {symbol_id} @ {price} (type={order_type})")
-            return cl_ord_id
-            
-        except Exception as e:
-            logger.error(f"Order send failed: {e}")
-            return None
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                cl_ord_id = f"{int(time.time() * 1000)}"
+                
+                # Map order type
+                ord_type_map = {
+                    "MARKET": "1",  # Market (IOC)
+                    "LIMIT": "2",   # Limit (GTC)
+                    "STOP": "3",    # Stop (GTC)
+                }
+                ord_type = ord_type_map.get(order_type.upper(), "1")
+                
+                order_fields = {
+                    "35": "D",
+                    "49": self.config.sender_comp_id,
+                    "56": self.config.target_comp_id,
+                    "50": "TRADE",  # Must be TRADE for order operations
+                    "57": "TRADE",
+                    "34": self.seq_num,
+                    "52": datetime.now(timezone.utc).strftime("%Y%m%d-%H:%M:%S.%f")[:-3],
+                    "11": cl_ord_id,
+                    "55": symbol_id,
+                    "54": "1" if side.upper() == "BUY" else "2",
+                    "38": str(int(volume)),
+                    "40": ord_type,
+                }
+                self.seq_num += 1
+                
+                # Price for LIMIT orders (tag 44)
+                if ord_type == "2" and price > 0:
+                    order_fields["44"] = f"{price:.5f}"
+                
+                # StopPx for STOP orders (tag 99)
+                if ord_type == "3" and stop_px > 0:
+                    order_fields["99"] = f"{stop_px:.5f}"
+                
+                # Stop Loss - Absolute (tag 1002) - FIXED from tag 432!
+                if stop_loss > 0:
+                    order_fields["1002"] = f"{stop_loss:.5f}"
+                
+                # Take Profit - Absolute (tag 1000)
+                if take_profit > 0:
+                    order_fields["1000"] = f"{take_profit:.5f}"
+                
+                # Relative SL (tag 1003) - distance in pips from entry
+                if relative_sl > 0:
+                    order_fields["1003"] = f"{relative_sl:.5f}"
+                
+                # Relative TP (tag 1001)
+                if relative_tp > 0:
+                    order_fields["1001"] = f"{relative_tp:.5f}"
+                
+                # Trailing SL (tag 1004)
+                if trailing_sl:
+                    order_fields["1004"] = "Y"
+                
+                # SL Trigger Method (tag 1005)
+                if trigger_method_sl in [1, 2, 3, 4]:
+                    order_fields["1005"] = str(trigger_method_sl)
+                
+                # Guaranteed SL (tag 1006)
+                if guaranteed_sl:
+                    order_fields["1006"] = "Y"
+                
+                # Position ID for placing order to existing position (tag 721)
+                if position_id:
+                    order_fields["721"] = position_id
+                
+                # ExpireTime for GTD orders (tag 126)
+                if expire_time:
+                    order_fields["126"] = expire_time
+                
+                order_msg = self._build_fix_message(list(order_fields.items()))
+                logger.debug(f"Sending order: {order_msg[:150]}...")
+                
+                self.sock.sendall(order_msg.encode('utf-8'))
+                logger.info(f"✓ Order sent: {side} {volume} {symbol_id} @ {price} (type={order_type})")
+                return cl_ord_id
+                
+            except Exception as e:
+                logger.error(f"Order send failed (attempt {attempt+1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(0.5 * (attempt + 1))  # Exponential backoff
+                    continue
+                return None
+        
+        return None
 
     def cancel_order(
         self,
@@ -883,3 +890,4 @@ class CtraderFIXClient:
 
         if self.on_positions_update:
             self.on_positions_update([position])
+

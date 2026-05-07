@@ -202,7 +202,8 @@ class FeatureEngine:
         try:
             if talib:
                 return talib.ATR(h, l, c, timeperiod=p)[-1]
-        except:
+        except (TypeError, ValueError, IndexError) as e:
+            logger.debug(f"TA-Lib ATR failed: {e}")
             pass
         tr = np.maximum(
             h[-p:] - l[-p:],
@@ -218,7 +219,8 @@ class FeatureEngine:
         try:
             if talib:
                 return talib.RSI(c, timeperiod=p)[-1]
-        except:
+        except (TypeError, ValueError, IndexError) as e:
+            logger.debug(f"TA-Lib RSI failed: {e}")
             pass
         return 50.0
 
@@ -229,7 +231,8 @@ class FeatureEngine:
             if talib:
                 m, s, h2 = talib.MACD(c, 12, 26, 9)
                 return (m[-1] or 0, s[-1] or 0, h2[-1] or 0)
-        except:
+        except (TypeError, ValueError, IndexError) as e:
+            logger.debug(f"TA-Lib MACD failed: {e}")
             pass
         return 0.0, 0.0, 0.0
 
@@ -240,7 +243,8 @@ class FeatureEngine:
             if talib:
                 u, m, l = talib.BBANDS(c, timeperiod=p)
                 return (u[-1] or c[-1], m[-1] or c[-1], l[-1] or c[-1])
-        except:
+        except (TypeError, ValueError, IndexError) as e:
+            logger.debug(f"TA-Lib BBANDS failed: {e}")
             pass
         return c[-1], c[-1], c[-1]
 
@@ -251,7 +255,8 @@ class FeatureEngine:
             if talib:
                 k, d = talib.STOCH(h, l, c, 14, 3, 3)
                 return (k[-1] or 50.0, d[-1] or 50.0)
-        except:
+        except (TypeError, ValueError, IndexError) as e:
+            logger.debug(f"TA-Lib STOCH failed: {e}")
             pass
         return 50.0, 50.0
 
@@ -264,7 +269,8 @@ class FeatureEngine:
                 dp = talib.PLUS_DI(h, l, c, 14)[-1] or 25.0
                 dm = talib.MINUS_DI(h, l, c, 14)[-1] or 25.0
                 return a, dp, dm
-        except:
+        except (TypeError, ValueError, IndexError) as e:
+            logger.debug(f"TA-Lib ADX failed: {e}")
             pass
         return 25.0, 25.0, 25.0
 
@@ -274,7 +280,8 @@ class FeatureEngine:
         try:
             if talib:
                 return talib.CCI(h, l, c, timeperiod=p)[-1] or 0.0
-        except:
+        except (TypeError, ValueError, IndexError) as e:
+            logger.debug(f"TA-Lib CCI failed: {e}")
             pass
         return 0.0
 
@@ -284,7 +291,8 @@ class FeatureEngine:
         try:
             if talib:
                 return talib.MFI(h, l, c, v, timeperiod=p)[-1] or 50.0
-        except:
+        except (TypeError, ValueError, IndexError) as e:
+            logger.debug(f"TA-Lib MFI failed: {e}")
             pass
         return 50.0
 

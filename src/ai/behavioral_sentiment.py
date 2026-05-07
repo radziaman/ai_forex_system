@@ -85,6 +85,11 @@ class BehavioralSentimentSnapshot:
     spillover_matrix: Dict[str, float] = field(default_factory=dict)
     source_counts: Dict[str, int] = field(default_factory=dict)
     recent_headlines: List[str] = field(default_factory=list)
+    # Enhancement #11: Sentiment Alpha Refinement
+    sentiment_momentum: float = 0.0  # Rate of change in sentiment
+    cross_asset_spillover: Dict[str, float] = field(default_factory=dict)  # USD affects all USD pairs
+    contrarian_signal: Dict[str, str] = field(default_factory=dict)  # BUY/SELL/HOLD for extreme sentiment
+    sentiment_history: List[float] = field(default_factory=list)  # For momentum calc
 
 
 class BehavioralSentimentAI:

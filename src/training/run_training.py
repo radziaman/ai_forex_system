@@ -97,7 +97,7 @@ def train_model(X_train, y_train, X_val, y_val, config: TrialConfig) -> dict:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="RTS Training Pipeline")
+    parser = argparse.ArgumentParser(description="RTS: AI Moneybot System Elite - Training Pipeline")
     parser.add_argument("--mode", choices=["local", "distributed", "sweep", "regime"], default="local")
     parser.add_argument("--symbol", default="EURUSD")
     parser.add_argument("--years", type=int, default=5)

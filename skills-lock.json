@@ -1,11 +1,113 @@
 {
   "version": 1,
   "skills": {
+    "algorithmic-trading": {
+      "source": "omer-metin/skills-for-antigravity",
+      "sourceType": "github",
+      "skillPath": "skills/algorithmic-trading/SKILL.md",
+      "computedHash": "238fdf5d2f3bfdbafec01399b43e6d2d07cc49316ed9ecc4085a4f7c156056c1"
+    },
+    "code-review-excellence": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/developer-essentials/skills/code-review-excellence/SKILL.md",
+      "computedHash": "89b2a6a234f6368b12f0232e1d77bd5ed894115114edf67eb1f2976e153664c0"
+    },
+    "deep-learning": {
+      "source": "mindrally/skills",
+      "sourceType": "github",
+      "skillPath": "deep-learning/SKILL.md",
+      "computedHash": "4590e73ca06533a8927553263a368d12a8e68d8d47da5078fb4073c5191c5bfb"
+    },
+    "deep-learning-pytorch": {
+      "source": "mindrally/skills",
+      "sourceType": "github",
+      "skillPath": "deep-learning-pytorch/SKILL.md",
+      "computedHash": "651c310b5e90e28938f5a953b6fce4fa0c0fffa350a2f0b92028aaa66adf04d1"
+    },
+    "documentation-writer": {
+      "source": "github/awesome-copilot",
+      "sourceType": "github",
+      "skillPath": "skills/documentation-writer/SKILL.md",
+      "computedHash": "ee53d65b163cd7eb953a930c95841cfe398cc2c0bd24c06508bbaa07c432be35"
+    },
+    "ensemble-solving": {
+      "source": "mhattingpete/claude-skills-marketplace",
+      "sourceType": "github",
+      "skillPath": "engineering-workflow-plugin/skills/ensemble-solving/SKILL.md",
+      "computedHash": "9aa5813c2e4ec2bc2320bb7fb33382dcdb840af18c3127554107aae52bb9abaf"
+    },
     "find-skills": {
       "source": "vercel-labs/skills",
       "sourceType": "github",
       "skillPath": "skills/find-skills/SKILL.md",
       "computedHash": "9e1c8b3103f92fa8092568a44fe64858de7c5c9dc65ce4bea8f168080e889cfd"
+    },
+    "fine-tuning-with-trl": {
+      "source": "davila7/claude-code-templates",
+      "sourceType": "github",
+      "skillPath": "cli-tool/components/skills/ai-research/post-training-trl-fine-tuning/SKILL.md",
+      "computedHash": "fefda43859328e8384ffee62c8a2fd0837aa76c5e82dfe7d5686769cda8f651f"
+    },
+    "machine-learning": {
+      "source": "mindrally/skills",
+      "sourceType": "github",
+      "skillPath": "machine-learning/SKILL.md",
+      "computedHash": "5683168b790d3402074da2555c27bd17dc5fde513c69c4d3a1f8ad2210fbc565"
+    },
+    "python-performance-optimization": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/python-development/skills/python-performance-optimization/SKILL.md",
+      "computedHash": "6390615b25e5922057b15eb900d69a90db563c5f2d6bd3182be707592fc25f09"
+    },
+    "python-testing-patterns": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/python-development/skills/python-testing-patterns/SKILL.md",
+      "computedHash": "a16a6d7d7e0a5154a5058fd9aacf8e675368b2a4a0dc5edf0fee775169c6abe0"
+    },
+    "pytorch": {
+      "source": "mindrally/skills",
+      "sourceType": "github",
+      "skillPath": "pytorch/SKILL.md",
+      "computedHash": "10be97afa3db48bbe64ee9c507809fe9e56be8b651d179d9d48bb0e5bacf9c9c"
+    },
+    "quantitative-research": {
+      "source": "omer-metin/skills-for-antigravity",
+      "sourceType": "github",
+      "skillPath": "skills/quantitative-research/SKILL.md",
+      "computedHash": "843f83d7b590d39d94f018344675e28cd46ac8e7a842100b01dd05ab90d79f57"
+    },
+    "risk-management": {
+      "source": "0xhubed/agent-trading-arena",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/risk-management/SKILL.md",
+      "computedHash": "fa9e92d9c3beae760ddda9d2c6abb8e15be8d1a2e18f557541b53b2410731107"
+    },
+    "sentiment-analysis-trading": {
+      "source": "omer-metin/skills-for-antigravity",
+      "sourceType": "github",
+      "skillPath": "skills/sentiment-analysis-trading/SKILL.md",
+      "computedHash": "14ce73c557e9c295199ccdc3170a0caea3790ffe6b57d324e40c20a3021d415d"
+    },
+    "trading-expert": {
+      "source": "personamanagmentlayer/pcl",
+      "sourceType": "github",
+      "skillPath": "stdlib/domains/trading-expert/SKILL.md",
+      "computedHash": "3ffff7217520136aa93fd47ba4af15989af8ef8009c3ab4d228057fafaa6714a"
+    },
+    "trading-signals": {
+      "source": "scientiacapital/skills",
+      "sourceType": "github",
+      "skillPath": "active/trading-signals-skill/SKILL.md",
+      "computedHash": "7abafd6f372ed87c6d886363b2fc579b1e034facf2e0ec5d8880cf11ecd65b02"
+    },
+    "webapp-testing": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "skillPath": "skills/webapp-testing/SKILL.md",
+      "computedHash": "3f14af7f5690695209c22fbf8c8d133769a86d64892602c09bb13f135e14e857"
     }
   }
 }

@@ -25,6 +25,15 @@ class Secrets:
     """Centralized secrets — never stored in code, always from env/.env."""
 
     def __init__(self, env_file: Optional[str] = None):
+        if env_file is None:
+            # secrets.py is at src/infrastructure/secrets.py
+            # Project root is ../../ (2 levels up)
+            module_dir = os.path.dirname(os.path.abspath(__file__))
+            project_root = os.path.dirname(os.path.dirname(module_dir))
+            for p in [os.path.join(os.getcwd(), '.env'), os.path.join(project_root, '.env'), '.env']:
+                if os.path.exists(p):
+                    env_file = p
+                    break
         load_env_file(env_file)
 
     @property
@@ -45,7 +54,10 @@ class Secrets:
 
     @property
     def ctrader_account_id(self) -> int:
-        return int(os.getenv("CTRADER_ACCOUNT_ID", "0"))
+        try:
+            return int(os.getenv("CTRADER_ACCOUNT_ID", "0"))
+        except (ValueError, TypeError):
+            return 0
 
     @property
     def telegram_bot_token(self) -> str:

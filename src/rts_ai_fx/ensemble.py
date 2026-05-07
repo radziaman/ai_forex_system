@@ -1,10 +1,12 @@
 """
 Mixture-of-Experts Ensemble with HMM regime gating.
 Each expert specializes in a market regime; gating network weights predictions.
+Enhanced with Sharpe-based dynamic weighting and MAML meta-learning (Enhancement #9).
 """
 import numpy as np
 from typing import Dict, List, Optional, Callable, Tuple
 from dataclasses import dataclass, field
+from collections import defaultdict
 
 
 @dataclass
@@ -30,11 +32,19 @@ class MoEEnsemble:
     - Expert models are registered per regime
     - Gating network (HMM posteriors) weights expert contributions
     - Elo ratings track individual expert performance
+    - Sharpe-based dynamic weighting (Enhancement #9)
+    - MAML meta-learning integration (Enhancement #9)
     """
 
     def __init__(self):
         self.experts: List[Expert] = []
         self.elo_ratings: Dict[str, float] = {}
+        self.sharpe_ratios: Dict[str, float] = defaultdict(float)
+        self.expert_returns: Dict[str, List[float]] = defaultdict(list)
+        self.expert_win_rates: Dict[str, Dict] = defaultdict(lambda: {"wins": 0, "total": 0})
+        self.maml_agent = None  # MAML for meta-learning
+        self.use_sharpe_weighting: bool = True
+        self.use_maml_adaptation: bool = True
 
     def add_expert(self, name: str, predict_fn: Callable, confidence_fn: Callable, regime: str = "ranging"):
         self.experts.append(Expert(name=name, predict=predict_fn, confidence=confidence_fn, regime=regime))
@@ -43,44 +53,102 @@ class MoEEnsemble:
     def predict(self, X: np.ndarray, regime: str = "ranging", regime_posteriors: Optional[np.ndarray] = None) -> EnsemblePrediction:
         if not self.experts:
             return EnsemblePrediction()
+
+        # MAML meta-adaptation (Enhancement #9)
+        if self.maml_agent and self.use_maml_adaptation:
+            X_adapted = self._maml_adapt(X, regime)
+        else:
+            X_adapted = X
+
         predictions = []
         confidences = []
         weights = []
         expert_outputs = {}
+
         for expert in self.experts:
             try:
-                pred = float(np.array(expert.predict(X)).flatten()[0])
-                conf = float(np.array(expert.confidence(X)).flatten()[0])
+                pred = float(np.array(expert.predict(X_adapted)).flatten()[0])
+                conf = float(np.array(expert.confidence(X_adapted)).flatten()[0])
             except Exception as e:
                 continue
+
             # Dynamic regime-based weighting
             regime_weight = self._calculate_regime_weight(expert, regime, regime_posteriors)
+
             # Elo rating weight (performance-based)
             elo_weight = self.elo_ratings.get(expert.name, 1200.0) / 1200.0
+
+            # Sharpe ratio weight (Enhancement #9)
+            if self.use_sharpe_weighting:
+                sharpe_weight = max(0.1, min(2.0, self.sharpe_ratios.get(expert.name, 1.0)))
+            else:
+                sharpe_weight = 1.0
+
             # Confidence-adjusted weight
             conf_weight = 0.5 + 0.5 * conf
-            weight = regime_weight * elo_weight * conf_weight
+
+            # Combined weight
+            weight = regime_weight * elo_weight * sharpe_weight * conf_weight
             predictions.append(pred)
             confidences.append(conf)
             weights.append(weight)
             expert_outputs[expert.name] = {"prediction": pred, "confidence": conf, "weight": weight}
+
         if not predictions:
             return EnsemblePrediction()
+
         weights = np.array(weights)
         total = weights.sum()
         if total == 0:
             return EnsemblePrediction()
+
         weights = weights / total
         ensemble_price = float(np.average(predictions, weights=weights))
         ensemble_conf = float(np.average(confidences, weights=weights))
+
         # Determine direction based on weighted ensemble
         direction = self._determine_direction(ensemble_price, confidences, weights)
+
         return EnsemblePrediction(
             price=ensemble_price,
             confidence=ensemble_conf,
             direction=direction,
             expert_outputs=expert_outputs,
         )
+
+    def _maml_adapt(self, X: np.ndarray, regime: str) -> np.ndarray:
+        """Adapt features using MAML for few-shot learning."""
+        try:
+            if self.maml_agent and hasattr(self.maml_agent, 'adapt'):
+                adapted = self.maml_agent.adapt(X, regime=regime)
+                return adapted if adapted is not None else X
+        except Exception:
+            pass
+        return X
+
+    def update_sharpe(self, expert_name: str, returns: List[float]):
+        """Update Sharpe ratio for an expert based on recent returns."""
+        if not returns or len(returns) < 2:
+            return
+        mean_return = np.mean(returns)
+        std_return = np.std(returns)
+        if std_return > 0:
+            sharpe = mean_return / std_return * np.sqrt(252)  # Annualized
+            self.sharpe_ratios[expert_name] = sharpe
+            self.expert_returns[expert_name].extend(returns)
+            # Keep only last 100 returns
+            if len(self.expert_returns[expert_name]) > 100:
+                self.expert_returns[expert_name] = self.expert_returns[expert_name][-100:]
+
+    def update_expert_result(self, expert_name: str, pnl: float):
+        """Track expert performance for win rate calculation."""
+        if expert_name in self.expert_win_rates:
+            self.expert_win_rates[expert_name]["total"] += 1
+            if pnl > 0:
+                self.expert_win_rates[expert_name]["wins"] += 1
+            # Update Sharpe if we have enough data
+            if expert_name in self.expert_returns:
+                self.update_sharpe(expert_name, self.expert_returns[expert_name][-20:])
 
     def should_trade(self, pred: EnsemblePrediction, current_price: float, min_confidence: float = 0.65) -> Tuple[bool, str, float]:
         """

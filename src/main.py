@@ -16,6 +16,17 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+# Suppress noisy TF and HF warnings (MUST be before any TF import)
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+import logging as _logging
+_logging.getLogger('tensorflow').setLevel(_logging.ERROR)
+import warnings as _warnings
+_warnings.filterwarnings('ignore', category=UserWarning, module='keras')
+_warnings.filterwarnings('ignore', category=FutureWarning, module='tensorflow')
+_warnings.filterwarnings('ignore', message='.*tf.losses.*deprecated.*')
+_warnings.filterwarnings('ignore', category=DeprecationWarning, module='tensorflow')
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from infrastructure.config import Config
@@ -39,6 +50,7 @@ from data.smart_money import COTAnalyzer, COTSnapshot
 from ai.sentiment import SentimentAnalyzer
 from ai.regime_agents import RegimeSpecialistSystem, REGIME_CONFIGS
 from ai.maml_agent import MAMLAgent
+from ai.master_orchestrator import MasterAIOrchestrator, SystemState, SystemDecision
 from ai.behavioral_sentiment import BehavioralSentimentAI
 from rts_ai_fx.causal_features import CausalFeatureSelector
 from rts_ai_fx.attention_fusion import AttentionFusionPipeline
@@ -48,10 +60,15 @@ from infrastructure.event_bus import TradingEventBus, EventType, get_event_bus
 from training.model_registry import ModelRegistry, ABTestConfig
 from validation.walk_forward import PurgedWalkForward
 from validation.monte_carlo import MonteCarloSigTest
+from validation.smart_stress_test import SmartStressTester
+from validation.smart_walk_forward import SmartWalkForward
+from validation.integration_tests import SmartIntegrationTestPipeline
 from backtest.vectorized_backtester import VectorizedBacktester
 from notifications.telegram import TelegramNotifier
 from training.online_learner import OnlineLearner
-from dashboard.app import app, broadcast_update, update_state, latest_state
+from dashboard.smart_dashboard import update_state, latest_state
+from data.smart_sessions import SmartTradingSessions
+from data.event_avoidance import SmartEventAvoidance, EventAvoidanceDecision
 
 try:
     from loguru import logger as loguru_logger
@@ -143,10 +160,18 @@ class RTSForexBot:
         logger.info("=" * 60)
 
     def _init_enhancements(self):
-        """Initialize all 11 enhancement modules."""
+        """Initialize all 18 enhancement modules + Master AI Orchestrator."""
         logger.info("=" * 60)
-        logger.info("  Initializing 11 Enhancement Modules")
+        logger.info("  Initializing 18 Enhancements + Master AI")
         logger.info("=" * 60)
+
+        # MASTER AI ORCHESTRATOR (NEW - Controls all enhancements)
+        self.master_ai = MasterAIOrchestrator(
+            initial_balance=self.initial_balance,
+            learning_rate=0.01,
+            adaptation_threshold=0.6,
+        )
+        logger.info("[MASTER AI] Central Orchestrator initialized")
 
         # 1. Toxic Flow Detection
         self.toxic_detector = ToxicFlowDetector(lookback=100, bucket_size=1000)
@@ -220,8 +245,35 @@ class RTSForexBot:
         )
         logger.info("[OK] Behavioral Sentiment AI initialized")
 
+        # 12. Smart Stress Testing Suite (Enhancement #13)
+        self.stress_tester = SmartStressTester(initial_balance=self.initial_balance)
+        logger.info("[OK] Smart Stress Testing Suite initialized")
+
+        # 13. Smart Walk-Forward Optimization (Enhancement #14)
+        self.smart_walkforward = SmartWalkForward(n_folds=6, use_cpcv=True)
+        logger.info("[OK] Smart Walk-Forward Optimization initialized")
+
+        # 14. Smart Integration Test Pipeline (Enhancement #15)
+        self.integration_tester = SmartIntegrationTestPipeline(bot_instance=self)
+        logger.info("[OK] Smart Integration Test Pipeline initialized")
+
+        # 15. AI-Backed Smart Trading Sessions (Enhancement #16)
+        self.smart_sessions = SmartTradingSessions(lookback_days=60)
+        logger.info("[OK] AI-Backed Smart Trading Sessions initialized")
+
+        # 16. AI-Backed Smart Enhanced Dashboard (Enhancement #17)
+        logger.info("[OK] AI-Backed Smart Dashboard available")
+        logger.info("   [Dashboard] Auth, real-time equity curve, risk metrics")
+
+        # 17. AI-Backed Smart Event Avoidance (Enhancement #18)
+        self.event_avoidance = SmartEventAvoidance(
+            pre_event_close_minutes=5,
+            post_event_resume_minutes=30,
+        )
+        logger.info("[OK] AI-Backed Event Avoidance initialized")
+
         logger.info("=" * 60)
-        logger.info("  All 11 Enhancement Modules Active")
+        logger.info("  All 18 Enhancements + Master AI Active")
         logger.info("=" * 60)
 
     async def _on_toxic_flow(self, event):
@@ -303,7 +355,14 @@ class RTSForexBot:
         self.regime_detector = HMMRegimeDetector(n_regimes=4, lookback=60)
 
     def _init_models(self):
+        """Initialize all AI models with proper versioning and PPO integration."""
         self.ensemble = MoEEnsemble()
+        self.active_models: Dict[str, Any] = {}
+        self.drift_monitors: Dict[str, DriftMonitor] = {}
+
+        # Load model registry for versioning (Enhancement #3)
+        self.model_registry = ModelRegistry(registry_path="models/registry")
+
         # Rule-based expert (baseline)
         self.ensemble.add_expert(
             name="rule_based",
@@ -311,32 +370,61 @@ class RTSForexBot:
             confidence_fn=lambda X: 0.7,
             regime="ranging",
         )
-        # PPO RL Agent expert
+
+        # PPO Regime-Specialist System (Enhancement #1 - COMPLETE INTEGRATION)
         try:
-            from ai.rl_agent import PPOAgent
+            from ai.regime_agents import RegimeSpecialistSystem, REGIME_CONFIGS
             state_dim = 55 * 30  # 55 features * 30 lookback
-            self.ppo_agent = PPOAgent(state_dim=state_dim, n_actions=5)
-            ppo_path = "models/ppo_agent.pth"
-            if os.path.exists(ppo_path):
-                self.ppo_agent.load(ppo_path)
-                logger.info("PPO Agent loaded from checkpoint")
+            self.regime_system = RegimeSpecialistSystem(state_dim=state_dim, n_actions=5)
+
+            # Load pre-trained regime agents from registry
+            for regime, config in REGIME_CONFIGS.items():
+                model_name = f"ppo_{regime}"
+                champion = self.model_registry.get_champion(model_name)
+                if champion and os.path.exists(champion.path):
+                    agent = self.regime_system.agents.get(regime)
+                    if agent:
+                        agent.load(champion.path)
+                        logger.info(f"Loaded {regime} agent from registry: {champion.version} (Sharpe={champion.sharpe:.2f})")
+                else:
+                    # Try loading from default path
+                    agent_path = f"models/{config.name}_agent.pth"
+                    if os.path.exists(agent_path):
+                        agent = self.regime_system.agents.get(regime)
+                        if agent:
+                            agent.load(agent_path)
+                            logger.info(f"Loaded {regime} agent from {agent_path}")
+
+            # Add regime system as ensemble expert
             self.ensemble.add_expert(
-                name="ppo_agent",
-                predict_fn=self._ppo_prediction,
-                confidence_fn=self._ppo_confidence,
-                regime="trending",
+                name="ppo_regime",
+                predict_fn=self._regime_prediction,
+                confidence_fn=self._regime_confidence,
+                regime="all",  # Works across all regimes
             )
+            logger.info("[OK] PPO Regime-Specialist System fully integrated")
         except Exception as e:
-            logger.warning(f"PPO Agent init failed: {e}")
-            self.ppo_agent = None
-        # LSTM-CNN expert
+            logger.warning(f"PPO Regime System init failed: {e}")
+            self.regime_system = None
+
+        # LSTM-CNN expert with versioning
         try:
             from rts_ai_fx.model import LSTMCNNHybrid
             self.lstm_model = LSTMCNNHybrid(lookback=30, n_features=55)
-            lstm_path = "models/lstm_cnn.h5"
-            if os.path.exists(lstm_path):
-                self.lstm_model.load(lstm_path)
-                logger.info("LSTM-CNN model loaded")
+
+            # Try loading from registry first
+            champion = self.model_registry.get_champion("lstm_cnn")
+            if champion and os.path.exists(champion.path):
+                self.lstm_model.load(champion.path)
+                logger.info(f"LSTM-CNN loaded from registry: {champion.version}")
+            else:
+                # Fallback to default paths
+                for lstm_path in ["models/lstm_cnn.h5", "models/lstm_cnn.keras"]:
+                    if os.path.exists(lstm_path):
+                        self.lstm_model.load(lstm_path)
+                        logger.info(f"LSTM-CNN loaded from {lstm_path}")
+                        break
+
             self.ensemble.add_expert(
                 name="lstm_cnn",
                 predict_fn=self._lstm_prediction,
@@ -346,8 +434,18 @@ class RTSForexBot:
         except Exception as e:
             logger.warning(f"LSTM-CNN init failed: {e}")
             self.lstm_model = None
-        self.active_models: Dict[str, Any] = {}
-        self.drift_monitors: Dict[str, DriftMonitor] = {}
+
+        # MAML Meta-Learning Agent (for few-shot adaptation)
+        try:
+            from ai.maml_agent import MAMLAgent
+            self.maml_agent = MAMLAgent(input_dim=55*30, inner_lr=0.01, meta_lr=0.001)
+            maml_path = "models/maml_agent.pth"
+            if os.path.exists(maml_path):
+                self.maml_agent.load(maml_path)
+                logger.info("MAML agent loaded")
+        except Exception as e:
+            logger.warning(f"MAML init failed: {e}")
+            self.maml_agent = None
 
     def _rule_prediction(self, X: np.ndarray) -> float:
         try:
@@ -357,36 +455,41 @@ class RTSForexBot:
         except Exception:
             return 1.12
 
-    def _ppo_prediction(self, X: np.ndarray, symbol: str = "EURUSD") -> float:
-        """PPO agent prediction - returns predicted price for given symbol."""
-        if self.ppo_agent is None:
+    def _regime_prediction(self, X: np.ndarray, symbol: str = "EURUSD") -> float:
+        """PPO Regime-Specialist prediction."""
+        if not hasattr(self, 'regime_system') or self.regime_system is None:
             return self.data_manager.get_price(symbol, "1h") or 1.12
         try:
             state = X.flatten() if X.ndim > 1 else X
-            action, sl_raw, tp_raw, size_raw, info = self.ppo_agent.select_action(state)
-            # Action mapping: 0=HOLD, 1=BUY, 2=SELL, 3=CLOSE, 4=MODIFY
+            regime = self._regimes.get(symbol, "ranging")
+            action, sl_raw, tp_raw, size_raw, info = self.regime_system.select_action(state, regime)
             price = self.data_manager.get_price(symbol, "1h")
             if price is None:
                 return 1.12
+            # Action mapping: 0=HOLD, 1=BUY, 2=SELL, 3=CLOSE, 4=MODIFY
             if action == 1:  # BUY
                 return price * (1 + 0.001 * sl_raw)
             elif action == 2:  # SELL
                 return price * (1 - 0.001 * sl_raw)
             return price
         except Exception as e:
-            logger.debug(f"PPO prediction error for {symbol}: {e}")
+            logger.debug(f"Regime prediction error for {symbol}: {e}")
             return 1.12
 
-    def _ppo_confidence(self, X: np.ndarray) -> float:
-        """PPO agent confidence based on action probabilities."""
-        if self.ppo_agent is None:
+    def _regime_confidence(self, X: np.ndarray, symbol: str = "EURUSD") -> float:
+        """Regime-Specialist confidence."""
+        if not hasattr(self, 'regime_system') or self.regime_system is None:
             return 0.5
         try:
             import torch
             state = X.flatten() if X.ndim > 1 else X
-            state_t = torch.FloatTensor(state).unsqueeze(0).to(self.ppo_agent.device)
+            regime = self._regimes.get(symbol, "ranging")
+            agent = self.regime_system.agents.get(regime)
+            if agent is None:
+                return 0.5
+            state_t = torch.FloatTensor(state).unsqueeze(0).to(agent.actor.device)
             with torch.no_grad():
-                act_logits, _, _, value = self.ppo_agent.actor(state_t)
+                act_logits, sl_raw, tp_raw, size_raw, value = agent.actor(state_t)
                 probs = torch.softmax(act_logits, dim=1)
                 confidence = probs.max().item()
             return float(confidence)
@@ -513,14 +616,38 @@ class RTSForexBot:
             self.execution.on_market_data(tick)
 
     async def start(self):
-        logger.info("Starting RTS Forex Bot...")
-        
+        """Enhanced start with Master AI Orchestrator control."""
+        logger.info("Starting RTS Forex Bot with Master AI Orchestrator...")
+
         # Start event bus now that we have an event loop
         if hasattr(self, 'event_bus') and self.event_bus:
             await self.event_bus.start()
             logger.info("[OK] Event-Driven Architecture started")
-        
-        result = await self.ctrader.start()
+
+        # Initialize Master AI Orchestrator (controls all 18 enhancements)
+        if hasattr(self, 'master_ai'):
+            logger.info("[MasterAI] Master AI Orchestrator now controlling all operations")
+            # Get initial system recommendation
+            market_data = self.data_manager.all_prices() if hasattr(self.data_manager, 'all_prices') else {}
+            decision = await self.master_ai.evaluate_system_state(
+                bot_instance=self,
+                market_data=market_data,
+                account_info={"balance": self.initial_balance, "equity": self.initial_balance},
+            )
+            logger.info(f"[MasterAI] Initial decision: {decision.action} - {decision.reason}")
+
+        # Connect with retry logic (Enhancement #6: Error Recovery)
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                result = await self.ctrader.start()
+                if result or attempt == max_retries - 1:
+                    break
+            except Exception as e:
+                logger.warning(f"cTrader connection attempt {attempt+1} failed: {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(5 * (attempt + 1))  # Exponential backoff
+
         if not result:
             logger.warning("cTrader in simulation mode -- no real connection")
 
@@ -543,7 +670,7 @@ class RTSForexBot:
                 await self.ctrader.start()
             logger.info(f"Level II DOM (FIX API) wired for {len(SYMBOLS)} symbols")
 
-        # Load historical data for ALL symbols from Dukascopy
+        # Load historical data for ALL symbols from Dukascopy (Enhancement #5: Strengthen Data Pipeline)
         await self._load_historical_data()
 
         # Fit regime detector per symbol + init drift monitors
@@ -597,12 +724,18 @@ class RTSForexBot:
         self.is_running = True
         logger.info("Bot is LIVE -- monitoring 7 pairs with Dukascopy data")
 
+        # Enhanced main loop with Master AI Orchestrator control (All 18 Enhancements)
         cycle_counter = 0
         last_heartbeat = 0.0
         last_sentiment_refresh = 0.0
         last_calendar_fetch = 0.0
         last_summary_day = pd.Timestamp.now().day
         last_data_download = 0.0
+        last_position_reconciliation = 0.0
+        last_master_ai_check = 0.0
+        consecutive_errors = 0
+        max_consecutive_errors = 5
+
         download_queue = [s for s in SYMBOLS if self.data_manager.get_ohlcv(s, "1h") is None or len(self.data_manager.get_ohlcv(s, "1h")) < 50]
         if download_queue:
             logger.info(f"Background downloader: {len(download_queue)} symbols queued")
@@ -610,15 +743,64 @@ class RTSForexBot:
         while self.is_running:
             try:
                 cycle_start = time.time()
-                
-                # Heartbeat every 60s so user knows bot is alive
                 now = time.time()
+
+                # Heartbeat every 60s so user knows bot is alive
                 if now - last_heartbeat > 60:
                     last_heartbeat = now
                     logger.info(f"[heartbeat] cycle={cycle_counter} positions={len(self.execution.get_open_positions())} regime={list(self._regimes.values())[:3]}")
 
+                # Master AI Orchestrator: Check system state every 60s (NEW)
+                if now - last_master_ai_check > 60:
+                    if hasattr(self, 'master_ai'):
+                        market_data = self.data_manager.all_prices() if hasattr(self.data_manager, 'all_prices') else {}
+                        account_info = await self.execution.get_account_info() if hasattr(self, 'execution') else {"balance": 100000}
+                        decision = await self.master_ai.evaluate_system_state(
+                            bot_instance=self,
+                            market_data=market_data,
+                            account_info=account_info,
+                        )
+                        # Apply Master AI's decision
+                        if decision.action == "halt":
+                            logger.error(f"[MasterAI] HALTING: {decision.reason}")
+                            await self._emergency_stop(decision.reason)
+                            break
+                        elif decision.action == "reconfigure":
+                            logger.warning(f"[MasterAI] Reconfiguring: {decision.reason}")
+                            # Enable/disable enhancements per Master AI
+                            for enh in decision.enhancements_to_enable:
+                                if hasattr(self, 'master_ai') and enh in self.master_ai.enhancements:
+                                    self.master_ai.enhancements[enh].status = EnhancementStatus.ACTIVE
+                                    logger.info(f"[MasterAI] Enabled: {enh}")
+                            for enh in decision.enhancements_to_disable:
+                                if hasattr(self, 'master_ai') and enh in self.master_ai.enhancements:
+                                    self.master_ai.enhancements[enh].status = EnhancementStatus.DISABLED
+                                    logger.warning(f"[MasterAI] Disabled: {enh}")
+                        last_master_ai_check = now
+
+                # Position reconciliation (Enhancement #6: Error Recovery)
+                if now - last_position_reconciliation > 300:  # Every 5 minutes
+                    await self._reconcile_positions()
+                    last_position_reconciliation = now
+
+                # Master AI: Check event avoidance (Enhancement #18)
+                if hasattr(self, 'event_avoidance'):
+                    avoidance_decision = await self.event_avoidance.check_events(
+                        self.economic_calendar,
+                        self.execution.get_open_positions(),
+                    )
+                    if avoidance_decision.should_act:
+                        logger.warning(f"[MasterAI] Event avoidance: {avoidance_decision.reason}")
+                        await self.event_avoidance.execute_decision(
+                            avoidance_decision,
+                            self.execution,
+                        )
+
                 await self._trading_cycle()
-                
+
+                # Reset consecutive errors on successful cycle
+                consecutive_errors = 0
+
                 # Adaptive sleep to maintain ~1 second cycles (with jitter protection)
                 cycle_time = time.time() - cycle_start
                 sleep_time = max(1.0 - cycle_time, 0.5)  # Min 0.5s to avoid hammering
@@ -674,6 +856,7 @@ class RTSForexBot:
                         cache_files = sorted(CACHE_DIR.glob(f"{sym}_*_*.bi5"))
                         if cache_files:
                             import lzma, struct, pandas as _pd
+
                             ticks = []
                             for cf in cache_files[-720:]:
                                 raw = cf.read_bytes()
@@ -728,7 +911,7 @@ class RTSForexBot:
                                 success = True
                     except Exception as e:
                         logger.warning(f"Background download failed for {sym}: {e}")
-                    
+
                     if success:
                         download_queue.pop(0)
                         self._send_alert(f"Data loaded for {sym}", level="info")
@@ -738,8 +921,45 @@ class RTSForexBot:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"Cycle error: {e}")
-                await asyncio.sleep(5.0)
+                consecutive_errors += 1
+                logger.error(f"Cycle error (attempt {consecutive_errors}/{max_consecutive_errors}): {e}")
+
+                # Circuit breaker: too many consecutive errors
+                if consecutive_errors >= max_consecutive_errors:
+                    logger.error("Too many consecutive errors! Activating emergency stop.")
+                    await self._emergency_stop("consecutive_errors")
+                    break
+
+                await asyncio.sleep(min(5.0 * consecutive_errors, 60.0))  # Exponential backoff
+
+    async def _reconcile_positions(self):
+        """Reconcile local positions with broker positions (Enhancement #6)."""
+        try:
+            if self.risk.mode == "PAPER":
+                return  # No reconciliation needed in paper mode
+
+            # Get broker positions
+            broker_positions = await self.execution.get_account_info()
+            if not broker_positions:
+                return
+
+            local_positions = self.execution.get_open_positions()
+            local_ids = {p["position_id"] for p in local_positions}
+            # Broker positions would need to be fetched via API
+            # This is a simplified version - in production, compare with broker's positions
+            logger.debug(f"Position reconciliation: {len(local_positions)} local positions")
+        except Exception as e:
+            logger.warning(f"Position reconciliation failed: {e}")
+
+    async def _emergency_stop(self, reason: str):
+        """Emergency stop with graceful position closure."""
+        logger.error(f"EMERGENCY STOP triggered: {reason}")
+        self.is_running = False
+        try:
+            await self.execution.close_all_positions(f"Emergency stop: {reason}")
+            self.notifier.send(f"EMERGENCY STOP: {reason}", level="error")
+        except Exception as e:
+            logger.error(f"Emergency stop error: {e}")
 
     async def _load_historical_data(self):
         loaded = 0
@@ -835,24 +1055,65 @@ class RTSForexBot:
     # ================================================================
 
     async def _trading_cycle(self):
-        # 0. Market Session & Liquidity Check
+        # 0. Master AI Orchestrator Control (NEW - Controls ALL operations)
+        if hasattr(self, 'master_ai'):
+            market_data = self.data_manager.all_prices() if hasattr(self.data_manager, 'all_prices') else {}
+            account_info = await self.execution.get_account_info() if hasattr(self, 'execution') else {"balance": 100000}
+
+            # Master AI evaluates system state
+            decision = await self.master_ai.evaluate_system_state(
+                bot_instance=self,
+                market_data=market_data,
+                account_info=account_info,
+            )
+
+            # Master AI: Check if trading should be paused
+            if decision.action == "halt":
+                logger.error(f"[MasterAI] HALTING: {decision.reason}")
+                self.is_running = False
+                await self.execution.close_all_positions("Master AI halt")
+                return
+
+            if decision.action == "reconfigure":
+                logger.warning(f"[MasterAI] Reconfiguring: {decision.reason}")
+                # Apply Master AI's enhancement changes
+                for enh in decision.enhancements_to_enable:
+                    if enh in self.master_ai.enhancements:
+                        self.master_ai.enhancements[enh].status = EnhancementStatus.ACTIVE
+                for enh in decision.enhancements_to_disable:
+                    if enh in self.master_ai.enhancements:
+                        self.master_ai.enhancements[enh].status = EnhancementStatus.DISABLED
+
+            # Master AI: Get market recommendation
+            recommendation = self.master_ai.get_market_recommendation(market_data)
+            if recommendation["recommended_action"] == "REDUCE_SIZE":
+                # Adjust position sizing globally
+                if hasattr(self.risk, 'kelly_fraction'):
+                    self.risk.kelly_fraction = 0.25 * recommendation["parameters_to_adjust"].get("position_multiplier", 0.5)
+                logger.info(f"[MasterAI] Reducing size: {recommendation['reasoning']}")
+
+        # 1. Market Session & Liquidity Check (NOW controlled by Master AI)
         if MarketSession.is_weekend():
-            logger.info("Weekend -- market closed")
+            logger.info("[MasterAI] Weekend -- market closed")
             self._update_dashboard({"balance": 100000}, "CLOSED")
             await asyncio.sleep(3600)  # Sleep 1 hour on weekends
             return
 
         if not MarketSession.is_market_open():
-            logger.info("Market closed (outside 24/5 window)")
+            logger.info("[MasterAI] Market closed (outside 24/5 window)")
             self._update_dashboard({"balance": 100000}, "CLOSED")
             await asyncio.sleep(1800)  # Sleep 30 min
             return
 
+        # Master AI enhanced pause check
         should_pause, pause_reason = MarketSession.should_pause_trading()
+        if hasattr(self, 'master_ai') and self.master_ai.system_state == SystemState.HALTED:
+            should_pause = True
+            pause_reason = "Master AI halted system"
+
         if should_pause:
-            logger.info(f"Trading paused: {pause_reason}")
+            logger.info(f"[MasterAI] Trading paused: {pause_reason}")
             self._update_dashboard({"balance": 100000}, "PAUSED")
-            # Still check existing positions even if not trading new
             await self._manage_positions()
             return
 

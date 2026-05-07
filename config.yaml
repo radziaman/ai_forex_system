@@ -27,32 +27,67 @@ trading:
       max_positions: 2
       slippage_pips: 1.5
 
-# AI Brain (Currently using LSTM-CNN Hybrid Model)
-# TODO: PPO RL Agent integration pending
+# AI Brain (PPO Regime-Specialist System - ACTIVE)
 ai:
-  algorithm: "LSTM-CNN"
-  # PPO settings (unused in current implementation)
-  # algorithm: "PPO"
-  # device: "auto"
-  # policy: "MlpPolicy"
-  # policy_kwargs:
-  #   net_arch: [1024, 512, 256, 128]
-  #   activation_fn: "tanh"
-  # learning_rate: 3.0e-4
-  # n_steps: 2048
-  # batch_size: 64
-  # n_epochs: 10
-  # gamma: 0.99
-  # gae_lambda: 0.95
-  # clip_range: 0.2
-  # ent_coef: 0.01
-  # vf_coef: 0.5
-  # max_grad_norm: 0.5
-  # total_timesteps: 1000000
-  # eval_freq: 10000
-  # save_freq: 50000
-  # online_finetune: true
-  # finetune_freq: 100
+  algorithm: "PPO-Regime-Specialist"
+  device: "auto"
+  # PPO Regime-Specialist Settings
+  regime_agents:
+    trending:
+      hidden_dims: [1024, 512, 256]
+      sl_atr_mult: 2.0
+      tp_atr_mult: 4.0
+      position_multiplier: 1.0
+      learning_rate: 3.0e-4
+      clip_range: 0.3
+    ranging:
+      hidden_dims: [512, 256, 128]
+      sl_atr_mult: 1.5
+      tp_atr_mult: 3.0
+      position_multiplier: 1.0
+      learning_rate: 3.0e-4
+      clip_range: 0.15
+    volatile:
+      hidden_dims: [512, 256, 128]
+      sl_atr_mult: 2.5
+      tp_atr_mult: 5.0
+      position_multiplier: 0.5
+      learning_rate: 1.0e-4
+      clip_range: 0.1
+    crisis:
+      hidden_dims: [256, 128, 64]
+      sl_atr_mult: 1.0
+      tp_atr_mult: 2.0
+      position_multiplier: 0.0
+      learning_rate: 5.0e-5
+      clip_range: 0.05
+  # Model Versioning
+  model_versioning:
+    enabled: true
+    registry_path: "models/registry"
+    auto_promote: true
+    promotion_threshold: 0.05
+    max_versions: 10
+  # Ensemble Settings
+  ensemble:
+    method: "moe"  # moe (mixture-of-experts) or voting
+    experts: ["ppo_regime", "lstm_cnn", "rule_based"]
+    elo_rating: true
+    sharpe_weighting: true
+  # Training
+  training:
+    total_timesteps: 1000000
+    batch_size: 64
+    n_epochs: 10
+    learning_rate: 3.0e-4
+    gamma: 0.99
+    gae_lambda: 0.95
+    clip_range: 0.2
+    ent_coef: 0.01
+    vf_coef: 0.5
+    max_grad_norm: 0.5
+    online_finetune: true
+    finetune_freq: 100
 
 # Features
 features:

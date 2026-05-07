@@ -16,7 +16,7 @@ from starlette.requests import Request
 from loguru import logger
 from typing import List, Dict, Any, Optional
 
-app = FastAPI(title="RTS - AI FX Trading System Dashboard", version="3.0")
+app = FastAPI(title="RTS: AI Moneybot System Elite Dashboard", version="3.0")
 
 connected_clients: List[WebSocket] = []
 

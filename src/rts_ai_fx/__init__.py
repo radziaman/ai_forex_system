@@ -1,3 +1,3 @@
-"""RTS - AI FX Trading System - LSTM-CNN Hybrid with Reinforcement Learning"""
+"""RTS: AI Moneybot System Elite - LSTM-CNN Hybrid with Reinforcement Learning"""
 
 __version__ = "3.0.0"

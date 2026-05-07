@@ -1,10 +1,11 @@
 """
 HMM-based Market Regime Detector — replaces hardcoded ADX thresholds.
 Learns regime transition probabilities from historical data.
+Enhanced with smart regime transition trading (Enhancement #12).
 """
 import numpy as np
 import pandas as pd
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Dict
 
 try:
     from hmmlearn import hmm
@@ -133,3 +134,173 @@ class HMMRegimeDetector:
 
     def should_trade(self, regime: str) -> bool:
         return self.get_regime_params(regime)["pos_mult"] > 0
+
+    # Enhancement #12: Smart Regime Transition Trading
+    def detect_transition(self, symbol: str = None) -> Dict:
+        """
+        Detect regime transitions and provide trading signals.
+        Trade the transition, not just the regime.
+        """
+        if not self.regime_history or len(self.regime_history) < 2:
+            return {
+                "in_transition": False,
+                "from_regime": None,
+                "to_regime": None,
+                "confidence": 0.0,
+                "should_trade": False,
+                "sl_tp_adjustment": 1.0,
+            }
+
+        current = self.regime_history[-1]
+        previous = self.regime_history[-2]
+
+        in_transition = current != previous
+        transition_key = f"{previous}_to_{current}"
+
+        # Calculate transition probability (simplified)
+        transition_count = sum(
+            1 for i in range(1, len(self.regime_history))
+            if self.regime_history[i] != self.regime_history[i-1]
+        )
+        total_observations = len(self.regime_history) - 1
+        transition_freq = transition_count / max(total_observations, 1)
+
+        # Higher confidence if transition is rare (more predictable)
+        confidence = min(1.0, transition_freq * 5) if in_transition else 0.0
+
+        # Adjust SL/TP during transitions (higher volatility)
+        if in_transition:
+            # Volatile transitions = wider stops
+            if current == "volatile" or previous == "volatile":
+                sl_tp_adj = 1.5
+            # Trend-to-range = tighter stops
+            elif (previous == "trending" and current == "ranging") or \
+                 (previous == "ranging" and current == "trending"):
+                sl_tp_adj = 1.2
+            else:
+                sl_tp_adj = 1.3
+        else:
+            sl_tp_adj = 1.0
+
+        # Should we trade during transition?
+        # Yes for trending->volatile (momentum)
+        # No for volatile->crisis (too dangerous)
+        if in_transition:
+            if previous == "volatile" and current == "crisis":
+                should_trade = False
+            elif previous == "crisis" and current == "ranging":
+                should_trade = False  # Wait for stability
+            else:
+                should_trade = True
+        else:
+            should_trade = True
+
+        return {
+            "in_transition": in_transition,
+            "from_regime": previous,
+            "to_regime": current,
+            "transition_key": transition_key,
+            "confidence": confidence,
+            "should_trade": should_trade,
+            "sl_tp_adjustment": sl_tp_adj,
+            "transition_frequency": transition_freq,
+        }
+
+    def get_pause_conditions(self) -> Dict:
+        """
+        Determine if we should pause trading due to high uncertainty.
+        Enhancement #12: Pause during high-uncertainty transitions.
+        """
+        if not self.regime_history or len(self.regime_history) < 5:
+            return {"should_pause": False, "reason": "insufficient_history"}
+
+        recent = self.regime_history[-5:]
+
+        # Count transitions in last 5 observations
+        transitions = sum(
+            1 for i in range(1, len(recent))
+            if recent[i] != recent[i-1]
+        )
+
+        # Pause if too many transitions (high uncertainty)
+        if transitions >= 3:
+            return {
+                "should_pause": True,
+                "reason": f"high_transition_frequency: {transitions} transitions in 5 periods",
+                "transitions": transitions,
+            }
+
+        # Pause if current regime is crisis
+        if recent[-1] == "crisis":
+            return {
+                "should_pause": True,
+                "reason": "crisis_regime_detected",
+                "regime": "crisis",
+            }
+
+        return {"should_pause": False, "reason": "normal_conditions"}
+
+    def get_transition_trading_signal(self, symbol: str = None) -> Dict:
+        """
+        Get trading signal specifically for regime transitions.
+        Returns action to take during transitions.
+        """
+        transition = self.detect_transition(symbol)
+
+        if not transition["in_transition"]:
+            return {"action": "HOLD", "reason": "no_transition"}
+
+        from_r = transition["from_regime"]
+        to_r = transition["to_regime"]
+
+        # Trending -> Volatile: Trade momentum
+        if from_r == "trending" and to_r == "volatile":
+            return {
+                "action": "BUY" if self._get_trend_direction() > 0 else "SELL",
+                "reason": "momentum_during_transition",
+                "confidence": transition["confidence"],
+                "use_wider_stops": True,
+            }
+
+        # Ranging -> Trending: Follow the new trend
+        elif from_r == "ranging" and to_r == "trending":
+            return {
+                "action": "BUY" if self._get_trend_direction() > 0 else "SELL",
+                "reason": "breakout_from_range",
+                "confidence": transition["confidence"] * 1.2,
+                "use_wider_stops": False,
+            }
+
+        # Volatile -> Ranging: Mean reversion
+        elif from_r == "volatile" and to_r == "ranging":
+            return {
+                "action": "HOLD",
+                "reason": "wait_for_range_confirmation",
+                "confidence": 0.5,
+                "use_wider_stops": False,
+            }
+
+        # Any -> Crisis: Get out
+        elif to_r == "crisis":
+            return {
+                "action": "CLOSE_ALL",
+                "reason": "entering_crisis_regime",
+                "confidence": 1.0,
+                "use_wider_stops": False,
+            }
+
+        else:
+            return {
+                "action": "HOLD",
+                "reason": f"unhandled_transition: {transition['transition_key']}",
+                "confidence": 0.3,
+            }
+
+    def _get_trend_direction(self) -> int:
+        """Get current trend direction (1 for up, -1 for down)."""
+        if not self.regime_history:
+            return 0
+        # Simplified: check last regime
+        if self.regime_history[-1] == "trending":
+            return 1
+        return 0

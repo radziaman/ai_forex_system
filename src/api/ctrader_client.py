@@ -23,9 +23,9 @@ try:
         ProtoOADepthEvent,
     )
     _HAS_PROTOBUF = True
-    print("✅ cTrader Open API protobuf loaded successfully")
+    print("cTrader Open API protobuf loaded successfully")
 except ImportError as e:
-    print(f"⚠️ cTrader protobuf import failed: {e}")
+    print(f"cTrader protobuf import failed: {e}")
     _HAS_PROTOBUF = False
 
 logger = logging.getLogger(__name__)
@@ -218,9 +218,8 @@ class CtraderClient:
         try:
             context = ssl.create_default_context()
             context.minimum_version = ssl.TLSVersion.TLSv1_2
-            loop = asyncio.get_event_loop()
             self._reader, self._writer = await asyncio.wait_for(
-                asyncio.open_connection(self.host, self.port, ssl=context, loop=loop),
+                asyncio.open_connection(self.host, self.port, ssl=context),
                 timeout=10,
             )
             logger.info("Connected via async SSL")
