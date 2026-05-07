@@ -23,7 +23,6 @@ class ModelVersion:
     win_rate: float = 0.0
     max_dd: float = 0.0
     profit_factor: float = 0.0
-    sharpe: float = 0.0
     created_at: float = field(default_factory=time.time)
     is_active: bool = False
     is_champion: bool = False

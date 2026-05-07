@@ -34,12 +34,13 @@ class ActorNetwork(nn.Module):
             ])
             prev_dim = hidden_dim
 
+        last_dim = hidden_dims[-1] if hidden_dims else 128
         self.feature_extractor = nn.Sequential(*layers)
-        self.action_head = nn.Linear(128, n_actions)
-        self.sl_head = nn.Linear(128, 1)
-        self.tp_head = nn.Linear(128, 1)
-        self.size_head = nn.Linear(128, 1)
-        self.value_head = nn.Linear(128, 1)
+        self.action_head = nn.Linear(last_dim, n_actions)
+        self.sl_head = nn.Linear(last_dim, 1)
+        self.tp_head = nn.Linear(last_dim, 1)
+        self.size_head = nn.Linear(last_dim, 1)
+        self.value_head = nn.Linear(last_dim, 1)
         self._init_weights()
         total = sum(p.numel() for p in self.parameters())
         logger.info(f"ActorNetwork | Params: {total:,} | Input: {input_dim}")

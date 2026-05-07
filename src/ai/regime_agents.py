@@ -3,6 +3,7 @@ Multi-Agent Regime Specialist System.
 Each regime has a dedicated PPO agent with specialized hyperparameters and SL/TP logic.
 Gating network routes decisions to the correct specialist.
 """
+import os
 import numpy as np
 import torch
 import torch.nn as nn
@@ -103,20 +104,22 @@ class RegimeSpecialistSystem:
         for regime, config in REGIME_CONFIGS.items():
             try:
                 from ai.rl_agent import PPOAgent
-                # Pass hidden_dims to PPOAgent which passes it to ActorNetwork
                 agent = PPOAgent(
                     state_dim=self.state_dim,
                     n_actions=self.n_actions,
                     hidden_dims=config.hidden_dims,
                     clip_range=config.clip_range,
                 )
-                # Set learning rate after init
                 agent.optimizer = optim.Adam(agent.actor.parameters(), lr=config.learning_rate)
                 agent_path = f"models/{config.name}_agent.pth"
-                # Load pre-trained if exists
+                # Load pre-trained if exists (graceful on shape mismatch)
                 if os.path.exists(agent_path):
-                    agent.load(agent_path)
-                    logger.info(f"Loaded {regime} agent from {agent_path}")
+                    try:
+                        agent.load(agent_path)
+                        logger.info(f"Loaded {regime} agent from {agent_path}")
+                    except Exception as load_err:
+                        logger.warning(f"Could not load {regime} agent (dim mismatch?): {load_err}")
+                        logger.info(f"Using freshly initialized {regime} agent instead")
                 self.agents[regime] = agent
             except Exception as e:
                 logger.warning(f"Failed to init {regime} agent: {e}")

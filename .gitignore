@@ -47,6 +47,8 @@ logs/
 models/*.keras
 models/*.pkl
 models/*.h5
+models/*.pth
+models/registry/*
 
 # Generated artifacts
 fine_tuned_results.json

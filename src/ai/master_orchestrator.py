@@ -7,11 +7,76 @@ import asyncio
 import numpy as np
 import time
 import sys
+import os
+import json
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
 from enum import Enum
 from loguru import logger
-from collections import defaultdict
+from collections import defaultdict, deque
+from pathlib import Path
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
+
+
+class MetaLearner(nn.Module):
+    """
+    Neural network that learns optimal meta-actions (enhancement configurations)
+    from experience. Uses online Q-learning style training.
+
+    State (16-dim):
+      0: avg_enhancement_health
+      1: system_performance_score
+      2: market_volatility (0=calm, 0.5=normal, 1.0=volatile)
+      3: system_sharpe (clipped [-2, 2], normalized to [0, 1])
+      4: recent_win_rate (last 50 trades)
+      5: recent_pnl_normalized (last 10 trades / initial_balance)
+      6: active_enhancement_ratio
+      7: experience_level (total_trades / 1000, capped at 1.0)
+      8-15: top 8 enhancement confidence scores
+
+    Actions (5):
+      0: CONTINUE       — no changes
+      1: CONSERVATIVE   — enable protections, disable risky
+      2: AGGRESSIVE     — enable all, full risk
+      3: REDUCED_RISK   — half positions, disable sentiment/algo
+      4: HALT           — emergency stop
+    """
+    def __init__(self, state_dim: int = 16, n_actions: int = 5, hidden_dim: int = 32):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(state_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Linear(hidden_dim // 2, n_actions),
+        )
+        self._init_weights()
+
+    def _init_weights(self):
+        for m in self.net:
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight, gain=0.5)
+                nn.init.constant_(m.bias, 0.0)
+
+    def forward(self, state: torch.Tensor) -> torch.Tensor:
+        """Return Q-values for each action given state."""
+        return self.net(state)
+
+    @torch.no_grad()
+    def predict_q(self, state: np.ndarray) -> np.ndarray:
+        """Predict Q-values for a single state vector."""
+        self.eval()
+        s = torch.FloatTensor(state).unsqueeze(0)
+        return self.forward(s).squeeze(0).numpy()
+
+    def save(self, path: str):
+        torch.save(self.state_dict(), path)
+
+    def load(self, path: str):
+        self.load_state_dict(torch.load(path, map_location='cpu'))
 
 # Import SYMBOLS from data_manager
 try:
@@ -85,6 +150,9 @@ class MasterAIOrchestrator:
     - AUTO-RECONFIGURES the entire system
     """
 
+    # Safety-critical enhancements that must be ACTIVE from startup
+    SAFETY_CRITICAL = {"circuit_breaker", "var_sizing", "error_recovery"}
+
     # All 18 enhancements with their dependencies (class-level constant)
     ENHANCEMENTS = {
         # High Priority (1-3)
@@ -147,15 +215,24 @@ class MasterAIOrchestrator:
         },
     }
 
+    STATE_DIM = 16
+    N_ACTIONS = 5
+    COLD_START_TRADES = 50
+    EPSILON_INIT = 0.3
+    EPSILON_MIN = 0.05
+    EPSILON_DECAY = 0.995
+
     def __init__(
         self,
         initial_balance: float = 100000.0,
-        learning_rate: float = 0.01,
+        learning_rate: float = 0.001,
         adaptation_threshold: float = 0.6,
+        model_path: str = "models/meta_learner.pt",
     ):
         self.initial_balance = initial_balance
         self.learning_rate = learning_rate
         self.adaptation_threshold = adaptation_threshold
+        self.model_path = model_path
         
         # System state
         self.system_state: SystemState = SystemState.OPTIMAL
@@ -165,7 +242,8 @@ class MasterAIOrchestrator:
         # Performance tracking
         self.system_pnl: float = 0.0
         self.system_sharpe: float = 0.0
-        self.trade_history = []  # List[Dict] - avoid 3.12 syntax
+        self.trade_history = []  # List[Dict]
+        self.performance_history: List[float] = []
         self.enhancement_combinations = {}  # Dict[str, float] - combo -> performance
         
         # Decision making
@@ -173,20 +251,479 @@ class MasterAIOrchestrator:
         self.last_reconfiguration: float = 0.0
         self.reconfiguration_cooldown: float = 300.0  # 5 min
         
-        # AI models for meta-learning
-        self.meta_weights: np.ndarray = np.ones(len(self.ENHANCEMENTS)) / len(self.ENHANCEMENTS)
-        self.performance_history: List[float] = []
+        # Real system component references (wired by bot after construction)
+        self.system_components: Dict[str, Any] = {}
+        
+        # Re-entrancy guards (prevent recursion in callback chains)
+        self._processing_trade: bool = False
+        self._evaluating: bool = False
+        
+        # ===== META-LEARNER (learned brain, replaces static heuristics) =====
+        self.meta_learner = MetaLearner(
+            state_dim=self.STATE_DIM,
+            n_actions=self.N_ACTIONS,
+            hidden_dim=32,
+        )
+        self.meta_optimizer = optim.Adam(
+            self.meta_learner.parameters(), lr=learning_rate
+        )
+        self.meta_loss_fn = nn.MSELoss()
+        
+        # Training buffer: list of (state_vec, action_idx, reward)
+        self._experience_buffer: List[Tuple[np.ndarray, int, float]] = []
+        self._buffer_maxlen = 500
+        
+        # For tracking decisions and computing rewards
+        self._last_state: Optional[np.ndarray] = None
+        self._last_action: Optional[int] = None
+        self._last_decision_time: float = time.time()
+        self._pnl_at_last_decision: float = 0.0
+        self._sharpe_at_last_decision: float = 0.0
+        self._winrate_at_last_decision: float = 0.0
+        
+        # Exploration
+        self.epsilon = self.EPSILON_INIT
+        self.training_step = 0
+        
+        # Try loading pre-trained meta-learner
+        self._load_meta_learner()
         
         logger.info("[MasterAI] Central AI Orchestrator initialized")
         logger.info(f"[MasterAI] Managing {len(self.ENHANCEMENTS)} enhancements")
+        logger.info(f"[MasterAI] Meta-learner: {self.STATE_DIM} states, {self.N_ACTIONS} actions")
+        logger.info(f"[MasterAI] Cold-start: first {self.COLD_START_TRADES} trades use heuristics")
+
+    def wire_system_components(self, components: Dict[str, Any]):
+        """
+        Wire real system component references so the MasterAI can
+        directly enable/disable/control them.
+        """
+        self.system_components = components
+        logger.info(f"[MasterAI] Wired {len(components)} system components under direct control")
+
+    def is_enabled(self, enhancement_name: str) -> bool:
+        """Check if an enhancement is currently enabled by the MasterAI."""
+        if enhancement_name not in self.enhancements:
+            return False
+        return self.enhancements[enhancement_name].status == EnhancementStatus.ACTIVE
+
+    async def apply_decision(self, decision: SystemDecision):
+        """
+        Apply a SystemDecision to REAL system components, not just internal flags.
+        This makes the MasterAI actually control the system.
+        """
+        comp = self.system_components
+        
+        # Apply enhancement status to internal tracking
+        self._update_system_state(decision)
+        
+        # Physically enable/disable components based on decision
+        for enh in decision.enhancements_to_disable:
+            self._physically_disable_enhancement(enh, comp)
+        
+        for enh in decision.enhancements_to_enable:
+            self._physically_enable_enhancement(enh, comp)
+        
+        # Apply parameter adjustments
+        if decision.adjustments:
+            self._apply_parameter_adjustments(decision.adjustments, comp)
+
+    def _physically_enable_enhancement(self, enh: str, comp: Dict[str, Any]):
+        if enh == "circuit_breaker":
+            cb = comp.get("circuit_breakers")
+            if cb:
+                for cb_inst in cb.values():
+                    if hasattr(cb_inst, 'enable'):
+                        cb_inst.enable()
+        elif enh == "algo_execution":
+            ae = comp.get("algo_executor")
+            if ae and hasattr(ae, 'enable'):
+                ae.enable()
+        elif enh == "sentiment_alpha":
+            ba = comp.get("behavioral_ai")
+            if ba:
+                ba.enabled = True
+        elif enh == "regime_transition":
+            rs = comp.get("regime_system")
+            if rs:
+                rs.enabled = True
+        elif enh == "data_pipeline":
+            dm = comp.get("data_manager")
+            if dm:
+                dm.enabled = True
+        elif enh == "var_sizing":
+            risk = comp.get("risk")
+            if risk:
+                risk.var_enabled = True
+        elif enh == "ensemble_weighting":
+            ens = comp.get("ensemble")
+            if ens:
+                ens.enabled = True
+        elif enh == "ppo_integration":
+            rs = comp.get("regime_system")
+            if rs:
+                rs.enabled = True
+        elif enh == "event_avoidance":
+            ea = comp.get("event_avoidance")
+            if ea:
+                ea.enabled = True
+        elif enh == "walk_forward":
+            wf = comp.get("walk_forward")
+            if wf:
+                wf.enabled = True
+        elif enh == "stress_testing":
+            st = comp.get("stress_tester")
+            if st:
+                st.enabled = True
+        elif enh == "model_versioning":
+            mr = comp.get("model_registry")
+            if mr:
+                mr.enabled = True
+            
+    def _physically_disable_enhancement(self, enh: str, comp: Dict[str, Any]):
+        if enh == "circuit_breaker":
+            cb = comp.get("circuit_breakers")
+            if cb:
+                for cb_inst in cb.values():
+                    if hasattr(cb_inst, 'disable'):
+                        cb_inst.disable()
+        elif enh == "algo_execution":
+            ae = comp.get("algo_executor")
+            if ae and hasattr(ae, 'disable'):
+                ae.disable()
+        elif enh == "sentiment_alpha":
+            ba = comp.get("behavioral_ai")
+            if ba:
+                ba.enabled = False
+        elif enh == "regime_transition":
+            rs = comp.get("regime_system")
+            if rs:
+                rs.enabled = False
+        elif enh == "data_pipeline":
+            dm = comp.get("data_manager")
+            if dm:
+                dm.enabled = False
+        elif enh == "var_sizing":
+            risk = comp.get("risk")
+            if risk:
+                risk.var_enabled = False
+        elif enh == "ensemble_weighting":
+            ens = comp.get("ensemble")
+            if ens:
+                ens.enabled = False
+        elif enh == "ppo_integration":
+            rs = comp.get("regime_system")
+            if rs:
+                rs.enabled = False
+        elif enh == "event_avoidance":
+            ea = comp.get("event_avoidance")
+            if ea:
+                ea.enabled = False
+        elif enh == "walk_forward":
+            wf = comp.get("walk_forward")
+            if wf:
+                wf.enabled = False
+        elif enh == "stress_testing":
+            st = comp.get("stress_tester")
+            if st:
+                st.enabled = False
+        elif enh == "model_versioning":
+            mr = comp.get("model_registry")
+            if mr:
+                mr.enabled = False
+
+    def _apply_parameter_adjustments(self, adjustments: Dict[str, Any], comp: Dict[str, Any]):
+        risk = comp.get("risk")
+        if risk:
+            if "position_multiplier" in adjustments and hasattr(risk, 'kelly_fraction'):
+                risk.kelly_fraction = risk.kelly_fraction * adjustments["position_multiplier"]
+            if "max_positions" in adjustments and hasattr(risk, 'max_positions'):
+                risk.max_positions = adjustments["max_positions"]
+        if "confidence_threshold" in adjustments and hasattr(self, '_current_sentiment'):
+            self._current_sentiment = adjustments["confidence_threshold"]
 
     def _init_enhancements(self):
-        """Initialize all enhancement metrics."""
+        """Initialize all enhancement metrics. Safety-critical ones start ACTIVE."""
         for key, config in self.ENHANCEMENTS.items():
+            is_active = config["priority"] == 1 or key in self.SAFETY_CRITICAL
             self.enhancements[key] = EnhancementMetrics(
                 name=config["name"],
-                status=EnhancementStatus.ACTIVE if config["priority"] == 1 else EnhancementStatus.LEARNING,
+                status=EnhancementStatus.ACTIVE if is_active else EnhancementStatus.LEARNING,
             )
+        logger.info(f"[MasterAI] Safety-critical: {len(self.SAFETY_CRITICAL & set(self.ENHANCEMENTS))} active from startup")
+
+    # =====================================================================
+    # STATE FEATURE ENGINEERING
+    # =====================================================================
+
+    def _build_state_vector(self, bot_instance, market_data: Dict) -> np.ndarray:
+        """Build 16-dim state vector for the meta-learner."""
+        # 0. Avg enhancement health
+        health_scores = self._check_enhancement_health()
+        avg_health = float(np.mean(list(health_scores.values()))) if health_scores else 0.5
+
+        # 1. System performance
+        perf = self._calculate_system_performance()
+
+        # 2. Market volatility (normalized)
+        vol = self._assess_market_conditions(market_data)
+        vol_map = {"calm": 0.0, "normal": 0.5, "volatile": 1.0, "unknown": 0.5}
+        vol_encoded = vol_map.get(vol, 0.5)
+
+        # 3. Sharpe (clipped to [-2, 2], normalized to [0, 1])
+        sharpe_norm = float(np.clip((self.system_sharpe + 2.0) / 4.0, 0.0, 1.0))
+
+        # 4. Recent win rate
+        n = len(self.trade_history)
+        recent = self.trade_history[-50:] if n >= 50 else self.trade_history
+        wins = sum(1 for t in recent if t.get("pnl", 0) > 0)
+        win_rate = wins / max(len(recent), 1)
+
+        # 5. Recent PnL (normalized)
+        recent_pnl = sum(t.get("pnl", 0) for t in recent)
+        pnl_norm = float(np.tanh(recent_pnl / max(self.initial_balance, 1)))
+
+        # 6. Active enhancement ratio
+        active_count = sum(
+            1 for e in self.enhancements.values()
+            if e.status == EnhancementStatus.ACTIVE
+        )
+        active_ratio = active_count / max(len(self.enhancements), 1)
+
+        # 7. Experience level (total trades / 1000, capped)
+        exp_level = min(n / 1000.0, 1.0)
+
+        # 8-15. Top 8 enhancement confidence scores (sorted)
+        confs = sorted(
+            [e.confidence for e in self.enhancements.values()],
+            reverse=True,
+        )
+        confs_padded = (confs + [0.5] * 8)[:8]
+
+        state = np.array([
+            avg_health, perf, vol_encoded, sharpe_norm,
+            win_rate, pnl_norm, active_ratio, exp_level,
+            *confs_padded,
+        ], dtype=np.float32)
+        return state
+
+    # =====================================================================
+    # REWARD & TRAINING
+    # =====================================================================
+
+    def _compute_reward(self) -> float:
+        """
+        Compute reward for the last meta-action based on:
+        - PnL change since last decision
+        - Sharpe change
+        - Win rate change
+        - Drawdown penalty
+        """
+        if len(self.trade_history) < 2:
+            return 0.0
+
+        recent = self.trade_history[-50:]
+        pnl_now = sum(t.get("pnl", 0) for t in recent)
+        pnl_delta = pnl_now - self._pnl_at_last_decision
+
+        sharpe_now = self.system_sharpe
+        sharpe_delta = sharpe_now - self._sharpe_at_last_decision
+
+        wins = sum(1 for t in recent if t.get("pnl", 0) > 0)
+        wr_now = wins / max(len(recent), 1)
+        wr_delta = wr_now - self._winrate_at_last_decision
+
+        pnl_reward = float(np.tanh(pnl_delta / 1000.0))
+        sharpe_reward = float(np.clip(sharpe_delta * 0.5, -0.5, 0.5))
+        wr_reward = float(np.clip(wr_delta * 2.0, -0.5, 0.5))
+
+        drawdown = self._estimate_drawdown()
+        dd_penalty = -float(np.clip(drawdown * 2.0, -1.0, 0.0))
+
+        reward = pnl_reward * 0.5 + sharpe_reward * 0.2 + wr_reward * 0.2 + dd_penalty * 0.1
+        return float(np.clip(reward, -2.0, 2.0))
+
+    def _estimate_drawdown(self) -> float:
+        """Estimate current drawdown from trade history."""
+        if len(self.trade_history) < 5:
+            return 0.0
+        cumulative = 0.0
+        peak = 0.0
+        max_dd = 0.0
+        for t in self.trade_history[-100:]:
+            cumulative += t.get("pnl", 0)
+            if cumulative > peak:
+                peak = cumulative
+            dd = (peak - cumulative) / max(self.initial_balance, 1)
+            if dd > max_dd:
+                max_dd = dd
+        return min(max_dd, 1.0)
+
+    def _store_experience(self, state: np.ndarray, action: int, reward: float):
+        """Store a training example."""
+        self._experience_buffer.append((state.copy(), action, reward))
+        if len(self._experience_buffer) > self._buffer_maxlen:
+            self._experience_buffer.pop(0)
+
+    def _train_meta_learner(self):
+        """Train the meta-learner on the experience buffer."""
+        if len(self._experience_buffer) < 10:
+            return
+
+        self.meta_learner.train()
+        states = torch.FloatTensor(np.array([e[0] for e in self._experience_buffer]))
+        actions = torch.LongTensor([e[1] for e in self._experience_buffer])
+        rewards = torch.FloatTensor([e[2] for e in self._experience_buffer])
+
+        # Forward: predict Q for all actions
+        q_values = self.meta_learner(states)  # (N, 5)
+
+        # Gather Q for taken actions
+        q_taken = q_values.gather(1, actions.unsqueeze(1)).squeeze(1)
+
+        loss = self.meta_loss_fn(q_taken, rewards)
+
+        self.meta_optimizer.zero_grad()
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.meta_learner.parameters(), 1.0)
+        self.meta_optimizer.step()
+
+        self.training_step += 1
+        self.epsilon = max(self.EPSILON_MIN, self.epsilon * self.EPSILON_DECAY)
+
+        if self.training_step % 10 == 0:
+            logger.debug(f"[MasterAI] Meta-learner trained (step={self.training_step}, loss={loss.item():.4f}, epsilon={self.epsilon:.3f})")
+            self._save_meta_learner()
+
+    def _select_meta_action(self, state: np.ndarray) -> int:
+        """
+        Select meta-action using epsilon-greedy.
+        Cold-start: use heuristic fallback.
+        """
+        n_trades = len(self.trade_history)
+        if n_trades < self.COLD_START_TRADES:
+            return -1  # signal: use heuristic
+
+        # Epsilon-greedy exploration
+        if np.random.random() < self.epsilon:
+            action = np.random.randint(0, self.N_ACTIONS)
+            logger.info(f"[MasterAI] Exploring: random action {action}")
+            return action
+
+        q_values = self.meta_learner.predict_q(state)
+        action = int(np.argmax(q_values))
+        logger.debug(f"[MasterAI] Greedy: action {action}, Q={q_values}")
+        return action
+
+    def _heuristic_action(self, state: np.ndarray, perf: float, market_state: str,
+                          avg_health: float) -> SystemDecision:
+        """Fallback heuristic when meta-learner is in cold-start."""
+        decision = SystemDecision()
+        if avg_health < 0.3:
+            decision.action = "halt"
+            decision.reason = f"[HEURISTIC] System health critical: {avg_health:.1%}"
+            decision.confidence = 1.0 - avg_health
+            decision.enhancements_to_disable = [
+                e for e in self.ENHANCEMENTS.keys() if e != "circuit_breaker"
+            ]
+        elif perf < -0.05:
+            decision.action = "reconfigure"
+            decision.reason = f"[HEURISTIC] Poor performance: {perf:.2%}"
+            decision.confidence = 0.8
+            rec = self.get_market_recommendation({})
+            decision.enhancements_to_enable = rec["enhancements_to_trust"]
+            self._identify_underperformers(decision)
+            decision.adjustments = rec["parameters_to_adjust"]
+        elif market_state == "volatile":
+            decision.action = "reconfigure"
+            decision.reason = "[HEURISTIC] Volatile market"
+            decision.confidence = 0.7
+            decision.enhancements_to_disable = ["regime_transition", "sentiment_alpha", "algo_execution"]
+            decision.enhancements_to_enable = ["circuit_breaker", "var_sizing", "event_avoidance"]
+            decision.adjustments = {"position_multiplier": 0.5, "confidence_threshold": 0.8, "max_positions": 3}
+        else:
+            decision.action = "continue"
+            decision.reason = "[HEURISTIC] System optimal"
+            decision.confidence = avg_health
+            decision.enhancements_to_enable = [
+                e for e in self.ENHANCEMENTS if self.ENHANCEMENTS[e]["priority"] == 1
+            ]
+        return decision
+
+    def _meta_action_to_decision(self, action: int, market_state: str) -> SystemDecision:
+        """Convert a learned meta-action index into a SystemDecision."""
+        decision = SystemDecision()
+        decision.confidence = 0.85
+
+        if action == 0:  # CONTINUE
+            decision.action = "continue"
+            decision.reason = f"[LEARNED] Optimal config (action={action})"
+        elif action == 1:  # CONSERVATIVE
+            decision.action = "reconfigure"
+            decision.reason = f"[LEARNED] Conservative mode (action={action})"
+            decision.enhancements_to_disable = ["sentiment_alpha", "algo_execution", "regime_transition"]
+            decision.enhancements_to_enable = ["circuit_breaker", "var_sizing", "event_avoidance"]
+            decision.adjustments = {"position_multiplier": 0.5, "confidence_threshold": 0.75}
+        elif action == 2:  # AGGRESSIVE
+            decision.action = "reconfigure"
+            decision.reason = f"[LEARNED] Aggressive mode (action={action})"
+            decision.enhancements_to_enable = [
+                k for k, v in self.ENHANCEMENTS.items()
+            ]
+            decision.adjustments = {"position_multiplier": 1.2, "confidence_threshold": 0.6}
+        elif action == 3:  # REDUCED_RISK
+            decision.action = "reconfigure"
+            decision.reason = f"[LEARNED] Reduced risk (action={action})"
+            decision.enhancements_to_disable = ["algo_execution", "sentiment_alpha"]
+            decision.enhancements_to_enable = ["circuit_breaker", "var_sizing"]
+            decision.adjustments = {"position_multiplier": 0.3, "confidence_threshold": 0.85, "max_positions": 2}
+        elif action == 4:  # HALT
+            decision.action = "halt"
+            decision.reason = f"[LEARNED] Emergency halt (action={action})"
+            decision.enhancements_to_disable = list(self.ENHANCEMENTS.keys())
+            decision.confidence = 0.95
+
+        return decision
+
+    def _load_meta_learner(self):
+        """Load pre-trained meta-learner from disk."""
+        try:
+            path = Path(self.model_path)
+            if path.exists():
+                self.meta_learner.load(str(path))
+                logger.info(f"[MasterAI] Loaded pre-trained meta-learner from {self.model_path}")
+            else:
+                logger.info("[MasterAI] No pre-trained meta-learner found, starting fresh")
+        except Exception as e:
+            logger.warning(f"[MasterAI] Failed to load meta-learner: {e}")
+
+    def _save_meta_learner(self):
+        """Save meta-learner to disk."""
+        try:
+            path = Path(self.model_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self.meta_learner.save(str(path))
+        except Exception as e:
+            logger.warning(f"[MasterAI] Failed to save meta-learner: {e}")
+
+    def on_trade_result(self, trade: Dict):
+        """
+        Called by the bot after each trade closes.
+        Feeds the outcome back to the meta-learner for training.
+        Protected against re-entrant calls (recursion guard).
+        """
+        if getattr(self, '_processing_trade', False):
+            logger.debug("[MasterAI] Re-entrant on_trade_result call skipped (recursion guard)")
+            return
+        self._processing_trade = True
+        try:
+            self.record_trade(trade)
+            if self._last_state is not None and self._last_action is not None:
+                reward = self._compute_reward()
+                self._store_experience(self._last_state, self._last_action, reward)
+                self._train_meta_learner()
+        finally:
+            self._processing_trade = False
 
     async def evaluate_system_state(
         self,
@@ -198,87 +735,72 @@ class MasterAIOrchestrator:
         Main entry point: Evaluate overall system state and make decisions.
         This is the master AI's primary function.
         NOW FULLY CONTROLS ALL 18 ENHANCEMENTS.
+        Protected against re-entrant calls.
         """
-        decision = SystemDecision()
-        
-        # Check all enhancement health
-        health_scores = self._check_enhancement_health()
-        avg_health = np.mean(list(health_scores.values())) if health_scores else 0.0
-        
-        # Check system performance
-        performance_score = self._calculate_system_performance()
-        
-        # Update performance metrics for all enhancements
+        if getattr(self, '_evaluating', False):
+            logger.debug("[MasterAI] Re-entrant evaluate_system_state skipped")
+            return SystemDecision(action="continue", reason="re-entrant_guard")
+        self._evaluating = True
+        try:
+            return await self._evaluate_impl(bot_instance, market_data, account_info)
+        finally:
+            self._evaluating = False
+
+    async def _evaluate_impl(
+        self,
+        bot_instance,
+        market_data: Dict,
+        account_info: Dict,
+    ) -> SystemDecision:
+        """Actual evaluation logic (protected by re-entrancy guard)."""
+        # Update enhancement metrics from bot instance
         if bot_instance:
             self._update_all_enhancement_metrics(bot_instance)
         
-        # Check market conditions
+        # Compute state features
+        state = self._build_state_vector(bot_instance, market_data)
+        health_scores = self._check_enhancement_health()
+        avg_health = float(np.mean(list(health_scores.values()))) if health_scores else 0.5
+        perf = self._calculate_system_performance()
         market_state = self._assess_market_conditions(market_data)
         
-        # Master AI Decision Matrix (controls everything)
-        # Priority 1: System health
-        if avg_health < 0.3:
-            decision.action = "halt"
-            decision.reason = f"System health critical: {avg_health:.1%}"
-            decision.confidence = 1.0 - avg_health
-            # Disable ALL enhancements except circuit breaker
-            decision.enhancements_to_disable = [
-                e for e in self.ENHANCEMENTS.keys() if e != "circuit_breaker"
-            ]
-            
-        # Priority 2: Performance degradation
-        elif performance_score < -0.05:  # Losing money
-            decision.action = "reconfigure"
-            decision.reason = f"Poor performance: {performance_score:.2%}"
-            decision.confidence = 0.8
-            # Get Master AI's recommendation for improvements
-            recommendation = self.get_market_recommendation(market_data)
-            # Apply recommended configuration
-            decision.enhancements_to_enable = recommendation["enhancements_to_trust"]
-            # Disable underperforming enhancements
-            self._identify_underperformers(decision)
-            # Adjust parameters per Master AI
-            decision.adjustments = recommendation["parameters_to_adjust"]
-            
-        # Priority 3: Market state-based control
-        elif market_state == "volatile":
-            decision.action = "reconfigure"
-            decision.reason = f"Volatile market: adjusting enhancements"
-            decision.confidence = 0.7
-            # Disable enhancements that increase risk in volatility
-            decision.enhancements_to_disable = [
-                "regime_transition", "sentiment_alpha", "algo_execution"
-            ]
-            # Enable risk-focused enhancements
-            decision.enhancements_to_enable = [
-                "circuit_breaker", "var_sizing", "event_avoidance"
-            ]
-            decision.adjustments = {
-                "position_multiplier": 0.5,
-                "confidence_threshold": 0.8,
-                "max_positions": 3,
-            }
-            
-        # Priority 4: Optimal state - trust the system
+        # Select meta-action (learned or heuristic)
+        meta_action = self._select_meta_action(state)
+        
+        if meta_action == -1:
+            # Cold-start: use heuristic fallback
+            decision = self._heuristic_action(state, perf, market_state, avg_health)
+            logger.info(f"[MasterAI] Cold-start heuristic: {decision.action}")
         else:
-            decision.action = "continue"
-            decision.reason = "System optimal - all enhancements active"
-            decision.confidence = avg_health
-            # Ensure all high-priority enhancements are enabled
-            decision.enhancements_to_enable = [
-                e for e in self.ENHANCEMENTS.keys()
-                if self.ENHANCEMENTS[e]["priority"] == 1
-            ]
+            # Learned: convert meta-action to decision
+            decision = self._meta_action_to_decision(meta_action, market_state)
+            # Heuristic override: always halt on critically low health
+            if avg_health < 0.2:
+                decision.action = "halt"
+                decision.reason = f"[OVERRIDE] Health critical: {avg_health:.1%}"
+                decision.enhancements_to_disable = list(self.ENHANCEMENTS.keys())
+            logger.info(f"[MasterAI] Learned decision: action={meta_action} -> {decision.action}")
+        
+        # Store state and action for reward computation on next call
+        self._last_state = state.copy()
+        self._last_action = meta_action if meta_action != -1 else None
+        self._pnl_at_last_decision = sum(
+            t.get("pnl", 0) for t in self.trade_history[-50:]
+        )
+        self._sharpe_at_last_decision = self.system_sharpe
+        self._winrate_at_last_decision = (
+            sum(1 for t in self.trade_history[-50:] if t.get("pnl", 0) > 0)
+            / max(len(self.trade_history[-50:]), 1)
+        )
+        self._last_decision_time = time.time()
         
         # Record decision
         self.recent_decisions.append(decision)
         if len(self.recent_decisions) > 100:
             self.recent_decisions = self.recent_decisions[-100:]
         
-        # Update system state
         self._update_system_state(decision)
         
-        # Log Master AI's control actions
         if decision.enhancements_to_enable:
             logger.info(f"[MasterAI] Enabling: {decision.enhancements_to_enable}")
         if decision.enhancements_to_disable:

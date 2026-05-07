@@ -10,6 +10,7 @@ import os
 import signal
 import sys
 import time
+import traceback
 from typing import Optional, Dict, Any, List, Tuple
 from dataclasses import dataclass
 
@@ -26,6 +27,9 @@ _warnings.filterwarnings('ignore', category=UserWarning, module='keras')
 _warnings.filterwarnings('ignore', category=FutureWarning, module='tensorflow')
 _warnings.filterwarnings('ignore', message='.*tf.losses.*deprecated.*')
 _warnings.filterwarnings('ignore', category=DeprecationWarning, module='tensorflow')
+
+# Prevent recursion depth crashes from deep callback chains
+sys.setrecursionlimit(10000)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -145,6 +149,8 @@ class RTSForexBot:
         self.is_running = False
         self._last_snapshot_time = 0.0
         self._current_sentiment = 0.0
+        self._sentiment_snapshot = None
+        self._behavioral_snapshot = None
         self._regimes: Dict[str, str] = {}
         self._trade_decisions: Dict[str, dict] = {}
         self._toxic_flows: Dict[str, ToxicFlowSnapshot] = {}
@@ -178,9 +184,12 @@ class RTSForexBot:
         logger.info("[OK] Toxic Flow Detector (VPIN) initialized")
 
         # 2. Multi-Agent Regime Specialist System
-        state_dim = 55 * 30  # 55 features * 30 lookback
-        self.regime_system = RegimeSpecialistSystem(state_dim=state_dim, n_actions=5)
-        logger.info("[OK] Regime Specialist System initialized")
+        if not hasattr(self, 'regime_system') or self.regime_system is None:
+            state_dim = 55 * 30
+            self.regime_system = RegimeSpecialistSystem(state_dim=state_dim, n_actions=5)
+            logger.info("[OK] Regime Specialist System initialized")
+        else:
+            logger.info("[OK] Regime Specialist System already initialized (from _init_models)")
 
         # 3. Causal Feature Selection
         self.causal_selector = CausalFeatureSelector(max_lag=5, alpha=0.01)
@@ -201,12 +210,15 @@ class RTSForexBot:
         logger.info(f"[OK] Circuit Breakers initialized for {len(SYMBOLS)} symbols")
 
         # 6. Meta-Learning Agent
-        self.maml_agent = MAMLAgent(input_dim=55 * 30, inner_lr=0.01, meta_lr=0.001)
-        maml_path = "models/maml_agent.pth"
-        if os.path.exists(maml_path):
-            self.maml_agent.load(maml_path)
-            logger.info("MAML agent loaded from checkpoint")
-        logger.info("[OK] Meta-Learning Agent initialized")
+        if not hasattr(self, 'maml_agent') or self.maml_agent is None:
+            self.maml_agent = MAMLAgent(input_dim=55 * 30, inner_lr=0.01, meta_lr=0.001)
+            maml_path = "models/maml_agent.pth"
+            if os.path.exists(maml_path):
+                self.maml_agent.load(maml_path)
+                logger.info("MAML agent loaded from checkpoint")
+            logger.info("[OK] Meta-Learning Agent initialized")
+        else:
+            logger.info("[OK] Meta-Learning Agent already initialized (from _init_models)")
 
         # 7. Execution Algorithm Library
         self.algo_executor = AlgoExecutor(self.ctrader, self.data_manager, self.cost_model)
@@ -222,8 +234,11 @@ class RTSForexBot:
         logger.info("[OK] Event-Driven Architecture initialized")
 
         # 9. Model Registry & A/B Testing
-        self.model_registry = ModelRegistry(registry_path="models/registry")
-        logger.info("[OK] Model Registry initialized")
+        if not hasattr(self, 'model_registry') or self.model_registry is None:
+            self.model_registry = ModelRegistry(registry_path="models/registry")
+            logger.info("[OK] Model Registry initialized")
+        else:
+            logger.info("[OK] Model Registry already initialized (from _init_models)")
 
         # 10. Multi-Timeframe Attention Fusion
         tf_dims = {tf: 55 for tf in self.feature_pipeline.timeframes} if self.feature_pipeline else {"1h": 55}
@@ -271,6 +286,23 @@ class RTSForexBot:
             post_event_resume_minutes=30,
         )
         logger.info("[OK] AI-Backed Event Avoidance initialized")
+
+        # Wire all system components under Master AI direct control
+        self.master_ai.wire_system_components({
+            "risk": self.risk if hasattr(self, 'risk') else None,
+            "execution": self.execution if hasattr(self, 'execution') else None,
+            "data_manager": self.data_manager if hasattr(self, 'data_manager') else None,
+            "ensemble": self.ensemble if hasattr(self, 'ensemble') else None,
+            "regime_system": self.regime_system if hasattr(self, 'regime_system') else None,
+            "circuit_breakers": getattr(self, 'circuit_breakers', {}),
+            "algo_executor": getattr(self, 'algo_executor', None),
+            "behavioral_ai": getattr(self, 'behavioral_ai', None),
+            "event_avoidance": getattr(self, 'event_avoidance', None),
+            "walk_forward": getattr(self, 'walk_forward', None),
+            "stress_tester": getattr(self, 'stress_tester', None),
+            "model_registry": getattr(self, 'model_registry', None),
+        })
+        logger.info("[MASTER AI] All system components wired under direct control")
 
         logger.info("=" * 60)
         logger.info("  All 18 Enhancements + Master AI Active")
@@ -565,6 +597,17 @@ class RTSForexBot:
             reason=trade.reason,
             hold_time=hold_time,
         )
+        # Feed trade outcome to Master AI meta-learner
+        if hasattr(self, 'master_ai'):
+            self.master_ai.on_trade_result({
+                "symbol": trade.symbol,
+                "direction": trade.direction,
+                "pnl": trade.pnl,
+                "entry": trade.entry_price,
+                "exit": trade.exit_price,
+                "reason": trade.reason,
+                "hold_time": hold_time,
+            })
 
     def _init_validation(self):
         self.walk_forward = PurgedWalkForward(
@@ -693,6 +736,17 @@ class RTSForexBot:
         self.feature_pipeline.fit_all(self.data_manager.ohlcv)
         logger.info("Feature pipeline fitted on all symbols")
 
+        # Re-initialize PPO agents with actual feature dimension
+        # (estimates at init time may not match real feature transforms)
+        try:
+            actual_dim = self._get_actual_state_dim()
+            expected_dim = 55 * 30
+            if actual_dim != expected_dim:
+                logger.info(f"Re-initializing PPO agents: expected_dim={expected_dim}, actual_dim={actual_dim}")
+                self._reinit_regime_agents(actual_dim)
+        except Exception as e:
+            logger.warning(f"Could not verify PPO agent dimensions: {e}")
+
         # Fetch intelligence
         try:
             self.economic_calendar.fetch(days_forward=7)
@@ -760,22 +814,14 @@ class RTSForexBot:
                             market_data=market_data,
                             account_info=account_info,
                         )
-                        # Apply Master AI's decision
+                        # Apply Master AI's decision directly to real system components
+                        await self.master_ai.apply_decision(decision)
                         if decision.action == "halt":
                             logger.error(f"[MasterAI] HALTING: {decision.reason}")
                             await self._emergency_stop(decision.reason)
                             break
                         elif decision.action == "reconfigure":
                             logger.warning(f"[MasterAI] Reconfiguring: {decision.reason}")
-                            # Enable/disable enhancements per Master AI
-                            for enh in decision.enhancements_to_enable:
-                                if hasattr(self, 'master_ai') and enh in self.master_ai.enhancements:
-                                    self.master_ai.enhancements[enh].status = EnhancementStatus.ACTIVE
-                                    logger.info(f"[MasterAI] Enabled: {enh}")
-                            for enh in decision.enhancements_to_disable:
-                                if hasattr(self, 'master_ai') and enh in self.master_ai.enhancements:
-                                    self.master_ai.enhancements[enh].status = EnhancementStatus.DISABLED
-                                    logger.warning(f"[MasterAI] Disabled: {enh}")
                         last_master_ai_check = now
 
                 # Position reconciliation (Enhancement #6: Error Recovery)
@@ -784,7 +830,8 @@ class RTSForexBot:
                     last_position_reconciliation = now
 
                 # Master AI: Check event avoidance (Enhancement #18)
-                if hasattr(self, 'event_avoidance'):
+                if (hasattr(self, 'master_ai') and self._is_enhancement_enabled("event_avoidance")
+                        and hasattr(self, 'event_avoidance')):
                     avoidance_decision = await self.event_avoidance.check_events(
                         self.economic_calendar,
                         self.execution.get_open_positions(),
@@ -813,6 +860,7 @@ class RTSForexBot:
                     try:
                         snapshot = self.sentiment_analyzer.get_latest(force_refresh=True)
                         self._current_sentiment = snapshot.overall_score if hasattr(snapshot, 'overall_score') else float(snapshot)
+                        self._sentiment_snapshot = snapshot if hasattr(snapshot, 'overall_score') else None
                         last_sentiment_refresh = now
                     except Exception:
                         pass
@@ -830,7 +878,7 @@ class RTSForexBot:
                     last_summary_day = today
                     balance = self.risk.initial_balance + self.risk.daily_pnl
                     regime_summary = ", ".join(
-                        f"{s}:{r}" for s, r in sorted(self._regimes.items())[:7]
+                        f"{s}:{r}" for s, r in sorted(self._regimes.items())[:24]
                     )
                     self.notifier.daily_summary(
                         trades_today=self.risk.daily_trades,
@@ -922,7 +970,9 @@ class RTSForexBot:
                 break
             except Exception as e:
                 consecutive_errors += 1
+                tb = traceback.format_exc()
                 logger.error(f"Cycle error (attempt {consecutive_errors}/{max_consecutive_errors}): {e}")
+                logger.error(f"Traceback:\n{tb}")
 
                 # Circuit breaker: too many consecutive errors
                 if consecutive_errors >= max_consecutive_errors:
@@ -1022,75 +1072,48 @@ class RTSForexBot:
             logger.info(f"[OK] All {loaded} pairs loaded from Dukascopy cache")
 
     def _start_dashboard(self):
-        """Dashboard disabled for now - use log files for monitoring."""
+        """Start FastAPI dashboard server in background thread."""
         d = self.config.dashboard
-        logger.info(f"Dashboard disabled - monitor via logs at data/logs/moneybot.log")
-        # import threading
-        # import uvicorn
-        # d = self.config.dashboard
-        # self._dashboard_loop = None
-        # 
-        # def run_dashboard():
-        #     loop = asyncio.new_event_loop()
-        #     asyncio.set_event_loop(loop)
-        #     self._dashboard_loop = loop
-        #     uvicorn.run(app, host=d.host, port=d.port, log_level="error")
-        # 
-        # t = threading.Thread(target=run_dashboard, daemon=True)
-        # t.start()
-        # 
-        # import time
-        # for _ in range(50):
-        #     if self._dashboard_loop:
-        #         break
-        #     time.sleep(0.1)
-        # 
-        # if self._dashboard_loop:
-        #     logger.info(f"Dashboard: http://{d.host}:{d.port}")
-        # else:
-        #     logger.warning(f"Dashboard may have failed to start on {d.host}:{d.port}")
+        try:
+            from dashboard.smart_dashboard import app
+            import threading
+            import uvicorn
+            self._dashboard_loop = None
+
+            def run_dashboard():
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                self._dashboard_loop = loop
+                uvicorn.run(app, host=d.host, port=d.port, log_level="error")
+
+            t = threading.Thread(target=run_dashboard, daemon=True)
+            t.start()
+
+            import time
+            for _ in range(50):
+                if self._dashboard_loop:
+                    break
+                time.sleep(0.1)
+
+            if self._dashboard_loop:
+                logger.info(f"[OK] Dashboard: http://{d.host}:{d.port}")
+                logger.info(f"[OK] Mobile: http://<your-ip>:{d.port}")
+            else:
+                logger.warning(f"Dashboard may have failed to start on {d.host}:{d.port}")
+        except Exception as e:
+            logger.warning(f"Dashboard failed to start: {e}")
 
     # ================================================================
     # TRADING CYCLE -- iterates over all 7 pairs
     # ================================================================
 
     async def _trading_cycle(self):
-        # 0. Master AI Orchestrator Control (NEW - Controls ALL operations)
-        if hasattr(self, 'master_ai'):
-            market_data = self.data_manager.all_prices() if hasattr(self.data_manager, 'all_prices') else {}
-            account_info = await self.execution.get_account_info() if hasattr(self, 'execution') else {"balance": 100000}
-
-            # Master AI evaluates system state
-            decision = await self.master_ai.evaluate_system_state(
-                bot_instance=self,
-                market_data=market_data,
-                account_info=account_info,
-            )
-
-            # Master AI: Check if trading should be paused
-            if decision.action == "halt":
-                logger.error(f"[MasterAI] HALTING: {decision.reason}")
-                self.is_running = False
-                await self.execution.close_all_positions("Master AI halt")
-                return
-
-            if decision.action == "reconfigure":
-                logger.warning(f"[MasterAI] Reconfiguring: {decision.reason}")
-                # Apply Master AI's enhancement changes
-                for enh in decision.enhancements_to_enable:
-                    if enh in self.master_ai.enhancements:
-                        self.master_ai.enhancements[enh].status = EnhancementStatus.ACTIVE
-                for enh in decision.enhancements_to_disable:
-                    if enh in self.master_ai.enhancements:
-                        self.master_ai.enhancements[enh].status = EnhancementStatus.DISABLED
-
-            # Master AI: Get market recommendation
-            recommendation = self.master_ai.get_market_recommendation(market_data)
-            if recommendation["recommended_action"] == "REDUCE_SIZE":
-                # Adjust position sizing globally
-                if hasattr(self.risk, 'kelly_fraction'):
-                    self.risk.kelly_fraction = 0.25 * recommendation["parameters_to_adjust"].get("position_multiplier", 0.5)
-                logger.info(f"[MasterAI] Reducing size: {recommendation['reasoning']}")
+        # 0. Master AI: lightweight halt check only (full evaluation runs every 60s from main loop)
+        if hasattr(self, 'master_ai') and self.master_ai.system_state == SystemState.HALTED:
+            logger.error("[MasterAI] HALTED — stopping trading cycle")
+            self.is_running = False
+            await self.execution.close_all_positions("Master AI halt")
+            return
 
         # 1. Market Session & Liquidity Check (NOW controlled by Master AI)
         if MarketSession.is_weekend():
@@ -1124,22 +1147,25 @@ class RTSForexBot:
             logger.debug(f"Low liquidity: {liquidity_reason}")
 
         # 0.5 NEW: Circuit Breaker Check (Enhancement #5)
-        for sym in SYMBOLS:
-            tick = self.data_manager.latest_snapshot.get(sym)
-            if tick:
-                should_halt, reason, snapshot = self.circuit_breakers[sym].check_market_health(
-                    sym, {"bid": getattr(tick, 'bid', 0), "ask": getattr(tick, 'ask', 0),
-                           "price": getattr(tick, 'bid', 0), "volume": getattr(tick, 'volume', 0)}
-                )
-                if should_halt:
-                    await self.event_bus.emit(
-                        EventType.CIRCUIT_BREAKER,
-                        {"symbol": sym, "reason": reason, "snapshot": snapshot},
-                        source="circuit_breaker"
+        if self._is_enhancement_enabled("circuit_breaker"):
+            for sym in SYMBOLS:
+                tick = self.data_manager.latest_snapshot.get(sym)
+                if tick:
+                    should_halt, reason, snapshot = self.circuit_breakers[sym].check_market_health(
+                        sym, {"bid": getattr(tick, 'bid', 0), "ask": getattr(tick, 'ask', 0),
+                               "price": getattr(tick, 'bid', 0), "volume": getattr(tick, 'volume', 0)}
                     )
-                    if sym in self.circuit_breakers:
-                        logger.error(f"CIRCUIT BREAKER: {sym} trading halted: {reason}")
-                    continue
+                    if should_halt:
+                        await self.event_bus.emit(
+                            EventType.CIRCUIT_BREAKER,
+                            {"symbol": sym, "reason": reason, "snapshot": snapshot},
+                            source="circuit_breaker"
+                        )
+                        if sym in self.circuit_breakers:
+                            logger.error(f"CIRCUIT BREAKER: {sym} trading halted: {reason}")
+                        continue
+        else:
+            logger.debug("[MasterAI] Circuit breaker disabled by Master AI")
 
         # 1. Economic Calendar Gate (global)
         suppressed, event = self.economic_calendar.is_suppressed()
@@ -1153,13 +1179,19 @@ class RTSForexBot:
         # 2. Gather global intelligence (Enhanced with Behavioral AI #11)
         external_signals = self._gather_external_signals()
         
-        # NEW: Get behavioral sentiment snapshot
-        try:
-            behavioral_snap = self.behavioral_ai.analyze_social_media()
-            self._behavioral_sentiment = behavioral_snap.overall_score
-            logger.debug(f"Behavioral sentiment: {behavioral_snap.overall_score:.2f} (fear/greed={behavioral_snap.fear_greed_index:.0f})")
-        except Exception:
+        # NEW: Get behavioral sentiment snapshot (gated by Master AI)
+        if self._is_enhancement_enabled("sentiment_alpha"):
+            try:
+                behavioral_snap = self.behavioral_ai.analyze_social_media()
+                self._behavioral_sentiment = behavioral_snap.overall_score
+                self._behavioral_snapshot = behavioral_snap
+                logger.debug(f"Behavioral sentiment: {behavioral_snap.overall_score:.2f} (fear/greed={behavioral_snap.fear_greed_index:.0f})")
+            except Exception:
+                self._behavioral_sentiment = 0.0
+                self._behavioral_snapshot = None
+        else:
             self._behavioral_sentiment = 0.0
+            self._behavioral_snapshot = None
 
         # 3. Evaluate each symbol (Enhanced with Regime Specialists #2 & Attention #10)
         self._trade_decisions = {}
@@ -1175,25 +1207,27 @@ class RTSForexBot:
                 decision["spread_pips"] = spread_pips
                 decision["is_acceptable_spread"] = self.cost_model.get_spread_warning_level(sym, spread_pips) == "normal"
                 
-                # NEW: Toxic flow check (Enhancement #1)
-                toxic_snap = self.toxic_detector.update(
-                    {"price": self.data_manager.get_price(sym, "1h") or 1.12,
-                     "mid": self.data_manager.get_price(sym, "1h") or 1.12,
-                     "volume": 1}
-                )
-                decision["toxic_flow"] = toxic_snap.is_toxic
-                decision["toxic_vpin"] = toxic_snap.vpin
-                if toxic_snap.is_toxic:
-                    decision["approved"] = False
-                    decision["rejection_reason"] = f"toxic_flow_vpin={toxic_snap.vpin:.2f}"
-                    await self.event_bus.emit(
-                        EventType.TOXIC_FLOW,
-                        {"symbol": sym, "snapshot": toxic_snap},
-                        source="toxic_detector"
+                # NEW: Toxic flow check (Enhancement #1 — gated by Master AI)
+                if self._is_enhancement_enabled("data_pipeline"):
+                    toxic_snap = self.toxic_detector.update(
+                        {"price": self.data_manager.get_price(sym, "1h") or 1.12,
+                         "mid": self.data_manager.get_price(sym, "1h") or 1.12,
+                         "volume": 1}
                     )
+                    decision["toxic_flow"] = toxic_snap.is_toxic
+                    decision["toxic_vpin"] = toxic_snap.vpin
+                    if toxic_snap.is_toxic:
+                        decision["approved"] = False
+                        decision["rejection_reason"] = f"toxic_flow_vpin={toxic_snap.vpin:.2f}"
+                        await self.event_bus.emit(
+                            EventType.TOXIC_FLOW,
+                            {"symbol": sym, "snapshot": toxic_snap},
+                            source="toxic_detector"
+                        )
                 
-                # NEW: Smart money check (Enhancement #4)
-                if decision.get("approved") and sym in self.cot_data:
+                # NEW: Smart money check (Enhancement #4 — gated by Master AI)
+                if (decision.get("approved") and self._is_enhancement_enabled("data_pipeline")
+                        and sym in self._cot_data):
                     cot_snap = self.cot_analyzer.fetch_latest(sym)
                     should_block, reason = self.cot_analyzer.get_trading_signal(
                         sym, decision.get("direction", "BUY")
@@ -1220,15 +1254,16 @@ class RTSForexBot:
         # 6. Manage existing positions -- check SL/TP against current prices
         await self._manage_positions()
 
-        # 7. Check if retraining is needed for any pair
-        for sym in SYMBOLS:
-            if self.online_learner.should_retrain(sym, self.risk.total_trades):
-                def fetch_fn(p):
-                    df = self.data_manager.get_ohlcv(p, "1h")
-                    if df is not None and len(df) > 200:
-                        return df
-                    return None
-                self.online_learner.request_retrain(sym, fetch_fn, self.feature_pipeline)
+        # 7. Check if retraining is needed for any pair (gated by Master AI)
+        if self._is_enhancement_enabled("model_versioning"):
+            for sym in SYMBOLS:
+                if self.online_learner.should_retrain(sym, self.risk.total_trades):
+                    def fetch_fn(p):
+                        df = self.data_manager.get_ohlcv(p, "1h")
+                        if df is not None and len(df) > 200:
+                            return df
+                        return None
+                    self.online_learner.request_retrain(sym, fetch_fn, self.feature_pipeline)
 
         # 8. Update dashboard (Enhanced with new metrics)
         self._update_dashboard_enhanced(account_info, "trading")
@@ -1262,9 +1297,10 @@ class RTSForexBot:
         # Feature extraction (Enhanced with Causal Features #3 & Attention Fusion #10)
         tick_buffer = self.data_manager.get_tick_buffer(symbol, 1000)
         
-        # Use causal feature selection if available
+        # Use causal feature selection if enabled by Master AI
         features_df = None
-        if self.causal_selector and len(df_1h) > 50:
+        if (self._is_enhancement_enabled("feature_optimization") and self.causal_selector
+                and len(df_1h) > 50):
             try:
                 # Prepare target for causal analysis
                 if "close" in df_1h.columns and len(df_1h) > 10:
@@ -1286,8 +1322,8 @@ class RTSForexBot:
                 external_signals=external_signals,
             )
         else:
-            # Use attention fusion if available
-            if self.attention_fusion:
+            # Use attention fusion if enabled by Master AI
+            if self._is_enhancement_enabled("feature_optimization") and self.attention_fusion:
                 try:
                     tf_data = {}
                     for tf in self.feature_pipeline.timeframes:
@@ -1306,8 +1342,9 @@ class RTSForexBot:
             return None
 
         # Ensemble inference (Enhanced with Regime Specialist #2)
-        # Use regime specialist system instead of basic ensemble
-        if hasattr(self, 'regime_system') and self.regime_system:
+        # Use regime specialist system if enabled by Master AI
+        if (self._is_enhancement_enabled("ppo_integration") and self._is_enhancement_enabled("regime_transition")
+                and hasattr(self, 'regime_system') and self.regime_system):
             try:
                 state = features.flatten() if features.ndim > 1 else features
                 action, sl_raw, tp_raw, size_raw, info = self.regime_system.select_action(
@@ -1349,7 +1386,8 @@ class RTSForexBot:
             return None
 
         # Regime params (Enhanced with Regime Specialist #2)
-        if hasattr(self, 'regime_system') and self.regime_system:
+        if (self._is_enhancement_enabled("ppo_integration") and hasattr(self, 'regime_system')
+                and self.regime_system):
             regime_params = self.regime_system.get_regime_params(regime)
         else:
             regime_params = HMMRegimeDetector.get_regime_params_static(regime)
@@ -1448,8 +1486,9 @@ class RTSForexBot:
             sl_price = price + atr * regime_params.get("sl_atr", 1.5)
             tp_price = price - atr * regime_params.get("tp_atr", 3.0)
 
-        # NEW: Use Execution Algorithms for large orders (Enhancement #7)
-        if volume > 100000 and hasattr(self, 'algo_executor'):  # Large order
+        # NEW: Use Execution Algorithms for large orders (Enhancement #7 — gated by Master AI)
+        if (volume > 100000 and self._is_enhancement_enabled("algo_execution")
+                and hasattr(self, 'algo_executor')):
             logger.info(f"Using TWAP for large order: {volume:.0f} {symbol}")
             await self.algo_executor.twap_execution(
                 symbol=symbol,
@@ -1760,6 +1799,56 @@ class RTSForexBot:
     # HELPERS
     # ================================================================
 
+    def _is_enhancement_enabled(self, enh_name: str) -> bool:
+        """Check if an enhancement is enabled by the Master AI (safe to call anytime)."""
+        return hasattr(self, 'master_ai') and self.master_ai.is_enabled(enh_name)
+
+    def _get_actual_state_dim(self) -> int:
+        """Compute the actual flattened feature dimension from the fitted pipeline."""
+        external_signals = self._gather_external_signals()
+        for sym in SYMBOLS:
+            df_1h = self.data_manager.get_ohlcv(sym, "1h")
+            if df_1h is not None and len(df_1h) > self.feature_pipeline.lookback + 10:
+                tick_buffer = self.data_manager.get_tick_buffer(sym, 1000) if hasattr(self.data_manager, 'get_tick_buffer') else None
+                features = self.feature_pipeline.transform(
+                    self.data_manager.ohlcv, symbol=sym,
+                    tick_buffer=tick_buffer,
+                    external_signals=external_signals,
+                )
+                if features is not None:
+                    flattened = features.flatten()
+                    return len(flattened)
+        return 55 * 30  # fallback to original estimate
+
+    def _reinit_regime_agents(self, actual_dim: int):
+        """Re-create PPO regime agents with correct state dimension and save."""
+        from ai.regime_agents import RegimeSpecialistSystem, REGIME_CONFIGS
+        from ai.rl_agent import PPOAgent
+        import torch.optim as optim
+
+        # First save fresh agents with the correct dimension
+        for regime, config in REGIME_CONFIGS.items():
+            agent_path = f"models/{config.name}_agent.pth"
+            agent = PPOAgent(
+                state_dim=actual_dim, n_actions=5,
+                hidden_dims=config.hidden_dims, clip_range=config.clip_range,
+            )
+            agent.optimizer = optim.Adam(agent.actor.parameters(), lr=config.learning_rate)
+            agent.save(agent_path)
+            logger.info(f"Saved {regime} agent with dim={actual_dim}")
+
+        # Create new system (loads from the freshly saved files)
+        self.regime_system = RegimeSpecialistSystem(state_dim=actual_dim, n_actions=5)
+
+        # Wire into ensemble
+        self.ensemble.add_expert(
+            name="ppo_regime",
+            predict_fn=self._regime_prediction,
+            confidence_fn=self._regime_confidence,
+            regime="all",
+        )
+        logger.info(f"[OK] PPO Regime-Specialist System re-initialized: dim={actual_dim}")
+
     def _on_market_data(self, tick: PriceTick):
         self.data_manager.update_tick(tick.symbol, tick.bid, tick.ask, tick.volume)
         # Feed to order flow analyzer
@@ -1810,15 +1899,15 @@ class RTSForexBot:
 
         prices = self.data_manager.all_prices()
         regime_str = ", ".join(
-            f"{sym}:{reg}" for sym, reg in list(self._regimes.items())[:7]
+            f"{sym}:{reg}" for sym, reg in self._regimes.items()
         )
 
         update_state(
-            balance=account_info.get("balance", 100000),
-            equity=account_info.get("equity", 100000),
+            balance=account_info.get("balance", self.initial_balance),
+            equity=account_info.get("equity", self.initial_balance),
             margin=account_info.get("margin", 0),
-            free_margin=account_info.get("free_margin", 100000),
-            initial_balance=100000,
+            free_margin=account_info.get("free_margin", self.initial_balance),
+            initial_balance=self.initial_balance,
             total_trades=self.trade_count,
             win_rate=self.risk.get_win_rate(),
             mode=self.risk.mode,
@@ -1827,7 +1916,7 @@ class RTSForexBot:
             trade_history=self.execution.get_trade_history(20),
             market_data={
                 "prices": prices,
-                "spread": 0.0,
+                "spread": self._get_current_spread("EURUSD"),
             },
             ai_metrics={
                 "regime": regime_str,
@@ -1855,7 +1944,7 @@ class RTSForexBot:
 
         prices = self.data_manager.all_prices()
         regime_str = ", ".join(
-            f"{sym}:{reg}" for sym, reg in list(self._regimes.items())[:7]
+            f"{sym}:{reg}" for sym, reg in self._regimes.items()
         )
 
         # Gather enhanced metrics from all 11 modules
@@ -1880,12 +1969,38 @@ class RTSForexBot:
 
         # Behavioral sentiment
         behavioral_sentiment = getattr(self, '_behavioral_sentiment', 0.0)
+        behavioral_snap = getattr(self, '_behavioral_snapshot', None)
+        sentiment_snap = getattr(self, '_sentiment_snapshot', None)
+
+        sentiment_data = {}
+        if behavioral_snap:
+            sentiment_data = {
+                "overall_score": behavioral_snap.overall_score,
+                "confidence": behavioral_snap.confidence,
+                "twitter_score": behavioral_snap.twitter_score,
+                "reddit_score": behavioral_snap.reddit_score,
+                "news_score": behavioral_snap.news_score,
+                "satellite_score": behavioral_snap.satellite_score,
+                "onchain_score": behavioral_snap.onchain_score,
+                "fear_greed_index": behavioral_snap.fear_greed_index,
+                "social_volume": behavioral_snap.social_volume,
+                "viral_posts": behavioral_snap.viral_posts,
+                "trending_tickers": behavioral_snap.trending_tickers,
+                "source_counts": behavioral_snap.source_counts,
+                "recent_headlines": behavioral_snap.recent_headlines[:5],
+                "sentiment_momentum": behavioral_snap.sentiment_momentum,
+            }
+        if sentiment_snap:
+            sentiment_data["news_volatility"] = sentiment_snap.volatility_signal
+            sentiment_data["currency_scores"] = sentiment_snap.currency_scores
+            if not sentiment_data.get("recent_headlines"):
+                sentiment_data["recent_headlines"] = sentiment_snap.recent_headlines[:5]
 
         # COT data
         cot_metrics = {}
         for sym in SYMBOLS[:5]:
-            if sym in self.cot_data:
-                snap = self.cot_data[sym]
+            if sym in self._cot_data:
+                snap = self._cot_data[sym]
                 cot_metrics[sym] = {
                     "signal": snap.institutional_signal,
                     "positioning": snap.net_positioning,
@@ -1922,11 +2037,11 @@ class RTSForexBot:
                 pass
 
         update_state(
-            balance=account_info.get("balance", 100000),
-            equity=account_info.get("equity", 100000),
+            balance=account_info.get("balance", self.initial_balance),
+            equity=account_info.get("equity", self.initial_balance),
             margin=account_info.get("margin", 0),
-            free_margin=account_info.get("free_margin", 100000),
-            initial_balance=100000,
+            free_margin=account_info.get("free_margin", self.initial_balance),
+            initial_balance=self.initial_balance,
             total_trades=self.trade_count,
             win_rate=self.risk.get_win_rate(),
             mode=self.risk.mode,
@@ -1935,12 +2050,13 @@ class RTSForexBot:
             trade_history=self.execution.get_trade_history(20),
             market_data={
                 "prices": prices,
-                "spread": 0.0,
+                "spread": self._get_current_spread("EURUSD"),
             },
             ai_metrics={
                 "regime": regime_str,
                 "sentiment": round(self._current_sentiment, 3),
                 "behavioral_sentiment": round(behavioral_sentiment, 3),
+                "sentiment_data": sentiment_data,
                 "econ_suppressed": suppressed,
                 "econ_next_event": event.title if event else "",
                 "upcoming_events": len(upcoming),

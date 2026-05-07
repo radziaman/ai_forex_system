@@ -32,6 +32,7 @@ class ExecutionEngine:
         self.total_trades = 0
         self._position_counter = 0
         self.client.on_market_data = self._on_market_data
+        self._wire_order_update()
         
     @property
     def on_market_data(self):
@@ -46,8 +47,9 @@ class ExecutionEngine:
     def raw(self):
         """Access underlying client."""
         return self.client
+
+    def _wire_order_update(self):
         self.client.on_order_update = self._on_order_update
-        logger.info("ExecutionEngine initialized")
 
     async def open_position(
         self, symbol, direction, volume, sl, tp, reason="AI signal"

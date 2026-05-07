@@ -71,6 +71,7 @@ class DataManager:
         self.tick_buffer: Dict[str, List[Dict]] = {}
         self._cvd: Dict[str, Tuple[List[float], List[float], List[float]]] = {}
         self.latest_snapshot: Dict[str, Optional[object]] = {}
+        self._last_realtime_price: Dict[str, float] = {}  # Updated on every tick, used by dashboard
         self.market_depth: Dict[str, MarketDepthData] = {}
         self._feature_cache: Dict[str, Dict[str, np.ndarray]] = {}  # Enhancement #7: Feature cache
         self._data_sources: List[str] = ["dukascopy", "yfinance", "ctrader"]  # Multi-source
@@ -101,6 +102,7 @@ class DataManager:
 
         ts = ts or pd.Timestamp.now().timestamp()
         mid = (bid + ask) / 2.0
+        self._last_realtime_price[symbol] = mid
         self.tick_buffer[symbol].append({
             "ts": ts, "symbol": symbol, "bid": bid, "ask": ask, "mid": mid, "vol": volume,
         })
@@ -184,6 +186,7 @@ class DataManager:
     def update_tick(self, symbol: str, bid: float, ask: float, volume: float = 0, ts: Optional[float] = None):
         ts = ts or pd.Timestamp.now().timestamp()
         mid = (bid + ask) / 2.0
+        self._last_realtime_price[symbol] = mid
         self.tick_buffer[symbol].append({
             "ts": ts, "symbol": symbol, "bid": bid, "ask": ask, "mid": mid, "vol": volume,
         })
@@ -214,6 +217,7 @@ class DataManager:
 
     def update_price(self, symbol: str, price: float, timeframe: str = "1h"):
         """Update the latest price for a symbol in the given timeframe."""
+        self._last_realtime_price[symbol.upper()] = price
         symbol = symbol.upper()
         if symbol not in self.ohlcv:
             return
@@ -327,7 +331,27 @@ class DataManager:
         return self.ohlcv.get(symbol, {})
 
     def all_prices(self, tf: str = "1h") -> Dict[str, float]:
-        return {sym: self.get_price(sym, tf) for sym in SYMBOLS}
+        """Return latest prices: validated real-time tick > OHLCV close > BASE_PRICES.
+        Prices are sanity-checked against per-symbol expected ranges."""
+        prices = {}
+        for sym in SYMBOLS:
+            base = BASE_PRICES.get(sym, 1.12)
+            tick = self._last_realtime_price.get(sym)
+            ohlcv = self.get_price(sym, tf)
+            ref = ohlcv if ohlcv and ohlcv != base else base
+            if tick is not None and ref > 0:
+                ratio = tick / ref
+                if 0.8 <= ratio <= 1.2:
+                    prices[sym] = tick
+                else:
+                    prices[sym] = ref
+            elif ohlcv and ohlcv != base:
+                prices[sym] = ohlcv
+            elif self.tick_buffer.get(sym):
+                prices[sym] = self.tick_buffer[sym][-1].get("mid", base)
+            else:
+                prices[sym] = base
+        return prices
 
     # ------------------------------------------------------------------
     # Level II DOM (Depth of Market)
