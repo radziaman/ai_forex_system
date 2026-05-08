@@ -11,19 +11,19 @@
       "source": "wshobson/agents",
       "sourceType": "github",
       "skillPath": "plugins/developer-essentials/skills/code-review-excellence/SKILL.md",
-      "computedHash": "89b2a6a234f6368b12f0232e1d77bd5ed894115114edf67eb1f2976e153664c0"
+      "computedHash": "0f585a4ad2f6d8353069ca9051c6f0e8865abb9d3a6a268d423784c3c3852962"
     },
     "deep-learning": {
       "source": "mindrally/skills",
       "sourceType": "github",
       "skillPath": "deep-learning/SKILL.md",
-      "computedHash": "4590e73ca06533a8927553263a368d12a8e68d8d47da5078fb4073c5191c5bfb"
+      "computedHash": "14793a3ff3a5e6e800e1f63ceee1f4ec6796c7be8095f4528f2fbb6e3192d6e2"
     },
     "deep-learning-pytorch": {
       "source": "mindrally/skills",
       "sourceType": "github",
       "skillPath": "deep-learning-pytorch/SKILL.md",
-      "computedHash": "651c310b5e90e28938f5a953b6fce4fa0c0fffa350a2f0b92028aaa66adf04d1"
+      "computedHash": "c0bbc23461e1640cfcf1236ed453e3be5b5ff6e334b74c2bbb05b1b7de79691c"
     },
     "documentation-writer": {
       "source": "github/awesome-copilot",
@@ -35,7 +35,7 @@
       "source": "mhattingpete/claude-skills-marketplace",
       "sourceType": "github",
       "skillPath": "engineering-workflow-plugin/skills/ensemble-solving/SKILL.md",
-      "computedHash": "9aa5813c2e4ec2bc2320bb7fb33382dcdb840af18c3127554107aae52bb9abaf"
+      "computedHash": "17f2141c4ce1bd4be77080c9c00a7b501a2a620374a92dbed9b0a7473e28da9a"
     },
     "find-skills": {
       "source": "vercel-labs/skills",
@@ -47,25 +47,25 @@
       "source": "davila7/claude-code-templates",
       "sourceType": "github",
       "skillPath": "cli-tool/components/skills/ai-research/post-training-trl-fine-tuning/SKILL.md",
-      "computedHash": "fefda43859328e8384ffee62c8a2fd0837aa76c5e82dfe7d5686769cda8f651f"
+      "computedHash": "8c1ce396c8093720297d0224f571a344a9e57149cc0e2576b50330e3b122b548"
     },
     "machine-learning": {
       "source": "mindrally/skills",
       "sourceType": "github",
       "skillPath": "machine-learning/SKILL.md",
-      "computedHash": "5683168b790d3402074da2555c27bd17dc5fde513c69c4d3a1f8ad2210fbc565"
+      "computedHash": "b0fe8b1636aa174bda1bab2aa3e4d287adc1888d79011d938e1319aee8fc6763"
     },
     "python-performance-optimization": {
       "source": "wshobson/agents",
       "sourceType": "github",
       "skillPath": "plugins/python-development/skills/python-performance-optimization/SKILL.md",
-      "computedHash": "6390615b25e5922057b15eb900d69a90db563c5f2d6bd3182be707592fc25f09"
+      "computedHash": "1a7009e7e16fd08c201f4a527a44d4f0d9d1d892b15b92ab3492624b23be22b8"
     },
     "python-testing-patterns": {
       "source": "wshobson/agents",
       "sourceType": "github",
       "skillPath": "plugins/python-development/skills/python-testing-patterns/SKILL.md",
-      "computedHash": "a16a6d7d7e0a5154a5058fd9aacf8e675368b2a4a0dc5edf0fee775169c6abe0"
+      "computedHash": "69915bb276b6aec61fe5b283a933f96584f66d14b616ce2060d95757629c6866"
     },
     "pytorch": {
       "source": "mindrally/skills",
@@ -108,6 +108,66 @@
       "sourceType": "github",
       "skillPath": "skills/webapp-testing/SKILL.md",
       "computedHash": "3f14af7f5690695209c22fbf8c8d133769a86d64892602c09bb13f135e14e857"
+    },
+    "devops-cicd": {
+      "source": "miles990/claude-software-skills",
+      "sourceType": "github",
+      "skillPath": "software-engineering/devops-cicd/SKILL.md",
+      "computedHash": "d10f10822e5347bdb0e5c0c60a1d430cd32b41f3b17dc1b72c36f1fd6b8c7a3b"
+    },
+    "mlops-engineer": {
+      "source": "sickn33/antigravity-awesome-skills",
+      "sourceType": "github",
+      "skillPath": "skills/mlops-engineer/SKILL.md",
+      "computedHash": "ca95ff6b5b7436f6a87447e77367f60b3a5549edd0efdfb10af0919f70893777"
+    },
+    "secrets-management": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/cicd-automation/skills/secrets-management/SKILL.md",
+      "computedHash": "da14565446a404c0a3ca2cf4363f755dc06a351c4b588be453ea73680d5658d0"
+    },
+    "prometheus-monitoring": {
+      "source": "aj-geddes/useful-ai-prompts",
+      "sourceType": "github",
+      "skillPath": "skills/prometheus-monitoring/SKILL.md",
+      "computedHash": "6f4835898526578eea97916e06c39e25b53f154016de0435758db7ed1a100982"
+    },
+    "data-pipeline": {
+      "source": "claude-office-skills/skills",
+      "sourceType": "github",
+      "skillPath": "data-pipeline/SKILL.md",
+      "computedHash": "db9ba0f6adb6d303bd9e74385c4ea2cbc01ffadf1cfe3b1730097ba7a35e0855"
+    },
+    "docker-kubernetes": {
+      "source": "absolutelyskilled/absolutelyskilled",
+      "sourceType": "github",
+      "skillPath": "skills/docker-kubernetes/SKILL.md",
+      "computedHash": "73b872d277e075fa498bf6c7e86a6a6906ada3b6cdc2805f6ca5252da1f5d92f"
+    },
+    "fastapi-development": {
+      "source": "aj-geddes/useful-ai-prompts",
+      "sourceType": "github",
+      "skillPath": "skills/fastapi-development/SKILL.md",
+      "computedHash": "457d44d0eda360bd11a57051a1bf631d829b23f0171628226a85761e9692e2cf"
+    },
+    "backup-disaster-recovery": {
+      "source": "aj-geddes/useful-ai-prompts",
+      "sourceType": "github",
+      "skillPath": "skills/backup-disaster-recovery/SKILL.md",
+      "computedHash": "cbde72a89fad14777eede46421bbd0bee1f194c162670f5942a6bf00babbe332"
+    },
+    "model-optimization": {
+      "source": "omer-metin/skills-for-antigravity",
+      "sourceType": "github",
+      "skillPath": "skills/model-optimization/SKILL.md",
+      "computedHash": "c490bbd7dfb1af80c704fbc14b7b8b458de8dc0ae31c053c2e88381821884595"
+    },
+    "observability-setup": {
+      "source": "patricio0312rev/skills",
+      "sourceType": "github",
+      "skillPath": "performance/observability-setup/SKILL.md",
+      "computedHash": "cc54e09bc0275a77b064220ad94c0e6b2ead7322d4d5e4fb30f0d5a2b22ab723"
     }
   }
 }

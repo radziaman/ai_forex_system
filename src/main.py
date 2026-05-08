@@ -791,6 +791,8 @@ class RTSForexBot:
         max_consecutive_errors = 5
 
         download_queue = [s for s in SYMBOLS if self.data_manager.get_ohlcv(s, "1h") is None or len(self.data_manager.get_ohlcv(s, "1h")) < 50]
+        download_retries: Dict[str, int] = {}
+        max_download_retries = 3
         if download_queue:
             logger.info(f"Background downloader: {len(download_queue)} symbols queued")
 
@@ -959,6 +961,30 @@ class RTSForexBot:
                                 success = True
                     except Exception as e:
                         logger.warning(f"Background download failed for {sym}: {e}")
+                        # Try yfinance as fallback
+                        try:
+                            import yfinance as yf
+                            yf_sym = {"XAUUSD": "GC=F", "XAGUSD": "SI=F", "XTIUSD": "CL=F",
+                                      "XBRUSD": "BZ=F", "XNGUSD": "NG=F", "BTCUSD": "BTC-USD",
+                                      "ETHUSD": "ETH-USD"}.get(sym, f"{sym}=X")
+                            yf_data = yf.download(yf_sym, period="1mo", interval="1h", progress=False)
+                            if not yf_data.empty:
+                                df = yf_data.reset_index()
+                                df = df.rename(columns={"Open": "open", "High": "high", "Low": "low",
+                                                        "Close": "close", "Volume": "volume"})
+                                df["timestamp"] = pd.to_datetime(df["Date"]).astype(int) // 10**9
+                                self.data_manager.ohlcv[sym]["1h"] = df[["timestamp", "open", "high", "low", "close", "volume"]]
+                                logger.info(f"yFinance fallback loaded {sym}: {len(df)} bars")
+                                success = True
+                        except Exception as yf_err:
+                            logger.debug(f"yFinance fallback also failed for {sym}: {yf_err}")
+
+                        download_retries[sym] = download_retries.get(sym, 0) + 1
+                        if not success and download_retries[sym] >= max_download_retries:
+                            logger.warning(f"Giving up on {sym} after {max_download_retries} failures, moving to end of queue")
+                            download_queue.pop(0)
+                            download_queue.append(sym)
+                            download_retries[sym] = 0
 
                     if success:
                         download_queue.pop(0)
