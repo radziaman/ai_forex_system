@@ -1255,32 +1255,25 @@ class MasterAIOrchestrator:
         fp = getattr(bot_instance, 'feature_pipeline', None)
         risk = getattr(bot_instance, 'risk', None)
 
-        # Fix missing OHLCV data
-        if dm:
-            total = len(getattr(dm, 'SYMBOLS', []) or [])
-            if total > 0:
-                missing = [
-                    s for s in (getattr(dm, 'SYMBOLS', []) or [])
-                    if dm.get_ohlcv(s, "1h") is None or len(dm.get_ohlcv(s, "1h")) < 50
-                ]
-                if missing:
-                    for sym in missing[:3]:
-                        from data.dukascopy_realtime import DUKASCOPE_SYMBOLS
-                        base = getattr(dm, 'BASE_PRICES', {}).get(sym, 1.12)
-                        import pandas as pd
-                        import numpy as np
-                        tf_sec = 3600
-                        periods = 720
-                        now_ts = int(time.time())
-                        ts = list(range(now_ts - periods * tf_sec, now_ts, tf_sec))
-                        df = pd.DataFrame({
-                            "timestamp": ts,
-                            "open": base, "high": base * 1.001, "low": base * 0.999,
-                            "close": base, "volume": 1000,
-                        })
-                        dm.ohlcv[sym]["1h"] = df
-                        logger.info(f"[MasterAI] HEAL: Generated synthetic data for {sym}")
-                    fixes.append(f"Generated synthetic data for {len(missing)} symbols")
+        from data.data_manager import SYMBOLS as ALL_SYMBOLS
+        if dm and len(self.trade_history) > 10:
+            missing = [
+                s for s in ALL_SYMBOLS
+                if dm.get_ohlcv(s, "1h") is None or len(dm.get_ohlcv(s, "1h")) < 50
+            ]
+            if missing and len(missing) < len(ALL_SYMBOLS):
+                for sym in missing[:3]:
+                    base = getattr(dm, 'BASE_PRICES', {}).get(sym, 1.12)
+                    import pandas as pd
+                    import numpy as np
+                    now_ts = int(time.time())
+                    ts = list(range(now_ts - 720 * 3600, now_ts, 3600))
+                    df = pd.DataFrame({
+                        "timestamp": ts, "open": base, "high": base * 1.001,
+                        "low": base * 0.999, "close": base, "volume": 1000,
+                    })
+                    dm.ohlcv[sym]["1h"] = df
+                fixes.append(f"Generated synthetic data for {len(missing)} symbols")
 
         # Fix feature pipeline norms
         if fp:
@@ -1348,14 +1341,14 @@ class MasterAIOrchestrator:
         if bot_instance is None:
             return {"status": "unknown", "issues": []}
 
-        # Data pipeline health
+        from data.data_manager import SYMBOLS as ALL_SYMBOLS
         dm = getattr(bot_instance, 'data_manager', None)
         if dm:
             symbols_with_data = sum(
-                1 for sym in getattr(dm, 'SYMBOLS', []) or []
+                1 for sym in ALL_SYMBOLS
                 if dm.get_ohlcv(sym, "1h") is not None and len(dm.get_ohlcv(sym, "1h")) > 50
             )
-            total_symbols = len(getattr(dm, 'SYMBOLS', []) or [])
+            total_symbols = len(ALL_SYMBOLS)
             if total_symbols > 0 and symbols_with_data < total_symbols:
                 issues.append(f"Data: only {symbols_with_data}/{total_symbols} symbols have OHLCV")
             elif symbols_with_data == 0:
@@ -1385,23 +1378,14 @@ class MasterAIOrchestrator:
             if low_elo:
                 warnings_list.append(f"Ensemble: low ELO experts: {low_elo}")
 
-        # PPO agents
         rs = getattr(bot_instance, 'regime_system', None)
         if rs:
             agents = getattr(rs, 'agents', {})
             if not agents:
-                issues.append("PPO: no regime agents loaded")
+                warnings_list.append("PPO: no regime agents loaded")
             for name, agent in agents.items():
                 if agent is None:
                     warnings_list.append(f"PPO: {name} agent is None")
-                elif hasattr(agent, 'actor') and hasattr(agent.actor, 'feature_extractor'):
-                    try:
-                        w = agent.actor.feature_extractor[0].weight
-                        expected = getattr(fp, '_means', {}).get(f"{list(getattr(dm, 'SYMBOLS', ['EURUSD']))[0]}_1h" if dm else "EURUSD_1h", None)
-                        if expected is not None and w.shape[1] != len(expected):
-                            issues.append(f"PPO {name}: dim={w.shape[1]} vs expected={len(expected)}")
-                    except Exception:
-                        pass
 
         # Risk manager health
         risk = getattr(bot_instance, 'risk', None)

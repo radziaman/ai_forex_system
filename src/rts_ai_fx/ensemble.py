@@ -27,14 +27,8 @@ class EnsemblePrediction:
 
 
 class MoEEnsemble:
-    """
-    Mixture-of-Experts ensemble with HMM regime gating.
-    - Expert models are registered per regime
-    - Gating network (HMM posteriors) weights expert contributions
-    - Elo ratings track individual expert performance
-    - Sharpe-based dynamic weighting (Enhancement #9)
-    - MAML meta-learning integration (Enhancement #9)
-    """
+    """Mixture-of-Experts ensemble with HMM regime gating."""
+    enabled: bool = True
 
     def __init__(self):
         self.experts: List[Expert] = []
@@ -51,7 +45,7 @@ class MoEEnsemble:
         self.elo_ratings.setdefault(name, 1200.0)
 
     def predict(self, X: np.ndarray, regime: str = "ranging", regime_posteriors: Optional[np.ndarray] = None) -> EnsemblePrediction:
-        if not self.experts:
+        if not self.enabled or not self.experts:
             return EnsemblePrediction()
 
         # MAML meta-adaptation (Enhancement #9)

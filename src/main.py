@@ -159,6 +159,7 @@ class RTSForexBot:
         self._circuit_breakers: Dict[str, CircuitBreaker] = {}
         self._cot_data: Dict[str, COTSnapshot] = {}
         self._attn_fusion: Optional[AttentionFusionPipeline] = None
+        self._last_eval_count: int = 0
 
         logger.info("=" * 60)
         logger.info("  RTS AI Forex Trading System v4.0 (Multi-Pair)")
@@ -775,10 +776,15 @@ class RTSForexBot:
         except Exception as e:
             logger.debug(f"Alternative data fetch failed: {e}")
 
-        # Start Dukascopy real-time streaming
+        # Start Dukascopy real-time streaming (if available)
         await self._start_dukascopy_stream()
 
-        # Fallback: Also try cTrader streaming if available
+        # Start tick polling as fallback for live prices
+        if self.data_provider:
+            asyncio.create_task(self._poll_dukascopy_prices())
+            logger.info("Dukascopy tick polling started")
+        else:
+            logger.info("No data_provider — live PnL uses OHLCV closes until cTrader connects")
         if hasattr(self.execution, 'stream_prices'):
             try:
                 await self.execution.stream_prices(SYMBOLS)
@@ -1203,6 +1209,7 @@ class RTSForexBot:
                     continue
                 await self._execute_trade_enhanced(sym, decision, account_info)
 
+        self._last_eval_count = eval_count
         if eval_count == 0:
             logger.debug("No trade decisions this cycle")
         else:
@@ -1848,10 +1855,11 @@ class RTSForexBot:
             ai_metrics={
                 "regime": regime_str,
                 "sentiment": round(self._current_sentiment, 3),
+                "behavioral_sentiment": round(getattr(self, '_behavioral_sentiment', 0.0), 3),
                 "econ_suppressed": suppressed,
                 "econ_next_event": event.title if event else "",
                 "upcoming_events": len(upcoming),
-                "active_decisions": len(self._trade_decisions),
+                "active_decisions": getattr(self, '_last_eval_count', 0),
                 "var": self.risk.var(),
                 "cvar": self.risk.cvar(),
             },
@@ -1987,10 +1995,9 @@ class RTSForexBot:
                 "econ_suppressed": suppressed,
                 "econ_next_event": event.title if event else "",
                 "upcoming_events": len(upcoming),
-                "active_decisions": len(self._trade_decisions),
+                "active_decisions": getattr(self, '_last_eval_count', 0),
                 "var": self.risk.var(),
                 "cvar": self.risk.cvar(),
-                # Enhanced module metrics
                 "toxic_flow": toxic_metrics,
                 "circuit_breakers": circuit_metrics,
                 "cot_smart_money": cot_metrics,

@@ -92,6 +92,7 @@ class RegimeSpecialistSystem:
         self.state_dim = state_dim
         self.n_actions = n_actions
         self.agents: Dict[str, 'PPOAgent'] = {}
+        self.enabled: bool = True
         self.gating_network = RegimeGatingNetwork(state_dim)
         self._init_agents()
         self.regime_performance: Dict[str, Dict] = {
