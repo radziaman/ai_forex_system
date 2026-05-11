@@ -99,7 +99,7 @@ class TradingOrchestrator:
             return
         self.monitoring.on_signal(signal)
 
-        acc = self.execution_service.get_account_info()
+        acc = await self.execution_service.get_account_info()
         atr = self.data_pipeline.get_atr(symbol)
         open_positions = self.execution_service.get_open_positions()
         decision = self.risk_gatekeeper.evaluate(
@@ -172,7 +172,7 @@ class TradingOrchestrator:
 
                 if self.cycle_counter % 60 == 0:
                     pos = len(self.execution_service.get_open_positions())
-                    acc = self.execution_service.get_account_info()
+                    acc = await self.execution_service.get_account_info()
                     bal = acc.get("balance", 0)
                     eq = acc.get("equity", 0)
                     pnl = eq - bal

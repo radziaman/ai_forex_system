@@ -88,8 +88,11 @@ class ExecutionService(TradingService):
     def get_open_positions(self) -> List[Dict]:
         return self.engine.get_open_positions()
 
-    def get_account_info(self) -> Dict:
-        return self.engine.get_account_info()
+    async def get_account_info(self) -> Dict:
+        result = self.engine.get_account_info()
+        if asyncio.iscoroutine(result):
+            return await result
+        return result
 
     def get_trade_history(self, limit: int = 100) -> List[Dict]:
         return self.engine.get_trade_history(limit)
