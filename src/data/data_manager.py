@@ -170,7 +170,7 @@ class DataManager:
             logger.debug(f"{symbol}: price {bid}/{ask} >> base {base}, rejected")
             return False
         prev = self._last_realtime_price.get(symbol)
-        if prev and prev > 0:
+        if prev and prev > 0 and prev != base:
             change = abs(bid - prev) / prev
             if change > 0.05:
                 logger.debug(f"{symbol}: >5% tick move ({change:.2%}), rejected")
