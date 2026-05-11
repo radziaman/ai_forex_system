@@ -28,6 +28,7 @@ class DataPipeline(TradingService):
         self.event_bus = get_event_bus()
         self._features_dirty: Dict[str, bool] = {}
         self._last_bar_ts: Dict[str, float] = {}
+        self.tick_counter: int = 0
 
     async def start(self) -> None:
         self._running = True
@@ -39,6 +40,7 @@ class DataPipeline(TradingService):
     def ingest_tick(self, tick: PriceTick) -> None:
         if not self._running:
             return
+        self.tick_counter += 1
         sym = tick.symbol
         self.data_manager.update_tick(sym, tick.bid, tick.ask, tick.volume, tick.timestamp)
         df = self.data_manager.get_ohlcv(sym, "1m")
