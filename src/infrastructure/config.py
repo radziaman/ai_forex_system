@@ -92,6 +92,7 @@ class Config:
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     secrets: Secrets = field(default_factory=Secrets)
     config_path: str = "config.yaml"
+    raw: dict = field(default_factory=dict)
 
     @property
     def provider(self) -> str:
@@ -106,6 +107,7 @@ class Config:
             return
         with open(self.config_path) as f:
             raw = yaml.safe_load(f) or {}
+        self.raw = raw
         ai = raw.get("ai", {})
         for k, v in ai.items():
             if hasattr(self.ai, k) and v is not None:

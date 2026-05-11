@@ -416,6 +416,48 @@ class DataManager:
         bars = bars[["timestamp", "open", "high", "low", "close", "volume"]]
         return bars
 
+    async def load_from_ctrader(self, symbol: str, timeframe: str = "1h",
+                                 days: int = 365, client=None) -> bool:
+        """Load historical OHLCV from cTrader protobuf API."""
+        if client is None or not hasattr(client, 'fetch_historical_ohlcv'):
+            return False
+        try:
+            bars = await client.fetch_historical_ohlcv(symbol, timeframe, days_back=days)
+            if bars and len(bars) > 10:
+                df = pd.DataFrame(bars)
+                self.ohlcv[symbol][timeframe] = df
+                self._source_health["ctrader"]["last_ok"] = time.time()
+                self._source_health["ctrader"]["failures"] = 0
+                self.freshness[symbol].last_source = "ctrader"
+                self.freshness[symbol].bar_count[timeframe] = len(df)
+                logger.info(f"Loaded {symbol} from cTrader: {len(df)} bars")
+                return True
+        except Exception as e:
+            self._source_health["ctrader"]["failures"] += 1
+            logger.debug(f"cTrader failed for {symbol}: {e}")
+        return False
+
+    async def load_with_fallback(self, symbol: str, timeframe: str = "1h",
+                                  days: int = 365, ctrader_client=None) -> bool:
+        """Unified data loader: tries Dukascopy → yFinance → cTrader."""
+        # 1. Dukascopy BI5 cache
+        loaded = self.load_from_dukascopy_cache(
+            symbols=[symbol], timeframes=[timeframe], max_hours=days * 24
+        )
+        if loaded > 0 and len(self.ohlcv.get(symbol, {}).get(timeframe, [])) > 50:
+            return True
+
+        # 2. yFinance
+        if self.try_alternative_source(symbol, timeframe, days):
+            return True
+
+        # 3. cTrader protobuf
+        if await self.load_from_ctrader(symbol, timeframe, days, ctrader_client):
+            return True
+
+        logger.warning(f"No data source available for {symbol}")
+        return False
+
     def try_alternative_source(self, symbol: str, timeframe: str = "1h",
                                 days: int = 30) -> bool:
         try:
@@ -438,12 +480,17 @@ class DataManager:
                                interval=interval, progress=False)
             if data is not None and not data.empty:
                 df = data.reset_index()
-                cols = {c: c.lower() for c in df.columns}
-                df = df.rename(columns=cols)
-                if "date" in df.columns:
-                    df["timestamp"] = pd.to_datetime(df["date"]).astype(int) // 10 ** 9
-                elif "datetime" in df.columns:
-                    df["timestamp"] = pd.to_datetime(df["datetime"]).astype(int) // 10 ** 9
+                # Flatten MultiIndex columns (yfinance v1.1+ returns tuples)
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
+                # Find the date/time column (could be 'Date', 'Datetime', 'timestamp')
+                date_col = next((c for c in df.columns if c.lower() in ('date', 'datetime', 'timestamp')), None)
+                if date_col:
+                    df["timestamp"] = pd.to_datetime(df[date_col]).astype(int) // 10**9
+                elif df.columns[0].lower() in ('date', 'datetime'):
+                    df["timestamp"] = pd.to_datetime(df.iloc[:, 0]).astype(int) // 10**9
+                cols_lower = {c: c.lower() for c in df.columns if isinstance(c, str)}
+                df = df.rename(columns=cols_lower)
                 self.ohlcv[symbol][timeframe] = df[["timestamp", "open", "high",
                                                      "low", "close", "volume"]]
                 self._source_health["yfinance"]["last_ok"] = time.time()

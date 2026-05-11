@@ -35,18 +35,21 @@ class HMMRegimeDetector:
         returns = np.diff(prices) / prices[:-1]
         vol = df.get("atr_14", df["close"].rolling(14).std()).values
         vol_ratio = vol / np.mean(vol[-60:]) if len(vol) > 60 else np.ones_like(vol)
+        vol_ratio = np.clip(vol_ratio, 0.1, 5.0)
         features = np.column_stack([
             returns,
             vol_ratio[1:],
-            np.abs(returns),  # absolute returns (volatility proxy)
+            np.abs(returns),
         ])
-        features = np.nan_to_num(features, nan=0.0)
-        # Remove inf
-        features = np.clip(features, -10, 10)
+        features = np.nan_to_num(features, nan=0.0, posinf=5.0, neginf=-5.0)
+        features = np.clip(features, -5, 5)
+        means = np.mean(features, axis=0)
+        stds = np.std(features, axis=0) + 1e-8
+        features = (features - means) / stds
         return features
 
     def fit(self, df: pd.DataFrame):
-        """Fit HMM on historical data."""
+        """Fit HMM on historical data with robust initialization."""
         if not HMM_AVAILABLE:
             return
         features = self._extract_features(df)
@@ -55,11 +58,16 @@ class HMMRegimeDetector:
         self.model = hmm.GaussianHMM(
             n_components=self.n_regimes,
             covariance_type="diag",
-            n_iter=200,
+            n_iter=500,
             random_state=42,
-            tol=1e-4,
+            tol=1e-3,
+            params="stmc",
         )
         self.model.fit(features)
+        if np.any(np.isnan(self.model.startprob_)):
+            self.model.startprob_ = np.full(self.n_regimes, 1.0 / self.n_regimes)
+        if np.any(np.isnan(self.model.transmat_)):
+            self.model.transmat_ = np.full((self.n_regimes, self.n_regimes), 1.0 / self.n_regimes)
 
     def detect_regime(self, df: pd.DataFrame) -> str:
         """Detect current regime using Viterbi decoding."""

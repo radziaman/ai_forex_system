@@ -9,6 +9,7 @@ import time
 from typing import Optional, Dict, List
 from collections import deque
 from dataclasses import dataclass, field
+from datetime import datetime
 from loguru import logger
 
 try:
@@ -23,9 +24,24 @@ BOT_API = "https://api.telegram.org/bot{token}/sendMessage"
 @dataclass
 class Notification:
     message: str
-    level: str = "info"  # info, warning, error, success
+    level: str = "info"
     timestamp: float = field(default_factory=time.time)
     html: Optional[str] = None
+
+
+def _fmt_time(ts: float) -> str:
+    return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def _fmt_pnl(pnl: float) -> str:
+    if pnl >= 0:
+        return f"<code>+${pnl:.2f}</code>"
+    return f"<code>-${abs(pnl):.2f}</code>"
+
+
+def _fmt_pct(pct: float) -> str:
+    sign = "+" if pct >= 0 else ""
+    return f"<code>{sign}{pct:.2f}%</code>"
 
 
 class TelegramNotifier:
@@ -80,7 +96,7 @@ class TelegramNotifier:
         if elapsed < self._min_interval:
             time.sleep(self._min_interval - elapsed)
         last_error = None
-        for attempt in range(3):  # Retry up to 3 times
+        for attempt in range(3):
             try:
                 text = notif.html or notif.message
                 resp = requests.post(
@@ -93,17 +109,23 @@ class TelegramNotifier:
                     },
                     timeout=10,
                 )
-                self._last_send = time.time()
-                if resp.status_code != 200:
-                    logger.warning(f"Telegram API error (attempt {attempt+1}): {resp.status_code} {resp.text[:100]}")
-                    last_error = f"HTTP {resp.status_code}"
-                    time.sleep(1)
+                if resp.status_code == 200:
+                    self._last_send = time.time()
+                    return
+                if resp.status_code == 429:
+                    retry_after = resp.json().get("parameters", {}).get("retry_after", 5)
+                    logger.warning(f"Telegram rate-limited, waiting {retry_after}s")
+                    time.sleep(retry_after)
+                    self._min_interval = max(self._min_interval, 1.1)
+                    last_error = "rate_limited"
                     continue
-                return  # Success
+                logger.warning(f"Telegram API error (attempt {attempt+1}): {resp.status_code} {resp.text[:100]}")
+                last_error = f"HTTP {resp.status_code}"
+                time.sleep(2)
             except Exception as e:
                 last_error = str(e)
                 logger.warning(f"Telegram send failed (attempt {attempt+1}): {e}")
-                time.sleep(1)
+                time.sleep(2)
         if last_error:
             logger.error(f"Telegram send failed after 3 attempts: {last_error}")
 
@@ -112,69 +134,121 @@ class TelegramNotifier:
             return
         self._queue.append(Notification(message=message, level=level, html=html))
 
-    # Convenience methods
     def trade_opened(self, symbol: str, direction: str, volume: float, price: float,
                      regime: str, confidence: float, atr: float = 0.0):
-        emoji = "\U0001F7E2" if direction == "BUY" else "\U0001F534"
+        badge = "\U0001F7E2 BUY" if direction == "BUY" else "\U0001F534 SELL"
         html = (
-            f"{emoji} <b>TRADE OPENED</b>\n"
-            f"Pair: {symbol}\n"
-            f"Direction: {direction}\n"
-            f"Volume: {volume:.0f}\n"
-            f"Price: {price:.5f}\n"
-            f"Regime: {regime}\n"
-            f"Confidence: {confidence:.1%}\n"
-            f"ATR: {atr:.5f}"
+            f"<b>| TRADE OPENED |</b>\n"
+            f"{'─' * 30}\n"
+            f"Direction:  {badge}\n"
+            f"Symbol:     <code>{symbol}</code>\n"
+            f"Volume:     <code>{volume:.0f}</code>\n"
+            f"Price:      <code>{price:.5f}</code>\n"
+            f"Regime:     <code>{regime}</code>\n"
+            f"Confidence: <code>{confidence:.1%}</code>\n"
+            f"ATR:        <code>{atr:.5f}</code>\n"
+            f"{'─' * 30}"
         )
-        self.send(message=f"TRADE OPENED {direction} {symbol}", level="success", html=html)
+        self.send(message=f"OPEN {direction} {symbol}", level="success", html=html)
 
     def trade_closed(self, symbol: str, direction: str, entry: float, exit: float,
                      pnl: float, reason: str, hold_time: float = 0.0):
-        emoji = "\U0001F7E2" if pnl > 0 else "\U0001F534"
-        pnl_str = f"+${pnl:.2f}" if pnl >= 0 else f"-${abs(pnl):.2f}"
         pct = ((exit - entry) / entry) * (1 if direction == "BUY" else -1) * 100
         minutes = int(hold_time / 60)
+        badge = "\U0001F7E2" if pnl > 0 else "\U0001F534"
         html = (
-            f"{emoji} <b>TRADE CLOSED</b>\n"
-            f"Pair: {symbol}\n"
-            f"Direction: {direction}\n"
-            f"Entry: {entry:.5f} → Exit: {exit:.5f}\n"
-            f"PnL: {pnl_str} ({pct:+.2f}%)\n"
-            f"Reason: {reason}\n"
-            f"Held: {minutes}min"
+            f"<b>| TRADE CLOSED |</b>\n"
+            f"{'─' * 30}\n"
+            f"Symbol:  <code>{symbol}</code>\n"
+            f"Result:  {badge} {_fmt_pnl(pnl)} ({_fmt_pct(pct)})\n"
+            f"Entry:   <code>{entry:.5f}</code>\n"
+            f"Exit:    <code>{exit:.5f}</code>\n"
+            f"Reason:  <code>{reason}</code>\n"
+            f"Held:    <code>{minutes}m</code>\n"
+            f"{'─' * 30}"
         )
-        self.send(message=f"TRADE CLOSED {symbol} {pnl_str}", level="success" if pnl > 0 else "warning", html=html)
+        self.send(message=f"CLOSE {symbol} {_fmt_pnl(pnl)}", level="success" if pnl > 0 else "warning", html=html)
 
     def risk_warning(self, message: str, details: Optional[Dict] = None):
         detail_str = ""
         if details:
-            detail_str = "\n" + "\n".join(f"  {k}: {v}" for k, v in details.items())
+            detail_str = "\n" + "\n".join(
+                f"  <code>{k}: {v}</code>" for k, v in details.items()
+            )
         html = (
-            f"\u26A0\uFE0F <b>RISK WARNING</b>\n"
-            f"{message}{detail_str}"
+            f"<b>| RISK WARNING |</b>\n"
+            f"{'─' * 30}\n"
+            f"{message}{detail_str}\n"
+            f"{'─' * 30}"
         )
         self.send(message=f"RISK: {message}", level="warning", html=html)
 
     def daily_summary(self, trades_today: int, wins: int, losses: int, pnl: float,
                       balance: float, open_positions: int, regime_summary: str = ""):
         win_rate = wins / max(wins + losses, 1)
-        pnl_str = f"+${pnl:.2f}" if pnl >= 0 else f"-${abs(pnl):.2f}"
         html = (
-            f"\U0001F4CA <b>DAILY SUMMARY</b>\n"
-            f"Trades: {trades_today} | W/L: {wins}/{losses}\n"
-            f"Win Rate: {win_rate:.0%}\n"
-            f"PnL: {pnl_str}\n"
-            f"Balance: ${balance:,.0f}\n"
-            f"Open Positions: {open_positions}\n"
-            f"Regimes: {regime_summary}"
+            f"<b>| DAILY SUMMARY |</b>\n"
+            f"{'─' * 30}\n"
+            f"Date:    <code>{datetime.now().strftime('%Y-%m-%d')}</code>\n"
+            f"Trades:  <code>{trades_today}</code> | W/L: <code>{wins}/{losses}</code>\n"
+            f"WinRate: <code>{win_rate:.0%}</code>\n"
+            f"PnL:     {_fmt_pnl(pnl)}\n"
+            f"Balance: <code>${balance:,.0f}</code>\n"
+            f"Open:    <code>{open_positions}</code>\n"
+            f"Regimes: <code>{regime_summary}</code>\n"
+            f"{'─' * 30}"
         )
-        self.send(message=f"DAILY SUMMARY: {pnl_str}", level="info", html=html)
+        self.send(message=f"SUMMARY: {_fmt_pnl(pnl)}", level="info", html=html)
 
     def system_alert(self, message: str):
-        html = f"\U0001F6A8 <b>SYSTEM ALERT</b>\n{message}"
+        html = (
+            f"<b>| SYSTEM ALERT |</b>\n"
+            f"{'─' * 30}\n"
+            f"{message}\n"
+            f"Time: {_fmt_time(time.time())}\n"
+            f"{'─' * 30}"
+        )
         self.send(message=f"ALERT: {message}", level="error", html=html)
+
+    def heartbeat(self, cycle: int, positions: int, regimes: str):
+        html = (
+            f"<b>| HEARTBEAT |</b>\n"
+            f"{'─' * 30}\n"
+            f"Cycle:     <code>{cycle}</code>\n"
+            f"Positions: <code>{positions}</code>\n"
+            f"Regimes:   <code>{regimes}</code>\n"
+            f"Time:      {_fmt_time(time.time())}\n"
+            f"{'─' * 30}"
+        )
+        self.send(message=f"HEARTBEAT cycle={cycle}", level="info", html=html)
+
+    def data_loaded(self, symbol: str, bars: int, source: str):
+        html = (
+            f"<b>| DATA LOADED |</b>\n"
+            f"{'─' * 30}\n"
+            f"Symbol: <code>{symbol}</code>\n"
+            f"Bars:   <code>{bars}</code>\n"
+            f"Source: <code>{source}</code>\n"
+            f"{'─' * 30}"
+        )
+        self.send(message=f"DATA {symbol} {bars}b {source}", level="info", html=html)
 
     def shutdown(self):
         self._running = False
         if self._queue:
             time.sleep(1)
+
+    def trade_blocked(self, symbol: str, reason: str, details: Optional[Dict] = None):
+        detail_str = ""
+        if details:
+            detail_str = "\n" + "\n".join(
+                f"  <code>{k}: {v}</code>" for k, v in details.items()
+            )
+        html = (
+            f"<b>| TRADE BLOCKED |</b>\n"
+            f"{'─' * 30}\n"
+            f"Symbol: <code>{symbol}</code>\n"
+            f"Reason: <code>{reason}</code>{detail_str}\n"
+            f"{'─' * 30}"
+        )
+        self.send(message=f"BLOCKED {symbol}: {reason}", level="warning", html=html)

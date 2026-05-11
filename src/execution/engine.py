@@ -1,9 +1,11 @@
+import asyncio
 import time
 import json
 from loguru import logger
 from typing import Optional, Dict, List
 from dataclasses import dataclass, field
 from api.ctrader_client import TradeOrder
+from data.data_manager import BASE_PRICES
 
 
 @dataclass
@@ -23,7 +25,8 @@ class TradeRecord:
 
 
 class ExecutionEngine:
-    def __init__(self, ctrader_client, risk_manager, data_manager):
+    def __init__(self, ctrader_client, risk_manager, data_manager,
+                 initial_balance: float = 100000.0):
         self.client = ctrader_client
         self.risk = risk_manager
         self.data = data_manager
@@ -31,7 +34,10 @@ class ExecutionEngine:
         self.trade_history: List[TradeRecord] = []
         self.total_trades = 0
         self._position_counter = 0
+        self._balance = initial_balance
+        self._peak_balance = initial_balance
         self.client.on_market_data = self._on_market_data
+        self._close_lock = asyncio.Lock()
         self._wire_order_update()
         
     @property
@@ -50,6 +56,9 @@ class ExecutionEngine:
 
     def _wire_order_update(self):
         self.client.on_order_update = self._on_order_update
+
+    def _get_default_price(self, symbol: str) -> float:
+        return BASE_PRICES.get(symbol.upper(), 1.12)
 
     async def open_position(
         self, symbol, direction, volume, sl, tp, reason="AI signal"
@@ -101,14 +110,14 @@ class ExecutionEngine:
         return None
 
     def _simulate_open(self, symbol, direction, volume, sl, tp, reason):
-        price = 1.1200
+        price = self._get_default_price(symbol)
         if self.data is not None:
             try:
                 price = self.data.get_price(symbol, "1h")
             except Exception:
                 pass
         if price is None or price == 0:
-            price = 1.1200
+            price = self._get_default_price(symbol)
         self._position_counter += 1
         trade = TradeRecord(
             timestamp=time.time(),
@@ -161,6 +170,7 @@ class ExecutionEngine:
                 trade.status = "CLOSED"
                 self.trade_history.append(trade)
                 del self.open_positions[position_id]
+                self._balance += pnl
                 self.risk.record_trade(trade, exit_price, pnl)
                 logger.success(f"CLOSED: {trade.symbol} | PnL: ${pnl:.2f}")
                 return True
@@ -183,13 +193,15 @@ class ExecutionEngine:
         trade.status = "CLOSED"
         self.trade_history.append(trade)
         del self.open_positions[trade.position_id]
+        self._balance += pnl
         self.risk.record_trade(trade, exit_price, pnl)
         logger.info(f"[PAPER] CLOSED: {trade.symbol} | PnL: ${pnl:.2f}")
         return True
 
     async def close_all_positions(self, reason="AI close all"):
-        for pid in list(self.open_positions.keys()):
-            await self.close_position(pid, reason)
+        async with self._close_lock:
+            for pid in list(self.open_positions.keys()):
+                await self.close_position(pid, reason)
 
     def _calculate_pnl(self, trade, exit_price):
         if exit_price is None or exit_price == 0.0 or exit_price == trade.entry_price:
@@ -251,27 +263,35 @@ class ExecutionEngine:
             logger.error(f"Order rejected: {result.error}")
 
     async def get_account_info(self):
-        import asyncio
-        if hasattr(self.client, 'get_account_info') and callable(self.client.get_account_info):
-            if asyncio.iscoroutinefunction(self.client.get_account_info):
-                acc = await self.client.get_account_info()
-            else:
-                acc = self.client.get_account_info()
-        else:
-            acc = None
-        if acc:
-            return {
-                "balance": getattr(acc, 'balance', 100000),
-                "equity": getattr(acc, 'equity', 100000),
-                "margin": getattr(acc, 'margin', 0),
-                "free_margin": getattr(acc, 'free_margin', 100000),
-                "currency": getattr(acc, 'currency', 'USD'),
-            }
+        if self.risk and self.risk.mode == "LIVE":
+            if hasattr(self.client, 'get_account_info') and callable(self.client.get_account_info):
+                if asyncio.iscoroutinefunction(self.client.get_account_info):
+                    acc = await self.client.get_account_info()
+                else:
+                    acc = self.client.get_account_info()
+                if acc:
+                    return {
+                        "balance": getattr(acc, 'balance', self._balance),
+                        "equity": getattr(acc, 'equity', self._balance),
+                        "margin": getattr(acc, 'margin', 0),
+                        "free_margin": getattr(acc, 'free_margin', self._balance),
+                        "currency": getattr(acc, 'currency', 'USD'),
+                    }
+        margin = 0.0
+        unrealized = 0.0
+        for pid, trade in self.open_positions.items():
+            price = self._current_price(trade.symbol)
+            if price > 0:
+                unrealized += self._calculate_pnl(trade, price)
+        equity = self._balance + unrealized
+        if equity > self._peak_balance:
+            self._peak_balance = equity
+        free_margin = equity - margin if margin < equity else 0
         return {
-            "balance": 100000,
-            "equity": 100000,
-            "margin": 0,
-            "free_margin": 100000,
+            "balance": round(self._balance, 2),
+            "equity": round(equity, 2),
+            "margin": round(margin, 2),
+            "free_margin": round(free_margin, 2),
             "currency": "USD",
         }
 

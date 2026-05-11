@@ -21,7 +21,10 @@ try:
         ProtoOASubscribeDepthQuotesReq,
         ProtoOAUnsubscribeDepthQuotesReq,
         ProtoOADepthEvent,
+        ProtoOAGetTrendbarsReq,
+        ProtoOAGetTrendbarsRes,
     )
+    from ctrader_open_api.messages.OpenApiModelMessages_pb2 import ProtoOATrendbar
     _HAS_PROTOBUF = True
     print("cTrader Open API protobuf loaded successfully")
 except ImportError as e:
@@ -165,6 +168,8 @@ class CtraderClient:
         self._account_info: Optional[AccountInfo] = None
         self._last_market_depth: Dict[int, MarketDepth] = {}
         self._subscribed_depth: Dict[int, bool] = {}  # symbol_id -> subscribed
+
+        self._pending_responses: Dict[int, asyncio.Future] = {}
 
         self.on_market_data: Optional[Callable] = None
         self.on_account_update: Optional[Callable] = None
@@ -420,6 +425,100 @@ class CtraderClient:
     def is_connected(self) -> bool:
         return self._is_connected
 
+    async def _fetch_trendbar_batch(
+        self, symbol_id: int, period: int,
+        from_ms: int, to_ms: int, count: int = 500,
+    ) -> Optional[List]:
+        """Single trendbar request with future-based response."""
+        req = ProtoOAGetTrendbarsReq()
+        req.ctidTraderAccountId = self.account_id
+        req.symbolId = symbol_id
+        req.fromTimestamp = from_ms
+        req.toTimestamp = to_ms
+        req.period = period
+        req.count = count
+        if not await self._send_msg(2137, req):
+            return None
+        fut = asyncio.get_event_loop().create_future()
+        self._pending_responses[2138] = fut
+        response = await asyncio.wait_for(fut, timeout=60.0)
+        if response is None or response.payloadType != 2138:
+            return None
+        res = ProtoOAGetTrendbarsRes()
+        res.ParseFromString(response.payload)
+        return list(res.trendbar)
+
+    async def fetch_historical_ohlcv(
+        self, symbol: str, timeframe: str = "1h",
+        days_back: int = 365, max_bars: int = 10000,
+    ) -> Optional[List[Dict]]:
+        """Fetch historical OHLCV via cTrader protobuf, auto-batching for full range."""
+        if not _HAS_PROTOBUF or not self._authenticated or not self._is_connected:
+            return None
+
+        sym = symbol.upper()
+        symbol_id = SYMBOL_MAP.get(sym)
+        if symbol_id is None:
+            return None
+
+        tf_map = {"1m": 1, "5m": 5, "15m": 7, "30m": 8,
+                  "1h": 9, "4h": 10, "1d": 12, "1w": 13}
+        period = tf_map.get(timeframe)
+        if period is None:
+            return None
+
+        from datetime import datetime, timezone, timedelta
+        now = datetime.now(timezone.utc)
+
+        batch_window_hours = {9: 4000, 10: 16000, 12: 60000}.get(period, 4000)
+        window_secs = batch_window_hours * 3600
+        all_bars: Dict[int, Any] = {}
+        batch_to = int(now.timestamp() * 1000)
+        batch_from = int((now.timestamp() - window_secs) * 1000)
+        earliest = int((now - timedelta(days=days_back)).timestamp() * 1000)
+
+        while batch_to > earliest:
+            try:
+                bars = await self._fetch_trendbar_batch(
+                    symbol_id, period, max(batch_from, earliest), batch_to,
+                )
+                if not bars:
+                    break
+                for tb in bars:
+                    all_bars[tb.utcTimestampInMinutes] = tb
+                oldest_min = bars[0].utcTimestampInMinutes
+                batch_to = (oldest_min - 1) * 60 * 1000
+                batch_from = batch_to - int(window_secs * 1000)
+            except asyncio.TimeoutError:
+                logger.debug(f"cTrader batch timeout for {sym}, using {len(all_bars)} bars so far")
+                break
+            except Exception as e:
+                logger.debug(f"cTrader batch error for {sym}: {e}")
+                break
+
+        if not all_bars:
+            return None
+
+        # Sort and convert
+        sorted_minutes = sorted(all_bars.keys())
+        first_low = abs(all_bars[sorted_minutes[0]].low)
+        divisor = 100000.0 if first_low > 10000 else 100.0
+
+        result = []
+        for ts_min in sorted_minutes:
+            tb = all_bars[ts_min]
+            low_f = tb.low / divisor
+            result.append({
+                "timestamp": ts_min * 60,
+                "open": round(low_f + tb.deltaOpen / divisor, 5),
+                "high": round(low_f + tb.deltaHigh / divisor, 5),
+                "low": round(low_f, 5),
+                "close": round(low_f + tb.deltaClose / divisor, 5),
+                "volume": tb.volume,
+            })
+        logger.info(f"cTrader proto: {len(result)} {timeframe} bars for {sym} ({days_back}d)")
+        return result
+
     async def start_background_listener(self):
         """Start background listener for async events (Depth, Spot, etc.)."""
         asyncio.create_task(self._background_listener())
@@ -447,6 +546,11 @@ class CtraderClient:
 
     async def _handle_message(self, msg):
         """Dispatch incoming messages to appropriate handlers."""
+        # Check for pending request-response futures first
+        fut = self._pending_responses.pop(msg.payloadType, None)
+        if fut is not None and not fut.done():
+            fut.set_result(msg)
+            return
         if msg.payloadType == PROTO_OA_DEPTH_EVENT:
             await self._handle_depth_event(msg)
         elif msg.payloadType == 2103:  # ProtoOAAccountAuthRes

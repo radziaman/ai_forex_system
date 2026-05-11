@@ -118,8 +118,7 @@ class RegimeSpecialistSystem:
                         agent.load(agent_path)
                         logger.info(f"Loaded {regime} agent from {agent_path}")
                     except Exception as load_err:
-                        logger.warning(f"Could not load {regime} agent (dim mismatch?): {load_err}")
-                        logger.info(f"Using freshly initialized {regime} agent instead")
+                        logger.info(f"Fresh {regime} agent (saved dim differs from current {state_dim})")
                 self.agents[regime] = agent
             except Exception as e:
                 logger.warning(f"Failed to init {regime} agent: {e}")

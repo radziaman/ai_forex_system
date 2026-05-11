@@ -103,8 +103,12 @@ def create_execution_provider(secrets: Secrets) -> Tuple[ExecutionProvider, Opti
     
     elif provider == "fix":
         logger.info("Provider: FIX API (live trading)")
-        from api.fix_adapter import FIXExecutionAdapter
-        return FIXExecutionAdapter(secrets), None
+        try:
+            from api.fix_adapter import FIXExecutionAdapter
+            return FIXExecutionAdapter(secrets), None
+        except ImportError:
+            logger.warning("fix_adapter not available, falling back to cTrader Open API")
+            return CtraderExecutionAdapter(secrets), None
     
     else:
         logger.info("Provider: cTrader Open API (default)")

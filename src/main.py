@@ -70,7 +70,7 @@ from validation.integration_tests import SmartIntegrationTestPipeline
 from backtest.vectorized_backtester import VectorizedBacktester
 from notifications.telegram import TelegramNotifier
 from training.online_learner import OnlineLearner
-from dashboard.smart_dashboard import update_state, latest_state
+from dashboard.smart_dashboard import update_state, latest_state, broadcast_update
 from data.smart_sessions import SmartTradingSessions
 from data.event_avoidance import SmartEventAvoidance, EventAvoidanceDecision
 
@@ -147,6 +147,8 @@ class RTSForexBot:
 
         self.trade_count = 0
         self.is_running = False
+        self._symbol_locks: Dict[str, asyncio.Lock] = {}
+        self._trade_cycle_lock = asyncio.Lock()
         self._last_snapshot_time = 0.0
         self._current_sentiment = 0.0
         self._sentiment_snapshot = None
@@ -372,8 +374,10 @@ class RTSForexBot:
             trail_atr_mult=self.config.trading.sl_atr_multiplier,
         )
         self.cost_model = CostModel(commission_per_lot=self.config.trading.commission_per_lot)
-        # ExecutionEngine wraps the execution provider with SL/TP monitoring
-        self.execution = ExecutionEngine(self.ctrader, self.risk, self.data_manager)
+        self.execution = ExecutionEngine(
+            self.ctrader, self.risk, self.data_manager,
+            initial_balance=self.initial_balance,
+        )
         self.execution.cost_model = self.cost_model
 
     def _init_data(self):
@@ -751,18 +755,18 @@ class RTSForexBot:
         try:
             self.economic_calendar.fetch(days_forward=7)
             logger.info("Economic calendar loaded")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Economic calendar fetch failed: {e}")
         try:
             self.sentiment_analyzer.get_latest(force_refresh=True)
             logger.info("Sentiment analyzer warmed up")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Sentiment analyzer warmup failed: {e}")
         try:
             self.alternative_data.fetch_all()
             logger.info("Alternative data pre-fetched")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Alternative data fetch failed: {e}")
 
         # Start Dukascopy real-time streaming
         await self._start_dukascopy_stream()
@@ -790,21 +794,32 @@ class RTSForexBot:
         consecutive_errors = 0
         max_consecutive_errors = 5
 
-        download_queue = [s for s in SYMBOLS if self.data_manager.get_ohlcv(s, "1h") is None or len(self.data_manager.get_ohlcv(s, "1h")) < 50]
         download_retries: Dict[str, int] = {}
         max_download_retries = 3
+
+        def _needs_refresh(sym: str) -> bool:
+            df = self.data_manager.get_ohlcv(sym, "1h")
+            if df is None or len(df) < 50:
+                return True
+            last_ts = float(df["timestamp"].iloc[-1]) if "timestamp" in df.columns else 0
+            age_hours = (time.time() - last_ts) / 3600
+            return age_hours > 12
+
+        download_queue = [s for s in SYMBOLS if _needs_refresh(s)]
         if download_queue:
-            logger.info(f"Background downloader: {len(download_queue)} symbols queued")
+            logger.info(f"Background downloader: {len(download_queue)} symbols queued (stale or empty)")
 
         while self.is_running:
             try:
                 cycle_start = time.time()
                 now = time.time()
 
-                # Heartbeat every 60s so user knows bot is alive
                 if now - last_heartbeat > 60:
                     last_heartbeat = now
-                    logger.info(f"[heartbeat] cycle={cycle_counter} positions={len(self.execution.get_open_positions())} regime={list(self._regimes.values())[:3]}")
+                    pos = len(self.execution.get_open_positions())
+                    reg = ", ".join(list(self._regimes.values())[:3])
+                    logger.info(f"[heartbeat] cycle={cycle_counter} positions={pos} regime=[{reg}]")
+                    self.notifier.heartbeat(cycle_counter, pos, reg)
 
                 # Master AI Orchestrator: Check system state every 60s (NEW)
                 if now - last_master_ai_check > 60:
@@ -864,19 +879,20 @@ class RTSForexBot:
                         self._current_sentiment = snapshot.overall_score if hasattr(snapshot, 'overall_score') else float(snapshot)
                         self._sentiment_snapshot = snapshot if hasattr(snapshot, 'overall_score') else None
                         last_sentiment_refresh = now
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"Sentiment refresh failed: {e}")
                 if now - last_calendar_fetch > 3600:  # Every hour
                     try:
                         self.economic_calendar.fetch(days_forward=7)
                         self.alternative_data.fetch_all()
                         last_calendar_fetch = now
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"Calendar/alt-data fetch failed: {e}")
 
-                # Daily summary (send once per day)
+                # Daily summary + reset (send once per day)
                 today = pd.Timestamp.now().day
                 if today != last_summary_day:
+                    self.risk.reset_daily_stats(self.initial_balance)
                     last_summary_day = today
                     balance = self.risk.initial_balance + self.risk.daily_pnl
                     regime_summary = ", ".join(
@@ -892,105 +908,36 @@ class RTSForexBot:
                         regime_summary=regime_summary,
                     )
 
-                # Background data downloader -- download one missing symbol per cycle
+                # Background data downloader — one symbol per cycle via fallback chain
                 if download_queue and time.time() - last_data_download > 30:
                     sym = download_queue[0]
-                    logger.info(f"Background downloading {sym} from Dukascopy...")
                     last_data_download = time.time()
-                    success = False
-                    try:
-                        from data.dukascopy_realtime import DukascopyProvider, CACHE_DIR
-                        from datetime import datetime, timezone, timedelta
-
-                        # Check for cached data first
-                        cache_files = sorted(CACHE_DIR.glob(f"{sym}_*_*.bi5"))
-                        if cache_files:
-                            import lzma, struct, pandas as _pd
-
-                            ticks = []
-                            for cf in cache_files[-720:]:
-                                raw = cf.read_bytes()
-                                try: decompressed = lzma.decompress(raw)
-                                except: decompressed = raw
-                                parts = cf.stem.split("_")
-                                dt_str, hour_str = parts[-2], parts[-1]
-                                base_ts = datetime.strptime(dt_str, "%Y%m%d").timestamp() + int(hour_str) * 3600
-                                for i in range(0, len(decompressed), 20):
-                                    chunk = decompressed[i:i+20]
-                                    if len(chunk) < 20: break
-                                    ms = struct.unpack(">I", chunk[0:4])[0]
-                                    ask_raw = struct.unpack(">I", chunk[4:8])[0]
-                                    bid_raw = struct.unpack(">I", chunk[8:12])[0]
-                                    ticks.append((base_ts + ms/1000.0, bid_raw/100000.0, ask_raw/100000.0))
-                            if len(ticks) > 50:
-                                ticks.sort(key=lambda t: t[0])
-                                df = _pd.DataFrame(ticks, columns=["timestamp","bid","ask"])
-                                df["bar"] = (df["timestamp"] // 3600).astype(int)
-                                bars = df.groupby("bar").agg(open=("bid","first"),high=("bid","max"),
-                                    low=("bid","min"),close=("bid","last"),volume=("ask","count")).reset_index()
-                                bars["timestamp"] = bars["bar"] * 3600
-                                bars = bars.drop(columns=["bar"])
-                                self.data_manager.ohlcv[sym]["1h"] = bars
-                                if len(bars) > 200:
-                                    rd = HMMRegimeDetector(n_regimes=4, lookback=60)
-                                    rd.fit(bars)
-                                    self._regimes[sym] = rd.detect_regime(bars)
-                                self.feature_pipeline.fit_all(self.data_manager.ohlcv)
-                                logger.info(f"... Background loaded {sym}: {len(bars)} bars (cached)")
-                                success = True
-                        else:
-                            # Download from network (end=yesterday avoids current-day timeouts)
-                            provider = DukascopyProvider(cache=True)
-                            end = datetime.now(timezone.utc) - timedelta(days=1)
-                            start = end - timedelta(days=30)
-                            ohlcv = await provider.fetch_ohlcv(sym, "1h",
-                                start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
-                            await provider.close()
-                            if ohlcv and len(ohlcv) > 50:
-                                df = pd.DataFrame([{
-                                    "timestamp": o.timestamp, "open": o.open, "high": o.high,
-                                    "low": o.low, "close": o.close, "volume": o.volume,
-                                } for o in ohlcv])
-                                self.data_manager.ohlcv[sym]["1h"] = df
-                                if len(df) > 200:
-                                    rd = HMMRegimeDetector(n_regimes=4, lookback=60)
-                                    rd.fit(df)
-                                    self._regimes[sym] = rd.detect_regime(df)
-                                self.feature_pipeline.fit_all(self.data_manager.ohlcv)
-                                logger.info(f"... Background download complete for {sym}: {len(df)} bars")
-                                success = True
-                    except Exception as e:
-                        logger.warning(f"Background download failed for {sym}: {e}")
-                        # Try yfinance as fallback
-                        try:
-                            import yfinance as yf
-                            yf_sym = {"XAUUSD": "GC=F", "XAGUSD": "SI=F", "XTIUSD": "CL=F",
-                                      "XBRUSD": "BZ=F", "XNGUSD": "NG=F", "BTCUSD": "BTC-USD",
-                                      "ETHUSD": "ETH-USD"}.get(sym, f"{sym}=X")
-                            yf_data = yf.download(yf_sym, period="1mo", interval="1h", progress=False)
-                            if not yf_data.empty:
-                                df = yf_data.reset_index()
-                                df = df.rename(columns={"Open": "open", "High": "high", "Low": "low",
-                                                        "Close": "close", "Volume": "volume"})
-                                df["timestamp"] = pd.to_datetime(df["Date"]).astype(int) // 10**9
-                                self.data_manager.ohlcv[sym]["1h"] = df[["timestamp", "open", "high", "low", "close", "volume"]]
-                                logger.info(f"yFinance fallback loaded {sym}: {len(df)} bars")
-                                success = True
-                        except Exception as yf_err:
-                            logger.debug(f"yFinance fallback also failed for {sym}: {yf_err}")
-
+                    logger.info(f"Background downloading {sym}...")
+                    success = await self.data_manager.load_with_fallback(
+                        sym, "1h", days=60,
+                        ctrader_client=self.ctrader if hasattr(self, 'ctrader') else None,
+                    )
+                    if success:
+                        if len(self.data_manager.get_ohlcv(sym, "1h")) > 200:
+                            rd = HMMRegimeDetector(n_regimes=4, lookback=60)
+                            rd.fit(self.data_manager.get_ohlcv(sym, "1h"))
+                            self._regimes[sym] = rd.detect_regime(self.data_manager.get_ohlcv(sym, "1h"))
+                        self.feature_pipeline.fit_all(self.data_manager.ohlcv)
+                        download_queue.pop(0)
+                    else:
                         download_retries[sym] = download_retries.get(sym, 0) + 1
-                        if not success and download_retries[sym] >= max_download_retries:
-                            logger.warning(f"Giving up on {sym} after {max_download_retries} failures, moving to end of queue")
+                        if download_retries[sym] >= max_download_retries:
+                            logger.warning(f"Giving up on {sym} after {max_download_retries} failures")
                             download_queue.pop(0)
                             download_queue.append(sym)
                             download_retries[sym] = 0
-
-                    if success:
-                        download_queue.pop(0)
-                        self._send_alert(f"Data loaded for {sym}", level="info")
                     if not download_queue:
-                        logger.info("... Background downloader: all symbols complete")
+                        stale = [s for s in SYMBOLS if _needs_refresh(s)]
+                        if stale:
+                            download_queue.extend(stale)
+                            logger.info(f"Background refresh: {len(stale)} symbols need newer data")
+                        else:
+                            logger.debug("All symbols up to date")
 
             except asyncio.CancelledError:
                 break
@@ -1038,64 +985,24 @@ class RTSForexBot:
             logger.error(f"Emergency stop error: {e}")
 
     async def _load_historical_data(self):
+        logger.info("Loading historical data via fallback chain: Dukascopy → yFinance → cTrader...")
         loaded = 0
-        from pathlib import Path
-        from data.dukascopy_realtime import CACHE_DIR
-        import lzma, struct
-        from datetime import datetime
-
-        logger.info("Loading cached historical data from Dukascopy...")
-
         for sym in SYMBOLS:
             if self.data_manager.get_ohlcv(sym, "1h") is not None and len(self.data_manager.get_ohlcv(sym, "1h")) > 200:
                 loaded += 1
                 continue
-
-            cache_files = sorted(CACHE_DIR.glob(f"{sym}_*_*.bi5"))
-            if not cache_files:
-                logger.debug(f"No cached data for {sym}")
-                continue
-
-            ticks = []
-            for cf in cache_files[-168:]:
-                try:
-                    raw = cf.read_bytes()
-                    decompressed = lzma.decompress(raw)
-                except Exception:
-                    decompressed = raw
-                parts = cf.stem.split("_")
-                dt_str, hour_str = parts[-2], parts[-1]
-                base_ts = datetime.strptime(dt_str, "%Y%m%d").timestamp() + int(hour_str) * 3600
-                for i in range(0, len(decompressed), 20):
-                    chunk = decompressed[i:i+20]
-                    if len(chunk) < 20:
-                        break
-                    ms = struct.unpack(">I", chunk[0:4])[0]
-                    ask_raw = struct.unpack(">I", chunk[4:8])[0]
-                    bid_raw = struct.unpack(">I", chunk[8:12])[0]
-                    ticks.append((base_ts + ms/1000.0, bid_raw/100000.0, ask_raw/100000.0))
-
-            if len(ticks) < 10:
-                logger.debug(f"Too few cached ticks for {sym}")
-                continue
-
-            ticks.sort(key=lambda t: t[0])
-            df = pd.DataFrame(ticks, columns=["timestamp", "bid", "ask"])
-            df["bar"] = (df["timestamp"] // 3600).astype(int)
-            bars = df.groupby("bar").agg(
-                open=("bid", "first"), high=("bid", "max"), low=("bid", "min"),
-                close=("bid", "last"), volume=("ask", "count")
-            ).reset_index()
-            bars["timestamp"] = bars["bar"] * 3600
-            bars = bars.drop(columns=["bar"])
-            self.data_manager.ohlcv[sym]["1h"] = bars
-            loaded += 1
-            logger.info(f"Loaded {len(bars)} 1h bars for {sym} (cached)")
-
-        if loaded < len(SYMBOLS):
-            logger.warning(f"Only {loaded}/{len(SYMBOLS)} pairs in cache. Background downloader will fetch remaining.")
-        else:
-            logger.info(f"[OK] All {loaded} pairs loaded from Dukascopy cache")
+            success = await self.data_manager.load_with_fallback(
+                sym, "1h", days=120, ctrader_client=self.ctrader if hasattr(self, 'ctrader') else None,
+            )
+            if success:
+                loaded += 1
+                df = self.data_manager.get_ohlcv(sym, "1h")
+                n_bars = len(df) if df is not None else 0
+                src = self.data_manager.freshness.get(sym, type('', (), dict(last_source='?'))()).last_source if hasattr(self.data_manager, 'freshness') else '?'
+                logger.info(f"Data loaded for {sym}: {n_bars} bars ({src})")
+        if loaded > 0:
+            self.notifier.send(f"Data loaded for {loaded}/{len(SYMBOLS)} symbols", level="info")
+        logger.info(f"Historical data: {loaded}/{len(SYMBOLS)} symbols loaded")
 
     def _start_dashboard(self):
         """Start FastAPI dashboard server in background thread."""
@@ -1134,18 +1041,17 @@ class RTSForexBot:
     # ================================================================
 
     async def _trading_cycle(self):
-        # 0. Master AI: lightweight halt check only (full evaluation runs every 60s from main loop)
         if hasattr(self, 'master_ai') and self.master_ai.system_state == SystemState.HALTED:
             logger.error("[MasterAI] HALTED — stopping trading cycle")
             self.is_running = False
             await self.execution.close_all_positions("Master AI halt")
             return
 
-        # 1. Market Session & Liquidity Check (NOW controlled by Master AI)
-        if MarketSession.is_weekend():
-            logger.info("[MasterAI] Weekend -- market closed")
-            self._update_dashboard({"balance": 100000}, "CLOSED")
-            await asyncio.sleep(3600)  # Sleep 1 hour on weekends
+        if not MarketSession.is_market_open():
+            logger.info("[MasterAI] Market closed (outside 24/5 window)")
+            acc_info = await self.execution.get_account_info()
+            self._update_dashboard(acc_info, "CLOSED")
+            await asyncio.sleep(1800)
             return
 
         if not MarketSession.is_market_open():
@@ -1162,7 +1068,8 @@ class RTSForexBot:
 
         if should_pause:
             logger.info(f"[MasterAI] Trading paused: {pause_reason}")
-            self._update_dashboard({"balance": 100000}, "PAUSED")
+            acc_info = await self.execution.get_account_info()
+            self._update_dashboard(acc_info, "PAUSED")
             await self._manage_positions()
             return
 
@@ -1197,7 +1104,8 @@ class RTSForexBot:
         suppressed, event = self.economic_calendar.is_suppressed()
         if suppressed and event:
             logger.info(f"Trading suppressed: {event.title}")
-            self._update_dashboard({"balance": 100000}, "SUPPRESSED")
+            acc_info = await self.execution.get_account_info()
+            self._update_dashboard(acc_info, "SUPPRESSED")
             # Still manage existing positions
             await self._manage_positions()
             return
@@ -1212,7 +1120,8 @@ class RTSForexBot:
                 self._behavioral_sentiment = behavioral_snap.overall_score
                 self._behavioral_snapshot = behavioral_snap
                 logger.debug(f"Behavioral sentiment: {behavioral_snap.overall_score:.2f} (fear/greed={behavioral_snap.fear_greed_index:.0f})")
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Behavioral sentiment failed: {e}")
                 self._behavioral_sentiment = 0.0
                 self._behavioral_snapshot = None
         else:
@@ -1226,7 +1135,8 @@ class RTSForexBot:
             return
 
         for sym in SYMBOLS:
-            decision = await self._evaluate_symbol_enhanced(sym, account_info, external_signals)
+            async with self._get_symbol_lock(sym):
+                decision = await self._evaluate_symbol_enhanced(sym, account_info, external_signals)
             if decision:
                 # Add spread check
                 spread_pips = self._get_current_spread(sym)
@@ -1298,8 +1208,6 @@ class RTSForexBot:
         self, symbol: str, account_info: dict, external_signals: np.ndarray,
     ) -> Optional[dict]:
         """Enhanced symbol evaluation with all 11 modules."""
-        # Get OHLCV for this symbol
-        ohlcv = self.data_manager.get_ohlcv_dict(symbol)
         price = self.data_manager.get_price(symbol, "1h")
         atr = self.data_manager.get_atr(symbol, "1h", 14)
         df_1h = self.data_manager.get_ohlcv(symbol, "1h")
@@ -1337,8 +1245,8 @@ class RTSForexBot:
                             features_processed, target
                         )
                         features_df = causal_features
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Causal feature selection failed: {e}")
         
         # Transform features
         if features_df is None:
@@ -1359,7 +1267,8 @@ class RTSForexBot:
                             tf_data[tf] = processed.values[-30:]
                     fused, attn_info = self.attention_fusion.fuse(tf_data)
                     features = fused
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Attention fusion failed: {e}")
                     features = None
             else:
                 features = None
@@ -1480,9 +1389,9 @@ class RTSForexBot:
         if not approved:
             logger.info(f"{symbol} trade blocked: {reason}")
             self._send_alert(f"{symbol} blocked: {reason}", level="warning")
-            self.notifier.risk_warning(
-                f"Trade blocked for {symbol}",
-                details={"reason": reason, "balance": balance, "daily_pnl": daily_pnl},
+            self.notifier.trade_blocked(
+                symbol, reason,
+                details={"balance": balance, "daily_pnl": daily_pnl},
             )
             await self.event_bus.emit(
                 EventType.RISK_ALERT,
@@ -1581,8 +1490,6 @@ class RTSForexBot:
     async def _evaluate_symbol(
         self, symbol: str, account_info: dict, external_signals: np.ndarray,
     ) -> Optional[dict]:
-        # Get OHLCV for this symbol
-        ohlcv = self.data_manager.get_ohlcv_dict(symbol)
         price = self.data_manager.get_price(symbol, "1h")
         atr = self.data_manager.get_atr(symbol, "1h", 14)
         df_1h = self.data_manager.get_ohlcv(symbol, "1h")
@@ -1819,7 +1726,7 @@ class RTSForexBot:
                         pnl=pnl_usd, reason=reason, hold_time=time.time() - trade.timestamp,
                     )
             except Exception as e:
-                logger.debug(f"Position mgmt error for {getattr(trade,'symbol','?')}: {e}")
+                logger.warning(f"Position mgmt error for {getattr(trade,'symbol','?')}: {e}")
 
     # ================================================================
     # HELPERS
@@ -1847,24 +1754,45 @@ class RTSForexBot:
         return 55 * 30  # fallback to original estimate
 
     def _reinit_regime_agents(self, actual_dim: int):
-        """Re-create PPO regime agents with correct state dimension and save."""
+        """Re-create PPO regime agents with correct state dimension, preserving trained models."""
         from ai.regime_agents import RegimeSpecialistSystem, REGIME_CONFIGS
         from ai.rl_agent import PPOAgent
         import torch.optim as optim
+        import torch
+        import os
 
-        # First save fresh agents with the correct dimension
+        new_system = RegimeSpecialistSystem(state_dim=actual_dim, n_actions=5)
+
         for regime, config in REGIME_CONFIGS.items():
             agent_path = f"models/{config.name}_agent.pth"
-            agent = PPOAgent(
-                state_dim=actual_dim, n_actions=5,
-                hidden_dims=config.hidden_dims, clip_range=config.clip_range,
-            )
-            agent.optimizer = optim.Adam(agent.actor.parameters(), lr=config.learning_rate)
-            agent.save(agent_path)
-            logger.info(f"Saved {regime} agent with dim={actual_dim}")
+            agent = new_system.agents.get(regime)
+            if agent is None:
+                continue
+            saved_ok = False
+            if os.path.exists(agent_path):
+                try:
+                    agent.load(agent_path)
+                    # Verify dimension by checking first layer weight shape
+                    first_w = agent.actor.feature_extractor[0].weight
+                    if first_w.shape[1] == actual_dim:
+                        logger.info(f"Loaded existing {regime} agent (dim={actual_dim})")
+                        saved_ok = True
+                    else:
+                        logger.info(f"Fresh {regime} agent: saved dim {first_w.shape[1]} -> current {actual_dim}")
+                except Exception as e:
+                    logger.info(f"Cannot load {regime} agent: {e}")
+            if not saved_ok:
+                fresh = PPOAgent(
+                    state_dim=actual_dim, n_actions=5,
+                    hidden_dims=config.hidden_dims, clip_range=config.clip_range,
+                )
+                fresh.optimizer = optim.Adam(fresh.actor.parameters(), lr=config.learning_rate)
+                fresh.save(agent_path)
+                logger.info(f"Created and saved new {regime} agent (dim={actual_dim})")
+                # Copy fresh agent into the system
+                new_system.agents[regime] = fresh
 
-        # Create new system (loads from the freshly saved files)
-        self.regime_system = RegimeSpecialistSystem(state_dim=actual_dim, n_actions=5)
+        self.regime_system = new_system
 
         # Wire into ensemble
         self.ensemble.add_expert(
@@ -1959,8 +1887,8 @@ class RTSForexBot:
             dl = getattr(self, '_dashboard_loop', None)
             if dl:
                 asyncio.run_coroutine_threadsafe(broadcast_update(latest_state), dl)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Dashboard broadcast error: {e}")
 
     def _update_dashboard_enhanced(self, account_info: dict, regime: str = "trading"):
         """Enhanced dashboard update with all 11 new module metrics."""
@@ -2102,15 +2030,55 @@ class RTSForexBot:
             dl = getattr(self, '_dashboard_loop', None)
             if dl:
                 asyncio.run_coroutine_threadsafe(broadcast_update(latest_state), dl)
+        except Exception as e:
+            logger.debug(f"Dashboard broadcast error: {e}")
+
+    def _get_symbol_lock(self, symbol: str) -> asyncio.Lock:
+        if symbol not in self._symbol_locks:
+            self._symbol_locks[symbol] = asyncio.Lock()
+        return self._symbol_locks[symbol]
+
+    async def stop(self):
+        """Graceful shutdown with state persistence."""
+        logger.info("Shutting down bot gracefully...")
+        self.is_running = False
+
+        # Save state before shutdown
+        try:
+            if hasattr(self, 'position_persistence'):
+                self.position_persistence.save_all(self.execution, self.risk)
+                logger.info("Trading state saved before shutdown")
+        except Exception as e:
+            logger.warning(f"State save during shutdown failed: {e}")
+
+        # Close all positions
+        try:
+            await self.execution.close_all_positions("System shutdown")
+            logger.info("All positions closed")
+        except Exception as e:
+            logger.warning(f"Position closing during shutdown failed: {e}")
+
+        # Stop event bus
+        try:
+            if hasattr(self, 'event_bus') and self.event_bus:
+                await self.event_bus.stop()
+        except Exception as e:
+            logger.debug(f"Event bus stop error: {e}")
+
+        # Disconnect cTrader
+        try:
+            await self.ctrader.disconnect()
+            logger.info("cTrader disconnected")
+        except Exception as e:
+            logger.warning(f"cTrader disconnect error: {e}")
+
+        # Send notification
+        try:
+            self.notifier.send("System shutdown complete", level="info")
         except Exception:
             pass
 
-    async def stop(self):
-        logger.info("Stopping bot...")
-        self.is_running = False
-        await self.execution.close_all_positions("Shutdown")
-        await self.ctrader.disconnect()
-        logger.info("Bot stopped.")
+        logger.info("Bot stopped successfully.")
 
     # ================================================================
     # VALIDATION COMMANDS
@@ -2131,8 +2099,31 @@ class RTSForexBot:
 
     async def run_vectorized_backtest(self, prices: np.ndarray, features: np.ndarray, atr: np.ndarray = None):
         logger.info("Running vectorized backtest...")
+        
+        def ensemble_signal_fn(p, f):
+            """Generate trading signals from the ensemble model."""
+            signals = np.zeros(len(p))
+            if not hasattr(self, 'ensemble') or self.ensemble is None:
+                return signals
+            for i in range(30, len(p)):
+                if f is None or i >= len(f):
+                    continue
+                feat = f[i-30:i] if f.ndim == 2 else f[i]
+                if feat is None or (isinstance(feat, np.ndarray) and feat.size == 0):
+                    continue
+                regime = self._regimes.get("EURUSD", "ranging") if hasattr(self, '_regimes') else "ranging"
+                try:
+                    from rts_ai_fx.ensemble import EnsemblePrediction
+                    pred = self.ensemble.predict(feat[np.newaxis, ...] if feat.ndim == 1 else feat, regime=regime)
+                    should_trade, direction, _ = self.ensemble.should_trade(pred, p[i], min_confidence=0.65)
+                    if should_trade:
+                        signals[i] = 1.0 if direction == "BUY" else -1.0
+                except Exception:
+                    pass
+            return signals
+        
         results = self.vectorized_backtester.run_with_sensitivity(
-            prices, lambda p, f: np.zeros(len(p)), features, atr,
+            prices, ensemble_signal_fn, features, atr,
         )
         for key, r in results.items():
             logger.info(f"  {key}: {r.to_dict()}")
@@ -2160,6 +2151,7 @@ HMMRegimeDetector.get_regime_params_static = staticmethod(lambda regime: _REGIME
 
 def signal_handler(sig, frame):
     if "bot" in globals():
+        logger.info(f"Received signal {sig}, initiating shutdown...")
         loop = asyncio.get_event_loop()
         if loop.is_running():
             loop.call_soon_threadsafe(lambda: asyncio.ensure_future(bot.stop()))

@@ -28,7 +28,7 @@ from enum import Enum
 from loguru import logger
 from collections import defaultdict, deque
 from pathlib import Path
-from heapq import heappush, heappop
+
 
 import torch
 import torch.nn as nn
@@ -40,14 +40,15 @@ import torch.optim as optim
 # ---------------------------------------------------------------------------
 
 class PrioritizedReplayBuffer:
-    """Prioritized experience replay with importance-sampling weights."""
+    """Prioritized experience replay with importance-sampling weights.
+    Uses simple circular list (no heapq, sample never pops)."""
 
     def __init__(self, capacity: int = 2000, alpha: float = 0.6, beta_start: float = 0.4):
         self.capacity = capacity
         self.alpha = alpha
         self.beta = beta_start
         self.beta_increment = 0.001
-        self._buffer: List[Tuple[float, int, Any]] = []   # (priority, idx, experience)
+        self._buffer: List[Tuple[float, int, Any]] = []
         self._idx = 0
         self._max_priority = 1.0
 
@@ -56,7 +57,7 @@ class PrioritizedReplayBuffer:
         priority = self._max_priority
         exp = (state, action, reward, next_state, done)
         if len(self._buffer) < self.capacity:
-            heappush(self._buffer, (priority, self._idx, exp))
+            self._buffer.append((priority, self._idx, exp))
         else:
             self._buffer[self._idx % self.capacity] = (priority, self._idx, exp)
         self._idx += 1
@@ -296,6 +297,7 @@ class MasterAIOrchestrator:
         # Re-entrancy guards
         self._processing_trade: bool = False
         self._evaluating: bool = False
+        self._pending_trades: List[Dict] = []
 
         # ---- RL networks ----
         self.meta_learner = MetaLearnerV2(
@@ -525,24 +527,32 @@ class MasterAIOrchestrator:
         perf = self._calculate_system_performance()
         vol = self._assess_market_conditions(market_data)
         vol_map = {"calm": 0.0, "normal": 0.5, "volatile": 1.0, "unknown": 0.5}
-        sharpe_norm = float(np.clip((self.system_sharpe + 2.0) / 4.0, 0.0, 1.0))
         n = len(self.trade_history)
         recent = self.trade_history[-50:] if n >= 50 else self.trade_history
         wins = sum(1 for t in recent if t.get("pnl", 0) > 0)
         win_rate = wins / max(len(recent), 1)
         recent_pnl = sum(t.get("pnl", 0) for t in recent)
         pnl_norm = float(np.tanh(recent_pnl / max(self.initial_balance, 1)))
+        sharpe = 0.0
+        if n >= 5:
+            returns = [t.get("pnl", 0) / self.initial_balance for t in recent]
+            if len(returns) >= 2:
+                avg_r = float(np.mean(returns))
+                std_r = float(np.std(returns))
+                sharpe = (avg_r / std_r * math.sqrt(252)) if std_r > 0 else 0.0
+        self.system_sharpe = sharpe
+        sharpe_norm = float(np.clip((sharpe + 2.0) / 4.0, 0.0, 1.0))
         active_count = sum(
             1 for e in self.enhancements.values()
             if e.status == EnhancementStatus.ACTIVE
         )
         active_ratio = active_count / max(len(self.enhancements), 1)
         exp_level = min(n / 1000.0, 1.0)
-        confs = sorted(
-            [e.confidence for e in self.enhancements.values()],
-            reverse=True,
-        )
-        confs_padded = (confs + [0.5] * 8)[:8]
+        # Fixed-order confidence features: each slot always maps to the same enhancement
+        fixed_keys = sorted(self.ENHANCEMENTS.keys())
+        n_conf_slots = self.STATE_DIM - 8
+        confs_fixed = [self.enhancements[k].confidence for k in fixed_keys[:n_conf_slots]]
+        confs_padded = (confs_fixed + [0.5] * n_conf_slots)[:n_conf_slots]
         return np.array([
             avg_health, perf, vol_map.get(vol, 0.5), sharpe_norm,
             win_rate, pnl_norm, active_ratio, exp_level,
@@ -574,14 +584,14 @@ class MasterAIOrchestrator:
     def _estimate_drawdown(self) -> float:
         if len(self.trade_history) < 5:
             return 0.0
-        cumulative = 0.0
-        peak = 0.0
+        balance = self.initial_balance
+        peak_bal = balance
         max_dd = 0.0
         for t in self.trade_history[-100:]:
-            cumulative += t.get("pnl", 0)
-            if cumulative > peak:
-                peak = cumulative
-            dd = (peak - cumulative) / max(self.initial_balance, 1)
+            balance += t.get("pnl", 0)
+            if balance > peak_bal:
+                peak_bal = balance
+            dd = (peak_bal - balance) / max(peak_bal, 1)
             if dd > max_dd:
                 max_dd = dd
         return min(max_dd, 1.0)
@@ -846,14 +856,20 @@ class MasterAIOrchestrator:
 
     def on_trade_result(self, trade: Dict):
         if getattr(self, '_processing_trade', False):
+            self._pending_trades.append(trade)
             return
         self._processing_trade = True
         try:
-            self.record_trade(trade)
-            self._trades_since_save += 1
-            self._maybe_save()
+            self._process_trade(trade)
+            while self._pending_trades:
+                self._process_trade(self._pending_trades.pop(0))
         finally:
             self._processing_trade = False
+
+    def _process_trade(self, trade: Dict):
+        self.record_trade(trade)
+        self._trades_since_save += 1
+        self._maybe_save()
 
     def record_trade(self, trade: Dict):
         self.trade_history.append(trade)
@@ -940,7 +956,14 @@ class MasterAIOrchestrator:
                 if "scheduler_state_dict" in ckpt:
                     self.lr_scheduler.load_state_dict(ckpt["scheduler_state_dict"])
                 self.training_step = ckpt.get("training_step", 0)
-                self.epsilon = ckpt.get("epsilon", self.EPSILON_INIT)
+                loaded_epsilon = ckpt.get("epsilon", None)
+                if loaded_epsilon is not None:
+                    self.epsilon = loaded_epsilon
+                else:
+                    self.epsilon = max(
+                        self.EPSILON_MIN,
+                        self.EPSILON_INIT * (1.0 - self.training_step / max(self.EPSILON_DECAY_STEPS, 1)),
+                    )
                 self.system_sharpe = ckpt.get("system_sharpe", 0.0)
                 self.system_pnl = ckpt.get("system_pnl", 0.0)
                 self.best_sharpe = ckpt.get("best_sharpe", -10.0)
@@ -997,20 +1020,21 @@ class MasterAIOrchestrator:
             }
         return {"action": "no_change", "reason": "Current config optimal"}
 
+    def _normalized_pnl(self, key: str) -> float:
+        m = self.enhancements[key]
+        return m.pnl_contribution / max(m.trades_influenced, 1)
+
     def _generate_candidates(self, current_active: List[str]) -> List[List[str]]:
         candidates = []
         if current_active:
-            worst = min(
-                current_active,
-                key=lambda x: self.enhancements[x].pnl_contribution,
-            )
+            worst = min(current_active, key=self._normalized_pnl)
             candidates.append([e for e in current_active if e != worst])
         disabled = [
             k for k, v in self.enhancements.items()
             if v.status == EnhancementStatus.DISABLED and self.ENHANCEMENTS[k]["priority"] <= 2
         ]
         if disabled:
-            best_d = max(disabled, key=lambda x: self.enhancements[x].pnl_contribution)
+            best_d = max(disabled, key=self._normalized_pnl)
             candidates.append(current_active + [best_d])
         med = [k for k, v in self.ENHANCEMENTS.items() if v["priority"] == 2]
         for enh in med:
@@ -1111,9 +1135,9 @@ class MasterAIOrchestrator:
             return win_rate - 0.5
         avg_r = float(np.mean(returns))
         std_r = float(np.std(returns))
-        self.system_sharpe = (avg_r / std_r * math.sqrt(252)) if std_r > 0 else 0.0
+        sharpe = (avg_r / std_r * math.sqrt(252)) if std_r > 0 else 0.0
         recent_pnl = sum(returns[-10:]) if len(returns) >= 10 else sum(returns)
-        return (win_rate - 0.5) * 0.4 + self.system_sharpe * 0.1 + recent_pnl * 2.0
+        return (win_rate - 0.5) * 0.4 + sharpe * 0.1 + recent_pnl * 2.0
 
     def _assess_market_conditions(self, market_data: Dict) -> str:
         if not market_data:

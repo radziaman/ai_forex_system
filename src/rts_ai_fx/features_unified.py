@@ -6,6 +6,7 @@ order flow dynamics, and cross-asset features.
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional, Tuple, Callable
+from loguru import logger
 
 
 def _rsi(series: pd.Series, period: int = 14) -> pd.Series:
@@ -352,7 +353,15 @@ class FeaturePipeline:
             vals = processed[cols].values
             key = self._norm_key(symbol, tf)
             if key in self._means and key in self._stds:
-                vals = (vals - self._means[key]) / self._stds[key]
+                if vals.shape[1] == self._means[key].shape[0]:
+                    vals = (vals - self._means[key]) / self._stds[key]
+                else:
+                    new_mean = np.mean(vals, axis=0)
+                    new_std = np.std(vals, axis=0) + 1e-8
+                    vals = (vals - new_mean) / new_std
+                    self._means[key] = new_mean
+                    self._stds[key] = new_std
+                    logger.info(f"Refitted norms for {key}: {vals.shape[1]} features")
             window = vals[-self.lookback:]
             if len(window) < self.lookback:
                 return None

@@ -125,11 +125,11 @@ class MarketSession:
         Comprehensive check if trading should be paused.
         Returns (should_pause, reason).
         """
-        if MarketSession.is_weekend():
-            return True, "Weekend - market closed"
-
         if not MarketSession.is_market_open():
             return True, "Market closed (outside 24/5 window)"
+
+        if MarketSession.is_weekend():
+            return True, "Weekend - market closed"
 
         if MarketSession.is_low_liquidity_period():
             return True, "Low-liquidity period"
