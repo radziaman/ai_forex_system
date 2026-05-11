@@ -262,14 +262,20 @@ class TradingOrchestrator:
                     tick_rate = self.data_pipeline.tick_counter
                     self.data_pipeline.tick_counter = 0
                     # Show per-symbol data freshness (price + bar count + data source)
+                    from data.data_manager import BASE_PRICES
+                    live_count = 0
+                    total_count = 0
+                    for sym in SYMBOLS:
+                        live = self.data_pipeline.get_live_price(sym)
+                        if live != BASE_PRICES.get(sym, 0):
+                            live_count += 1
+                        total_count += 1
                     fresh_symbols = []
-                    for sym in ["EURUSD", "GBPUSD", "XAUUSD"]:
+                    for sym in ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD", "BTCUSD"]:
                         live = self.data_pipeline.get_live_price(sym)
                         df = self.data_pipeline.get_ohlcv(sym, "1h")
                         bars = len(df) if df is not None else 0
-                        from data.data_manager import BASE_PRICES
-                        default = BASE_PRICES.get(sym, 0)
-                        is_live = live != default
+                        is_live = live != BASE_PRICES.get(sym, 0)
                         tag = "LIVE" if is_live else "HIST"
                         fresh_symbols.append(f"{sym}={live:.5f}({bars}b,{tag})")
                     logger.info(f"[status] cycle={self.cycle_counter} "
