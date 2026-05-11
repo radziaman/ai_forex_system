@@ -25,10 +25,11 @@ class TradeRecord:
 
 class ExecutionEngine:
     def __init__(self, ctrader_client, risk_manager, data_manager,
-                 initial_balance: float = 100000.0):
+                 initial_balance: float = 100000.0, mode: str = "PAPER"):
         self.client = ctrader_client
         self.risk = risk_manager
         self.data = data_manager
+        self.mode = mode
         self.open_positions: Dict[int, TradeRecord] = {}
         self.trade_history: List[TradeRecord] = []
         self.total_trades = 0
@@ -218,20 +219,20 @@ class ExecutionEngine:
             logger.error(f"Order rejected: {result.error}")
 
     async def get_account_info(self):
-        if self.risk and self.risk.mode == "LIVE":
-            if hasattr(self.client, 'get_account_info') and callable(self.client.get_account_info):
-                if asyncio.iscoroutinefunction(self.client.get_account_info):
-                    acc = await self.client.get_account_info()
-                else:
-                    acc = self.client.get_account_info()
-                if acc:
-                    return {
-                        "balance": getattr(acc, 'balance', self._balance),
-                        "equity": getattr(acc, 'equity', self._balance),
-                        "margin": getattr(acc, 'margin', 0),
-                        "free_margin": getattr(acc, 'free_margin', self._balance),
-                        "currency": getattr(acc, 'currency', 'USD'),
-                    }
+        if self.mode == "LIVE" and self.client is not None:
+            try:
+                if hasattr(self.client, 'get_account_info') and callable(self.client.get_account_info):
+                    acc = await self.client.get_account_info() if asyncio.iscoroutinefunction(self.client.get_account_info) else self.client.get_account_info()
+                    if acc:
+                        return {
+                            "balance": getattr(acc, 'balance', self._balance),
+                            "equity": getattr(acc, 'equity', self._balance),
+                            "margin": getattr(acc, 'margin', 0),
+                            "free_margin": getattr(acc, 'free_margin', self._balance),
+                            "currency": getattr(acc, 'currency', 'USD'),
+                        }
+            except Exception as e:
+                logger.warning(f"Broker get_account_info failed: {e}")
         unrealized = 0.0
         for trade in self.open_positions.values():
             price = self._live_price(trade.symbol)

@@ -167,7 +167,7 @@ class DataManager:
             return False
         base = BASE_PRICES.get(symbol, 1.12)
         if bid > base * 10 or ask > base * 10:
-            logger.warning(f"{symbol}: price {bid}/{ask} >> base {base}, rejected")
+            logger.debug(f"{symbol}: price {bid}/{ask} >> base {base}, rejected")
             return False
         prev = self._last_realtime_price.get(symbol)
         if prev and prev > 0:

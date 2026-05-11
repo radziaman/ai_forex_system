@@ -11,6 +11,7 @@ from services import TradeDecision, ExecutionResult
 from execution.engine import ExecutionEngine
 from api.provider_factory import create_execution_provider
 from api.base import PriceTick
+from data.data_manager import SYMBOLS
 
 
 class ExecutionService(TradingService):
@@ -30,16 +31,36 @@ class ExecutionService(TradingService):
 
     async def start(self) -> None:
         self.ctrader, self.data_provider = create_execution_provider(self.secrets)
+
+        # Determine mode: live broker or paper simulation
+        engine_mode = "LIVE" if not self.secrets.is_demo else "PAPER"
         self.engine = ExecutionEngine(
             self.ctrader, None, self.data_pipeline.data_manager,
             initial_balance=self.initial_balance,
+            mode=engine_mode,
         )
+
+        # Wire live price stream from broker to DataPipeline
         self.ctrader.on_price = lambda tick: self.data_pipeline.ingest_tick(tick)
-        result = await self.ctrader.start()
-        if result:
-            logger.info("ExecutionService: cTrader connected")
+
+        # Attempt broker connection
+        connected = await self.ctrader.start()
+        if connected and hasattr(self.ctrader, 'is_connected') and self.ctrader.is_connected():
+            logger.info(f"ExecutionService: cTrader LIVE — streaming {len(SYMBOLS)} symbols")
+            # Subscribe to live market data for all symbols
+            raw = getattr(self.ctrader, 'raw', None) or self.ctrader
+            if hasattr(raw, 'subscribe_depth'):
+                from api.ctrader_client import SYMBOL_MAP
+                subscribed = 0
+                for sym in SYMBOLS:
+                    sym_id = SYMBOL_MAP.get(sym)
+                    if sym_id:
+                        success = await raw.subscribe_depth(sym_id)
+                        if success:
+                            subscribed += 1
+                logger.info(f"ExecutionService: subscribed to {subscribed}/{len(SYMBOLS)} symbols for live ticks")
         else:
-            logger.warning("ExecutionService: simulation mode (no broker connection)")
+            logger.warning("ExecutionService: cTrader not connected (running on historical data)")
         self._running = True
 
     async def stop(self) -> None:

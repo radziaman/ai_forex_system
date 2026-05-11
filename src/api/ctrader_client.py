@@ -582,8 +582,8 @@ class CtraderClient:
 
             for quote in depth_event.newQuotes:
                 raw = quote.bid if quote.HasField("bid") else quote.ask
-                divisor = 100.0 if abs(raw) > 10000 else 100000.0
-                price = raw / divisor
+                divisor = self._price_divisor(symbol, raw)
+                price = raw / divisor if divisor else raw
                 size = quote.size / 100.0  # Convert cents to units
                 level = DepthLevel(price=price, size=size)
                 if quote.HasField("bid"):
@@ -653,6 +653,25 @@ class CtraderClient:
         except Exception as e:
             logger.warning(f"Failed to unsubscribe from depth: {e}")
             return False
+
+    @staticmethod
+    def _price_divisor(symbol: str, raw: float) -> float:
+        """Determine the correct divisor for cTrader depth price scaling."""
+        sym = symbol.upper()
+        # Indices and crypto have larger unit sizes
+        if sym in ("BTCUSD", "ETHUSD", "LTCUSD"):
+            return 100.0
+        if sym in ("XRPUSD",):
+            return 100000.0
+        if sym in ("US500", "US30", "USTEC", "UK100", "DE40"):
+            return 1000.0
+        if sym in ("XAUUSD", "XAGUSD", "XTIUSD", "XBRUSD", "XNGUSD"):
+            return 100.0
+        # JPY pairs: USDJPY ~ 150.123 → raw ~ 15012300 → divisor 100000
+        if "JPY" in sym:
+            return 100000.0
+        # Forex majors: EURUSD ~ 1.17867 → raw ~ 117867 → divisor 100000
+        return 100000.0
 
     def get_market_depth(self, symbol: str) -> Optional[MarketDepth]:
         """Get latest Level II market depth for a symbol."""

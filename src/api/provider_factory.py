@@ -26,7 +26,7 @@ class CtraderExecutionAdapter(ExecutionProvider):
         self.on_price = None
         self.on_order_update = None
 
-    def _on_market_data(self, depth):
+    async def _on_market_data(self, depth):
         if self.on_price:
             from api.base import PriceTick
             self.on_price(PriceTick(
