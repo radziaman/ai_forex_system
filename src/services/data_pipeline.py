@@ -91,6 +91,17 @@ class DataPipeline(TradingService):
     def get_price(self, symbol: str) -> float:
         return self.data_manager.get_price(symbol, "1h")
 
+    def get_live_price(self, symbol: str) -> float:
+        """Latest mid-price from tick stream. Falls back to 1h close if no tick yet."""
+        from data.data_manager import BASE_PRICES
+        latest = self.data_manager._last_realtime_price.get(symbol)
+        if latest and latest > 0:
+            default = BASE_PRICES.get(symbol, 0)
+            if default > 0 and latest == default:
+                return self.get_price(symbol)
+            return latest
+        return self.get_price(symbol)
+
     def get_atr(self, symbol: str, period: int = 14) -> float:
         return self.data_manager.get_atr(symbol, "1h", period)
 

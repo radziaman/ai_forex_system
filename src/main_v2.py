@@ -264,11 +264,13 @@ class TradingOrchestrator:
                     # Show per-symbol data freshness (price + bar count + data source)
                     fresh_symbols = []
                     for sym in ["EURUSD", "GBPUSD", "XAUUSD"]:
-                        price = self.data_pipeline.get_price(sym)
+                        live = self.data_pipeline.get_live_price(sym)
+                        close = self.data_pipeline.get_price(sym)
                         df = self.data_pipeline.get_ohlcv(sym, "1h")
                         bars = len(df) if df is not None else 0
                         src = self.data_pipeline.data_manager.freshness.get(sym, type('',(),dict(last_source='?'))()).last_source
-                        fresh_symbols.append(f"{sym}={price:.5f}({bars}b,{src})")
+                        price_str = f"{live:.5f}" if live != close else f"{live:.5f}"
+                        fresh_symbols.append(f"{sym}={price_str}({bars}b,{src})")
                     logger.info(f"[status] cycle={self.cycle_counter} "
                                f"ticks/s={tick_rate} "
                                f"bars/min={bars_closed} "

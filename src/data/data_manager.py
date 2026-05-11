@@ -243,7 +243,7 @@ class DataManager:
                 "timestamp": bar_ts, "open": price, "high": price,
                 "low": price, "close": price, "volume": max(volume, 0),
             }])
-            self.ohlcv[symbol]["1m"] = pd.concat([df, new], ignore_index=True)
+            self.ohlcv[symbol]["1m"] = new if df.empty else pd.concat([df, new], ignore_index=True)
             self._cap_bars(symbol, "1m")
         else:
             idx = len(df) - 1
