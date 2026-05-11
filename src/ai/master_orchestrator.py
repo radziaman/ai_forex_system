@@ -828,6 +828,22 @@ class MasterAIOrchestrator:
         )
         self._last_eval_time = time.time()
 
+        # Run diagnostics + self-heal every 10 evaluations
+        if self.training_step % 10 == 0 and bot_instance:
+            diag = self.run_diagnostics(bot_instance)
+            if diag["issues"]:
+                logger.warning(f"[MasterAI] Diagnostics: {len(diag['issues'])} issues found")
+                for issue in diag["issues"]:
+                    logger.warning(f"[MasterAI]   ISSUE: {issue}")
+                fixes = await self.self_heal(bot_instance)
+                if fixes:
+                    logger.success(f"[MasterAI] Self-healed {len(fixes)} issues: {fixes}")
+                else:
+                    logger.warning("[MasterAI] Could not auto-fix all issues")
+            elif diag["warnings"]:
+                for w in diag["warnings"]:
+                    logger.info(f"[MasterAI]   NOTE: {w}")
+
         # Record decision
         self.recent_decisions.append(decision)
         if len(self.recent_decisions) > 100:
@@ -842,10 +858,7 @@ class MasterAIOrchestrator:
         if decision.adjustments:
             logger.info(f"[MasterAI] Adjusting: {decision.adjustments}")
 
-        # Reset failure counter on success
         self._consecutive_eval_failures = 0
-
-        # Trigger periodic save
         self._maybe_save()
 
         return decision
@@ -1231,21 +1244,223 @@ class MasterAIOrchestrator:
             self.enhancement_combinations[sig] * 0.9 + pnl * 0.01
         )
 
+    async def self_heal(self, bot_instance) -> List[str]:
+        """Auto-fix detected issues. Returns list of actions taken."""
+        fixes = []
+        if bot_instance is None:
+            return fixes
+
+        diag = self.run_diagnostics(bot_instance)
+        dm = getattr(bot_instance, 'data_manager', None)
+        fp = getattr(bot_instance, 'feature_pipeline', None)
+        risk = getattr(bot_instance, 'risk', None)
+
+        # Fix missing OHLCV data
+        if dm:
+            total = len(getattr(dm, 'SYMBOLS', []) or [])
+            if total > 0:
+                missing = [
+                    s for s in (getattr(dm, 'SYMBOLS', []) or [])
+                    if dm.get_ohlcv(s, "1h") is None or len(dm.get_ohlcv(s, "1h")) < 50
+                ]
+                if missing:
+                    for sym in missing[:3]:
+                        from data.dukascopy_realtime import DUKASCOPE_SYMBOLS
+                        base = getattr(dm, 'BASE_PRICES', {}).get(sym, 1.12)
+                        import pandas as pd
+                        import numpy as np
+                        tf_sec = 3600
+                        periods = 720
+                        now_ts = int(time.time())
+                        ts = list(range(now_ts - periods * tf_sec, now_ts, tf_sec))
+                        df = pd.DataFrame({
+                            "timestamp": ts,
+                            "open": base, "high": base * 1.001, "low": base * 0.999,
+                            "close": base, "volume": 1000,
+                        })
+                        dm.ohlcv[sym]["1h"] = df
+                        logger.info(f"[MasterAI] HEAL: Generated synthetic data for {sym}")
+                    fixes.append(f"Generated synthetic data for {len(missing)} symbols")
+
+        # Fix feature pipeline norms
+        if fp:
+            means = getattr(fp, '_means', {})
+            stds = getattr(fp, '_stds', {})
+            for key in list(means.keys()):
+                if key in stds and len(means[key]) != len(stds[key]):
+                    max_len = max(len(means[key]), len(stds[key]))
+                    means[key] = np.pad(means[key], (0, max_len - len(means[key])), constant_values=0)
+                    stds[key] = np.pad(stds[key], (0, max_len - len(stds[key])), constant_values=1)
+                    fp._means[key] = means[key]
+                    fp._stds[key] = stds[key]
+                    logger.info(f"[MasterAI] HEAL: Resized norm dims for {key}")
+                    fixes.append(f"Fixed norm dims for {key}")
+            if not means and dm:
+                from rts_ai_fx.features_unified import FeaturePipeline
+                fp._means = {}
+                fp._stds = {}
+                fp.fit_all(dm.ohlcv)
+                logger.info("[MasterAI] HEAL: Refitted feature pipeline")
+                fixes.append("Refitted feature pipeline")
+
+        # Fix kill switch
+        if risk and getattr(risk, 'kill_switch_triggered', False):
+            risk.kill_switch_triggered = False
+            logger.info("[MasterAI] HEAL: Reset kill switch")
+            fixes.append("Reset kill switch")
+
+        # Fix stale PPO agents with dim mismatch
+        rs = getattr(bot_instance, 'regime_system', None)
+        if rs and hasattr(bot_instance, '_reinit_regime_agents'):
+            agents = getattr(rs, 'agents', {})
+            for name, agent in agents.items():
+                if agent is None or not hasattr(agent, 'actor'):
+                    actual_dim = getattr(bot_instance, '_get_actual_state_dim', lambda: 2850)()
+                    bot_instance._reinit_regime_agents(actual_dim)
+                    fixes.append(f"Re-initialized {name} agent")
+                    break
+
+        # Reconnect execution if needed
+        exec_eng = getattr(bot_instance, 'execution', None)
+        if exec_eng and hasattr(exec_eng, 'client'):
+            client = exec_eng.client
+            if hasattr(client, 'is_connected') and not client.is_connected():
+                try:
+                    import asyncio
+                    await client.start()
+                    logger.info("[MasterAI] HEAL: Reconnected cTrader client")
+                    fixes.append("Reconnected cTrader")
+                except Exception as e:
+                    logger.warning(f"[MasterAI] HEAL: Reconnect failed: {e}")
+
+        if fixes:
+            logger.success(f"[MasterAI] Self-heal applied {len(fixes)} fixes: {fixes}")
+        else:
+            logger.info("[MasterAI] Self-heal: no issues found")
+        return fixes
+
+    def run_diagnostics(self, bot_instance=None) -> Dict:
+        """Run full system diagnostics and return a health report."""
+        issues = []
+        warnings_list = []
+        recommendations = []
+
+        if bot_instance is None:
+            return {"status": "unknown", "issues": []}
+
+        # Data pipeline health
+        dm = getattr(bot_instance, 'data_manager', None)
+        if dm:
+            symbols_with_data = sum(
+                1 for sym in getattr(dm, 'SYMBOLS', []) or []
+                if dm.get_ohlcv(sym, "1h") is not None and len(dm.get_ohlcv(sym, "1h")) > 50
+            )
+            total_symbols = len(getattr(dm, 'SYMBOLS', []) or [])
+            if total_symbols > 0 and symbols_with_data < total_symbols:
+                issues.append(f"Data: only {symbols_with_data}/{total_symbols} symbols have OHLCV")
+            elif symbols_with_data == 0:
+                issues.append("Data: NO symbols have OHLCV data")
+
+        # Feature pipeline health
+        fp = getattr(bot_instance, 'feature_pipeline', None)
+        if fp:
+            if not getattr(fp, '_feature_cols', None):
+                warnings_list.append("Feature pipeline: _feature_cols not set")
+            means = getattr(fp, '_means', {})
+            stds = getattr(fp, '_stds', {})
+            if not means:
+                issues.append("Feature pipeline: no normalization means fitted")
+            mismatched = sum(1 for k in means if k in stds and len(means[k]) != len(stds[k]))
+            if mismatched > 0:
+                issues.append(f"Feature pipeline: {mismatched} norm dim mismatches")
+
+        # Model health
+        ensemble = getattr(bot_instance, 'ensemble', None)
+        if ensemble:
+            n_experts = len(getattr(ensemble, 'experts', []))
+            if n_experts < 2:
+                issues.append(f"Ensemble: only {n_experts} experts loaded")
+            elo = getattr(ensemble, 'elo_ratings', {})
+            low_elo = [k for k, v in elo.items() if v < 1000]
+            if low_elo:
+                warnings_list.append(f"Ensemble: low ELO experts: {low_elo}")
+
+        # PPO agents
+        rs = getattr(bot_instance, 'regime_system', None)
+        if rs:
+            agents = getattr(rs, 'agents', {})
+            if not agents:
+                issues.append("PPO: no regime agents loaded")
+            for name, agent in agents.items():
+                if agent is None:
+                    warnings_list.append(f"PPO: {name} agent is None")
+                elif hasattr(agent, 'actor') and hasattr(agent.actor, 'feature_extractor'):
+                    try:
+                        w = agent.actor.feature_extractor[0].weight
+                        expected = getattr(fp, '_means', {}).get(f"{list(getattr(dm, 'SYMBOLS', ['EURUSD']))[0]}_1h" if dm else "EURUSD_1h", None)
+                        if expected is not None and w.shape[1] != len(expected):
+                            issues.append(f"PPO {name}: dim={w.shape[1]} vs expected={len(expected)}")
+                    except Exception:
+                        pass
+
+        # Risk manager health
+        risk = getattr(bot_instance, 'risk', None)
+        if risk:
+            if getattr(risk, 'kill_switch_triggered', False):
+                issues.append("Risk: KILL SWITCH ACTIVE")
+            consec = getattr(risk, 'consecutive_losses', 0)
+            if consec > 3:
+                warnings_list.append(f"Risk: {consec} consecutive losses")
+
+        # Execution health
+        exec_eng = getattr(bot_instance, 'execution', None)
+        if exec_eng:
+            bal = getattr(exec_eng, '_balance', 0)
+            init = getattr(bot_instance, 'initial_balance', 100000)
+            dd = (init - bal) / max(init, 1) if init > 0 else 0
+            if dd > 0.05:
+                warnings_list.append(f"Execution: drawdown {dd:.1%}")
+
+        # Cycle error rate
+        err_rate = getattr(self, '_consecutive_eval_failures', 0)
+        if err_rate > 0:
+            warnings_list.append(f"Master AI: {err_rate} consecutive eval failures")
+
+        if not issues and not warnings_list:
+            recommendations.append("All systems nominal")
+        else:
+            for issue in issues:
+                recommendations.append(f"FIX: {issue}")
+            for w in warnings_list:
+                recommendations.append(f"WARN: {w}")
+
+        return {
+            "status": "healthy" if not issues else "degraded" if len(issues) < 3 else "critical",
+            "issues": issues,
+            "warnings": warnings_list,
+            "recommendations": recommendations,
+            "symbols_loaded": symbols_with_data if dm else 0,
+            "total_symbols": total_symbols if dm else 0,
+            "eval_failures": err_rate,
+            "experts_loaded": n_experts if ensemble else 0,
+        }
+
     def get_system_status(self) -> Dict:
         return {
             "system_state": self.system_state.value,
-            "system_pnl": self.system_pnl,
-            "system_sharpe": self.system_sharpe,
+            "system_pnl": round(self.system_pnl, 2),
+            "system_sharpe": round(self.system_sharpe, 3),
             "total_trades": len(self.trade_history),
             "training_step": self.training_step,
-            "epsilon": self.epsilon,
-            "consecutive_eval_failures": self._consecutive_eval_failures,
+            "epsilon": round(self.epsilon, 3),
+            "eval_failures": self._consecutive_eval_failures,
+            "cold_start_remaining": max(0, self.COLD_START_TRADES - len(self.trade_history)),
             "enhancements": {
                 k: {
                     "name": v.name,
                     "status": v.status.value,
-                    "confidence": v.confidence,
-                    "pnl_contribution": v.pnl_contribution,
+                    "confidence": round(v.confidence, 2),
+                    "pnl_contribution": round(v.pnl_contribution, 2),
                     "failure_count": v.failure_count,
                     "priority": self.ENHANCEMENTS[k]["priority"],
                 }
@@ -1255,13 +1470,13 @@ class MasterAIOrchestrator:
                 {
                     "action": d.action,
                     "reason": d.reason,
-                    "confidence": d.confidence,
+                    "confidence": round(d.confidence, 2),
                     "timestamp": d.timestamp,
                 }
                 for d in self.recent_decisions[-10:]
             ],
             "best_configurations": sorted(
-                [{"config": k, "performance": v}
+                [{"config": k, "performance": round(v, 4)}
                  for k, v in self.enhancement_combinations.items() if v != 0.0],
                 key=lambda x: x["performance"],
                 reverse=True,

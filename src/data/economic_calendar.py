@@ -130,27 +130,61 @@ class EconomicCalendar:
             return self._generate_fallback_events(days_forward)
         events = []
         today = datetime.now()
-        for offset in range(-days_backward, days_forward + 1):
-            date = today + timedelta(days=offset)
-            date_str = date.strftime("%Y-%m-%d")
-            url = (
-                "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
-                if offset in (-1, 0, 1, 2, 3, 4, 5, 6, 7)
-                else ""
-            )
-            if not url:
-                continue
+        urls = [
+            "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
+        ]
+        for url in urls:
             try:
-                resp = requests.get(url, timeout=10)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    for item in data if isinstance(data, list) else data.get("data", []):
-                        ev = self._parse_forexfactory_item(item, date_str)
-                        if ev:
-                            events.append(ev)
+                resp = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+                if resp.status_code in (429, 403):
+                    try:
+                        import cloudscraper
+                        scraper = cloudscraper.create_scraper()
+                        resp = scraper.get(url, timeout=10)
+                    except Exception:
+                        continue
+                if resp.status_code != 200:
+                    continue
+                data = resp.json()
+                items = data if isinstance(data, list) else data.get("data", data.get("items", []))
+                for item in items:
+                    ev = self._parse_fxitem(item)
+                    if ev:
+                        events.append(ev)
+                if events:
+                    return events
             except Exception:
                 continue
+        if not events:
+            events = self._generate_fallback_events(days_forward)
         return events
+
+    def _parse_fxitem(self, item: dict):
+        try:
+            title = item.get("title") or item.get("event") or item.get("name", "")
+            if not title:
+                return None
+            currency = item.get("currency") or item.get("country", "USD")
+            impact_str = (item.get("impact") or item.get("volatility") or item.get("importance", "low")).lower()
+            impact_map = {"high": 3, "medium": 2, "low": 1, "speaker": 1, "holiday": 0}
+            impact = impact_map.get(impact_str, 1)
+            raw_time = item.get("date") or item.get("time") or item.get("timestamp", "")
+            dt = None
+            if isinstance(raw_time, (int, float)):
+                dt = datetime.fromtimestamp(raw_time)
+            elif isinstance(raw_time, str):
+                try:
+                    dt = datetime.fromisoformat(raw_time.replace("Z", "+00:00"))
+                except Exception:
+                    dt = datetime.now()
+            if dt is None:
+                dt = datetime.now()
+            return EconomicEvent(
+                timestamp=dt.timestamp(), title=title, currency=currency,
+                impact=impact, source=item.get("source", "forexfactory"),
+            )
+        except Exception:
+            return None
 
     def _parse_forexfactory_item(self, item: Dict, date_str: str) -> Optional[EconomicEvent]:
         try:

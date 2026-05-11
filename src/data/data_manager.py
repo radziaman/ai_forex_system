@@ -418,19 +418,32 @@ class DataManager:
 
     async def load_from_ctrader(self, symbol: str, timeframe: str = "1h",
                                  days: int = 365, client=None) -> bool:
-        """Load historical OHLCV from cTrader protobuf API."""
         if client is None or not hasattr(client, 'fetch_historical_ohlcv'):
             return False
         try:
-            bars = await client.fetch_historical_ohlcv(symbol, timeframe, days_back=days)
+            existing = self.ohlcv.get(symbol, {}).get(timeframe)
+            if existing is not None and len(existing) > 50:
+                last_ts = float(existing["timestamp"].iloc[-1])
+                age_hours = (time.time() - last_ts) / 3600
+                if age_hours < 6:
+                    return True
+                bars = await client.fetch_historical_ohlcv(symbol, timeframe, days_back=min(days, 5))
+            else:
+                bars = await client.fetch_historical_ohlcv(symbol, timeframe, days_back=days)
             if bars and len(bars) > 10:
                 df = pd.DataFrame(bars)
-                self.ohlcv[symbol][timeframe] = df
+                if existing is not None and len(existing) > 50:
+                    merged = pd.concat([existing, df], ignore_index=True)
+                    merged = merged.drop_duplicates(subset=["timestamp"]).sort_values("timestamp")
+                    self.ohlcv[symbol][timeframe] = merged
+                    logger.info(f"cTrader appended {len(df)} bars to {symbol} (total {len(merged)})")
+                else:
+                    self.ohlcv[symbol][timeframe] = df
+                    logger.info(f"Loaded {symbol} from cTrader: {len(df)} bars")
                 self._source_health["ctrader"]["last_ok"] = time.time()
                 self._source_health["ctrader"]["failures"] = 0
                 self.freshness[symbol].last_source = "ctrader"
-                self.freshness[symbol].bar_count[timeframe] = len(df)
-                logger.info(f"Loaded {symbol} from cTrader: {len(df)} bars")
+                self.freshness[symbol].bar_count[timeframe] = len(self.ohlcv[symbol][timeframe])
                 return True
         except Exception as e:
             self._source_health["ctrader"]["failures"] += 1
@@ -476,14 +489,22 @@ class DataManager:
             }
             yf_sym = ticker_map.get(symbol, f"{symbol}=X")
             interval = timeframe.replace("m", "m").replace("h", "h")
-            data = yf.download(yf_sym, period=f"{max(days, 5)}d",
-                               interval=interval, progress=False)
+            existing = self.ohlcv.get(symbol, {}).get(timeframe)
+            if existing is not None and len(existing) > 50:
+                last_ts = float(existing["timestamp"].iloc[-1])
+                age_hours = (time.time() - last_ts) / 3600
+                if age_hours < 6:
+                    return True
+                fetch_days = max(int(age_hours / 24) + 2, 3)
+                data = yf.download(yf_sym, period=f"{fetch_days}d",
+                                   interval=interval, progress=False)
+            else:
+                data = yf.download(yf_sym, period=f"{max(days, 5)}d",
+                                   interval=interval, progress=False)
             if data is not None and not data.empty:
                 df = data.reset_index()
-                # Flatten MultiIndex columns (yfinance v1.1+ returns tuples)
                 if isinstance(df.columns, pd.MultiIndex):
                     df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
-                # Find the date/time column (could be 'Date', 'Datetime', 'timestamp')
                 date_col = next((c for c in df.columns if c.lower() in ('date', 'datetime', 'timestamp')), None)
                 if date_col:
                     df["timestamp"] = pd.to_datetime(df[date_col]).astype(int) // 10**9
@@ -491,13 +512,19 @@ class DataManager:
                     df["timestamp"] = pd.to_datetime(df.iloc[:, 0]).astype(int) // 10**9
                 cols_lower = {c: c.lower() for c in df.columns if isinstance(c, str)}
                 df = df.rename(columns=cols_lower)
-                self.ohlcv[symbol][timeframe] = df[["timestamp", "open", "high",
-                                                     "low", "close", "volume"]]
+                new_bars = df[["timestamp", "open", "high", "low", "close", "volume"]]
+                if existing is not None and len(existing) > 50:
+                    merged = pd.concat([existing, new_bars], ignore_index=True)
+                    merged = merged.drop_duplicates(subset=["timestamp"]).sort_values("timestamp")
+                    self.ohlcv[symbol][timeframe] = merged
+                    logger.info(f"Appended {len(new_bars)} new bars to {symbol} (total {len(merged)})")
+                else:
+                    self.ohlcv[symbol][timeframe] = new_bars
+                    logger.info(f"Loaded {symbol} from yFinance: {len(new_bars)} bars")
                 self._source_health["yfinance"]["last_ok"] = time.time()
                 self._source_health["yfinance"]["failures"] = 0
                 self.freshness[symbol].last_source = "yfinance"
-                self.freshness[symbol].bar_count[timeframe] = len(df)
-                logger.info(f"Loaded {symbol} from yFinance: {len(df)} bars")
+                self.freshness[symbol].bar_count[timeframe] = len(self.ohlcv[symbol][timeframe])
                 return True
         except Exception as e:
             self._source_health["yfinance"]["failures"] += 1

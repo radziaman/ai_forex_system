@@ -55,15 +55,19 @@ class HMMRegimeDetector:
         features = self._extract_features(df)
         if len(features) < 100:
             return
-        self.model = hmm.GaussianHMM(
-            n_components=self.n_regimes,
-            covariance_type="diag",
-            n_iter=500,
-            random_state=42,
-            tol=1e-3,
-            params="stmc",
-        )
-        self.model.fit(features)
+        import warnings as _warnings
+        with _warnings.catch_warnings():
+            _warnings.filterwarnings("ignore", message=".*not converging.*")
+            _warnings.filterwarnings("ignore", message=".*transmat_.*zero sum.*")
+            self.model = hmm.GaussianHMM(
+                n_components=self.n_regimes,
+                covariance_type="diag",
+                n_iter=500,
+                random_state=42,
+                tol=1e-2,
+                params="stmc",
+            )
+            self.model.fit(features)
         if np.any(np.isnan(self.model.startprob_)):
             self.model.startprob_ = np.full(self.n_regimes, 1.0 / self.n_regimes)
         if np.any(np.isnan(self.model.transmat_)):

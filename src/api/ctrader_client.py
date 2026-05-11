@@ -581,7 +581,9 @@ class CtraderClient:
             asks_dict = {a.price: a for a in md.asks}
 
             for quote in depth_event.newQuotes:
-                price = quote.bid / 100000.0 if quote.HasField("bid") else quote.ask / 100000.0
+                raw = quote.bid if quote.HasField("bid") else quote.ask
+                divisor = 100.0 if abs(raw) > 10000 else 100000.0
+                price = raw / divisor
                 size = quote.size / 100.0  # Convert cents to units
                 level = DepthLevel(price=price, size=size)
                 if quote.HasField("bid"):
@@ -606,9 +608,11 @@ class CtraderClient:
             md.spread = (md.ask - md.bid) if (md.ask and md.bid) else 0.0
             md.volume = sum(b.size for b in md.bids) + sum(a.size for a in md.asks)
 
-            # Notify callback
+            # Notify callbacks
             if self.on_depth_update:
                 self.on_depth_update(md)
+            if self.on_market_data and md.bid > 0:
+                await self.on_market_data(md)
 
             logger.debug(f"DOM update {symbol}: {len(md.bids)} bids, {len(md.asks)} asks")
         except Exception as e:

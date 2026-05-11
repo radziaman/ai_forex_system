@@ -346,10 +346,13 @@ class FeaturePipeline:
                 processed = compute_cross_asset_features(processed, self.cross_asset_data, sentiment_scores)
             elif sentiment_scores:
                 processed = compute_cross_asset_features(processed, None, sentiment_scores)
-            cols = self._feature_cols if self._feature_cols else self._get_feature_columns(processed)
-            missing = [c for c in cols if c not in processed.columns]
-            if missing:
-                return None
+            avail_cols = self._get_feature_columns(processed)
+            if self._feature_cols:
+                cols = [c for c in self._feature_cols if c in avail_cols]
+                if len(cols) < 10:
+                    cols = avail_cols
+            else:
+                cols = avail_cols
             vals = processed[cols].values
             key = self._norm_key(symbol, tf)
             if key in self._means and key in self._stds:

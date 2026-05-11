@@ -455,7 +455,7 @@ class RTSForexBot:
                 logger.info(f"LSTM-CNN loaded from registry: {champion.version}")
             else:
                 # Fallback to default paths
-                for lstm_path in ["models/lstm_cnn.h5", "models/lstm_cnn.keras"]:
+                for lstm_path in ["models/lstm_cnn.h5", "models/lstm_cnn.keras", "models/lstm_cnn_model.keras"]:
                     if os.path.exists(lstm_path):
                         self.lstm_model.load(lstm_path)
                         logger.info(f"LSTM-CNN loaded from {lstm_path}")
@@ -483,13 +483,17 @@ class RTSForexBot:
             logger.warning(f"MAML init failed: {e}")
             self.maml_agent = None
 
-    def _rule_prediction(self, X: np.ndarray) -> float:
+    def _rule_prediction(self, X: np.ndarray, symbol: str = "EURUSD") -> float:
         try:
-            last = X[-1] if X.ndim == 2 else X
-            mom = float(last[-5]) if len(last) > 5 and not np.isnan(last[-5]) else 0.0
-            return 1.12 + mom * 0.001
+            price = self.data_manager.get_price(symbol, "1h") or 1.12
+            df = self.data_manager.get_ohlcv(symbol, "1h")
+            if df is not None and len(df) > 20:
+                closes = df["close"].values[-20:]
+                returns = (closes[-1] - closes[0]) / closes[0]
+                return price * (1 + returns * 0.5)
+            return price * 1.001
         except Exception:
-            return 1.12
+            return self.data_manager.get_price("EURUSD", "1h") or 1.12
 
     def _regime_prediction(self, X: np.ndarray, symbol: str = "EURUSD") -> float:
         """PPO Regime-Specialist prediction."""
@@ -533,11 +537,14 @@ class RTSForexBot:
             return 0.5
 
     def _lstm_prediction(self, X: np.ndarray) -> float:
-        """LSTM-CNN model prediction."""
         if self.lstm_model is None or self.lstm_model.model is None:
             return 1.12
         try:
-            pred = self.lstm_model.predict(X.reshape(1, 30, 55))
+            flat = X.flatten() if X.ndim > 1 else X
+            n_feat = len(flat) // 30
+            if n_feat * 30 != len(flat):
+                return 1.12
+            pred = self.lstm_model.predict(flat.reshape(1, 30, n_feat))
             return float(pred[0, 0])
         except Exception as e:
             logger.debug(f"LSTM prediction error: {e}")
@@ -795,7 +802,7 @@ class RTSForexBot:
         max_consecutive_errors = 5
 
         download_retries: Dict[str, int] = {}
-        max_download_retries = 3
+        _last_verified_ts: Dict[str, float] = {}
 
         def _needs_refresh(sym: str) -> bool:
             df = self.data_manager.get_ohlcv(sym, "1h")
@@ -803,7 +810,12 @@ class RTSForexBot:
                 return True
             last_ts = float(df["timestamp"].iloc[-1]) if "timestamp" in df.columns else 0
             age_hours = (time.time() - last_ts) / 3600
-            return age_hours > 12
+            if age_hours <= 12:
+                return False
+            # If last verified timestamp matches current last bar, data didn't advance
+            if _last_verified_ts.get(sym, 0) == last_ts:
+                return False
+            return True
 
         download_queue = [s for s in SYMBOLS if _needs_refresh(s)]
         if download_queue:
@@ -818,7 +830,11 @@ class RTSForexBot:
                     last_heartbeat = now
                     pos = len(self.execution.get_open_positions())
                     reg = ", ".join(list(self._regimes.values())[:3])
-                    logger.info(f"[heartbeat] cycle={cycle_counter} positions={pos} regime=[{reg}]")
+                    acc = await self.execution.get_account_info()
+                    bal = acc.get("balance", 0)
+                    eq = acc.get("equity", 0)
+                    pnl = eq - bal
+                    logger.info(f"[heartbeat] cycle={cycle_counter} pos={pos} bal=${bal:.0f} eq=${eq:.0f} upnl=${pnl:.0f} regime=[{reg}]")
                     self.notifier.heartbeat(cycle_counter, pos, reg)
 
                 # Master AI Orchestrator: Check system state every 60s (NEW)
@@ -918,11 +934,13 @@ class RTSForexBot:
                         ctrader_client=self.ctrader if hasattr(self, 'ctrader') else None,
                     )
                     if success:
-                        if len(self.data_manager.get_ohlcv(sym, "1h")) > 200:
+                        df = self.data_manager.get_ohlcv(sym, "1h")
+                        if df is not None and len(df) > 0:
+                            _last_verified_ts[sym] = float(df["timestamp"].iloc[-1])
+                        if len(df) > 200:
                             rd = HMMRegimeDetector(n_regimes=4, lookback=60)
                             rd.fit(self.data_manager.get_ohlcv(sym, "1h"))
                             self._regimes[sym] = rd.detect_regime(self.data_manager.get_ohlcv(sym, "1h"))
-                        self.feature_pipeline.fit_all(self.data_manager.ohlcv)
                         download_queue.pop(0)
                     else:
                         download_retries[sym] = download_retries.get(sym, 0) + 1
@@ -1113,18 +1131,12 @@ class RTSForexBot:
         # 2. Gather global intelligence (Enhanced with Behavioral AI #11)
         external_signals = self._gather_external_signals()
         
-        # NEW: Get behavioral sentiment snapshot (gated by Master AI)
-        if self._is_enhancement_enabled("sentiment_alpha"):
-            try:
-                behavioral_snap = self.behavioral_ai.analyze_social_media()
-                self._behavioral_sentiment = behavioral_snap.overall_score
-                self._behavioral_snapshot = behavioral_snap
-                logger.debug(f"Behavioral sentiment: {behavioral_snap.overall_score:.2f} (fear/greed={behavioral_snap.fear_greed_index:.0f})")
-            except Exception as e:
-                logger.debug(f"Behavioral sentiment failed: {e}")
-                self._behavioral_sentiment = 0.0
-                self._behavioral_snapshot = None
-        else:
+        try:
+            behavioral_snap = self.behavioral_ai.analyze_social_media()
+            self._behavioral_sentiment = behavioral_snap.overall_score
+            self._behavioral_snapshot = behavioral_snap
+        except Exception as e:
+            logger.debug(f"Behavioral sentiment failed: {e}")
             self._behavioral_sentiment = 0.0
             self._behavioral_snapshot = None
 
@@ -1134,11 +1146,15 @@ class RTSForexBot:
         if account_info is None:
             return
 
+        eval_count = 0
         for sym in SYMBOLS:
             async with self._get_symbol_lock(sym):
                 decision = await self._evaluate_symbol_enhanced(sym, account_info, external_signals)
             if decision:
-                # Add spread check
+                eval_count += 1
+                open_syms = {p["symbol"] for p in self.execution.get_open_positions()}
+                if sym in open_syms:
+                    continue
                 spread_pips = self._get_current_spread(sym)
                 decision["spread_pips"] = spread_pips
                 decision["is_acceptable_spread"] = self.cost_model.get_spread_warning_level(sym, spread_pips) == "normal"
@@ -1186,6 +1202,11 @@ class RTSForexBot:
                     logger.warning(f"{sym} trade blocked: spread too wide ({decision.get('spread_pips', 0):.1f} pips)")
                     continue
                 await self._execute_trade_enhanced(sym, decision, account_info)
+
+        if eval_count == 0:
+            logger.debug("No trade decisions this cycle")
+        else:
+            logger.info(f"Evaluated {eval_count}/{len(SYMBOLS)} symbols with trade signals")
 
         # 6. Manage existing positions -- check SL/TP against current prices
         await self._manage_positions()
@@ -1296,7 +1317,7 @@ class RTSForexBot:
                 ensemble_pred = self.ensemble.predict(features, regime=regime)
                 confidence = ensemble_pred.confidence
                 should_trade, direction, agreement = self.ensemble.should_trade(
-                    ensemble_pred, price, min_confidence=0.65,
+                    ensemble_pred, price, min_confidence=0.40,
                 )
                 pred_price = ensemble_pred.price
         else:
@@ -1304,7 +1325,7 @@ class RTSForexBot:
             ensemble_pred = self.ensemble.predict(features, regime=regime)
             confidence = ensemble_pred.confidence
             should_trade, direction, agreement = self.ensemble.should_trade(
-                ensemble_pred, price, min_confidence=0.65,
+                ensemble_pred, price, min_confidence=0.40,
             )
             pred_price = ensemble_pred.price
 
@@ -1353,7 +1374,7 @@ class RTSForexBot:
             # NEW: Enhanced fields
             "behavioral_sentiment": self._behavioral_sentiment,
             "toxic_vpin": self._toxic_flows.get(symbol, ToxicFlowSnapshot()).vpin,
-            "cot_signal": self._cot_data.get(symbol, COTSnapshot()).institutional_signal if hasattr(self, '_cot_data') else "neutral",
+                    "cot_signal": self._cot_data.get(symbol, type('_', (), dict(institutional_signal='neutral'))()).institutional_signal if hasattr(self, '_cot_data') else "neutral",
         }
 
     async def _execute_trade_enhanced(self, symbol: str, decision: dict, account_info: dict):
@@ -1464,17 +1485,15 @@ class RTSForexBot:
                     self.online_learner.on_drift_detected(symbol, model_data["drift"].error_detector.drift_count)
 
     def _get_current_spread(self, symbol: str) -> float:
-        """Get current spread in pips for a symbol."""
         try:
             tick = self.data_manager.latest_snapshot.get(symbol)
             if tick and hasattr(tick, 'bid') and hasattr(tick, 'ask'):
                 pip_size = 0.0001 if "JPY" not in symbol.upper() else 0.01
-                spread = (tick.ask - tick.bid) / pip_size
-                return float(spread)
-            # Fallback to CostModel
-            return self.cost_model.pip_to_price(symbol) * 10000  # Rough estimate
+                if tick.ask > tick.bid:
+                    return float((tick.ask - tick.bid) / pip_size)
+            return 0.0
         except Exception:
-            return 1.0
+            return 0.0
 
     def _gather_external_signals(self) -> np.ndarray:
         try:
@@ -1678,55 +1697,9 @@ class RTSForexBot:
                     self.online_learner.on_drift_detected(symbol, model_data["drift"].error_detector.drift_count)
 
     async def _manage_positions(self):
-        """Check all open positions against current prices. Close if SL/TP hit."""
-        positions = list(self.execution.open_positions.values())
-        if not positions:
-            return
-
-        for trade in positions:
-            try:
-                sym = trade.symbol
-                df = self.data_manager.get_ohlcv(sym, "1h")
-                if df is None or len(df) < 3:
-                    continue
-                price = float(df["close"].iloc[-1])
-                high = float(df["high"].iloc[-1])
-                low = float(df["low"].iloc[-1])
-
-                sl_hit = False
-                tp_hit = False
-                reason = ""
-
-                if trade.direction == "BUY":
-                    if low <= trade.sl:
-                        sl_hit = True
-                        reason = "Stop Loss"
-                    elif high >= trade.tp:
-                        tp_hit = True
-                        reason = "Take Profit"
-                else:
-                    if high >= trade.sl:
-                        sl_hit = True
-                        reason = "Stop Loss"
-                    elif low <= trade.tp:
-                        tp_hit = True
-                        reason = "Take Profit"
-
-                if sl_hit or tp_hit:
-                    exit_price = trade.sl if sl_hit else trade.tp
-                    pip_size = 0.01 if "JPY" in sym.upper() else 0.0001
-                    raw_pips = ((1 if trade.direction == "BUY" else -1) * (exit_price - trade.entry_price)) / pip_size
-                    lots = trade.volume / 100000.0
-                    pnl_usd = raw_pips * lots * 10.0
-                    logger.info(f"Closing {sym} {trade.direction} at SL/TP @ {exit_price:.5f}: {reason}")
-                    await self.execution.close_position(trade.position_id, reason, exit_price)
-                    self.notifier.trade_closed(
-                        symbol=sym, direction=trade.direction,
-                        entry=trade.entry_price, exit=exit_price,
-                        pnl=pnl_usd, reason=reason, hold_time=time.time() - trade.timestamp,
-                    )
-            except Exception as e:
-                logger.warning(f"Position mgmt error for {getattr(trade,'symbol','?')}: {e}")
+        """SL/TP checked via live ticks in ExecutionEngine._on_market_data.
+        This method is kept as a fallback for reconciliation."""
+        await self._reconcile_positions()
 
     # ================================================================
     # HELPERS

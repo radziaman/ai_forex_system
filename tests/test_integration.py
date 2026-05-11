@@ -170,14 +170,14 @@ class TestExecutionEngine:
         assert trade.symbol == "XAUUSD"
         assert trade.entry_price == 1.12  # Mock returns 1.12
 
-    def test_calculate_pnl_jpy(self, engine):
+    def test_pnl_usd_jpy(self, engine):
         from execution.engine import TradeRecord
         trade = TradeRecord(
             timestamp=100, symbol="USDJPY", direction="BUY",
             volume=100000, entry_price=150.0,
         )
-        pnl = engine._calculate_pnl(trade, 151.0)
-        assert pnl > 0  # 100 pips * 1 lot * ~$9/pip
+        pnl = engine._pnl_usd(150.0, 151.0, "BUY", 100000, "USDJPY")
+        assert pnl > 0
 
     def test_get_open_positions_returns_dicts(self, engine):
         trade = engine._simulate_open("EURUSD", "BUY", 1000, 1.11, 1.14, "test")
@@ -189,7 +189,8 @@ class TestExecutionEngine:
     def test_close_position_removes_from_open(self, engine):
         trade = engine._simulate_open("EURUSD", "BUY", 1000, 1.11, 1.14, "test")
         pid = trade.position_id
-        result = engine._simulate_close(trade, "TP")
+        pnl = engine._pnl_usd(trade.entry_price, 1.15, "BUY", 1000, "EURUSD")
+        result = engine._simulate_close(trade, "Take Profit", 1.15, pnl)
         assert result
         assert pid not in engine.open_positions
 
