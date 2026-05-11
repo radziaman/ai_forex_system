@@ -16,11 +16,13 @@ from api.base import PriceTick
 class ExecutionService(TradingService):
     """Dumb executor: receives decisions, sends orders. No deciding."""
 
-    def __init__(self, config: AppConfig, secrets: Secrets, data_pipeline):
+    def __init__(self, config: AppConfig, secrets: Secrets, data_pipeline,
+                 initial_balance: float = 100_000.0):
         super().__init__("execution_service")
         self.config = config
         self.secrets = secrets
         self.data_pipeline = data_pipeline
+        self.initial_balance = initial_balance
         self.ctrader = None
         self.data_provider = None
         self.engine = None
@@ -30,6 +32,7 @@ class ExecutionService(TradingService):
         self.ctrader, self.data_provider = create_execution_provider(self.secrets)
         self.engine = ExecutionEngine(
             self.ctrader, None, self.data_pipeline.data_manager,
+            initial_balance=self.initial_balance,
         )
         self.ctrader.on_price = lambda tick: self.data_pipeline.ingest_tick(tick)
         result = await self.ctrader.start()

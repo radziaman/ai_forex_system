@@ -53,10 +53,12 @@ Files:
 class TradingOrchestrator:
     """Thin loop: manages services, health checks, graceful shutdown."""
 
-    def __init__(self, config: AppConfig, secrets: Secrets, mode: str = "paper"):
+    def __init__(self, config: AppConfig, secrets: Secrets, mode: str = "paper",
+                 initial_balance: float = 100_000.0):
         self.config = config
         self.secrets = secrets
         self.mode = mode
+        self.initial_balance = initial_balance
         self.registry = ServiceRegistry()
         self.event_bus = get_event_bus()
         self.running = False
@@ -77,8 +79,9 @@ class TradingOrchestrator:
     def _init_services(self):
         self.data_pipeline = DataPipeline(self.config)
         self.signal_engine = SignalEngine(self.config)
-        self.risk_gatekeeper = RiskGatekeeper(self.config)
-        self.execution_service = ExecutionService(self.config, self.secrets, self.data_pipeline)
+        self.risk_gatekeeper = RiskGatekeeper(self.config, initial_balance=self.initial_balance)
+        self.execution_service = ExecutionService(self.config, self.secrets, self.data_pipeline,
+                                                   initial_balance=self.initial_balance)
         self.monitoring = MonitoringService(self.config, self.secrets)
 
         for svc in [self.data_pipeline, self.signal_engine, self.risk_gatekeeper,
@@ -222,7 +225,7 @@ def cmd_run(args):
     """Run the trading bot."""
     config = AppConfig.from_yaml(args.config)
     secrets = Secrets()
-    orch = TradingOrchestrator(config, secrets, mode=args.mode)
+    orch = TradingOrchestrator(config, secrets, mode=args.mode, initial_balance=args.capital)
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
