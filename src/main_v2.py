@@ -21,7 +21,7 @@ from services.signal_engine import SignalEngine
 from services.risk_gatekeeper import RiskGatekeeper
 from services.execution_service import ExecutionService
 from services.monitoring_service import MonitoringService
-from data.data_manager import SYMBOLS, BASE_PRICES
+from data.data_manager import SYMBOLS, BASE_PRICES, DUKASCOPE_SYMBOLS
 
 
 HELP_EPILOG = """
@@ -145,6 +145,46 @@ class TradingOrchestrator:
             else:
                 logger.error(f"[trade] {symbol}: FAILED — {result.error}")
 
+    async def _load_historical_data(self):
+        """Load historical OHLCV data from cache/yFinance, log what's available."""
+        dm = self.data_pipeline.data_manager
+        logger.info(f"[data] Loading historical data for {len(SYMBOLS)} symbols...")
+
+        # 1. Load from Dukascopy BI5 cache (fast, local)
+        dukas_loaded = dm.load_from_dukascopy_cache(max_hours=168)
+        logger.info(f"[data] Dukascopy cache: {dukas_loaded}/{len(DUKASCOPE_SYMBOLS)} symbols loaded")
+
+        # 2. For symbols without data, try yFinance fallback
+        yfin_loaded = 0
+        for sym in SYMBOLS:
+            df = dm.get_ohlcv(sym, "1h")
+            if df is None or len(df) < 50:
+                if dm.try_alternative_source(sym, "1h", days=60):
+                    yfin_loaded += 1
+        if yfin_loaded > 0:
+            logger.info(f"[data] yFinance fallback: {yfin_loaded} symbols loaded")
+
+        # 3. Report data freshness
+        total_with_data = 0
+        total_bars = 0
+        for sym in SYMBOLS:
+            df = dm.get_ohlcv(sym, "1h")
+            if df is not None:
+                bars = len(df)
+                total_bars += bars
+                if bars > 50:
+                    total_with_data += 1
+                    last_ts = float(df["timestamp"].iloc[-1])
+                    age_mins = (time.time() - last_ts) / 60
+                    logger.debug(f"[data] {sym}: {bars} bars, last bar {age_mins:.0f}min ago")
+
+        logger.info(f"[data] Ready: {total_with_data}/{len(SYMBOLS)} symbols have {total_bars} total bars")
+
+        # 4. Fit feature pipeline scalers on loaded data
+        if total_with_data > 0:
+            self.data_pipeline.feature_pipeline.fit_all(dm.ohlcv)
+            logger.info(f"[data] Feature pipeline fitted on {total_with_data} symbols")
+
     async def _check_new_bars(self) -> int:
         """Check for new 1m bars across all symbols. Returns count of bars closed."""
         closed = 0
@@ -193,6 +233,10 @@ class TradingOrchestrator:
 
         await self.event_bus.start()
         await self.registry.start_all()
+
+        # Load historical data so OHLCV is populated for signal generation
+        await self._load_historical_data()
+
         self.running = True
 
         logger.info("")
@@ -217,19 +261,20 @@ class TradingOrchestrator:
                     last_detail = now
                     tick_rate = self.data_pipeline.tick_counter
                     self.data_pipeline.tick_counter = 0
-                    # Check data freshness for first few symbols
+                    # Show per-symbol data freshness (price + bar count + data source)
                     fresh_symbols = []
-                    for sym in SYMBOLS[:5]:
+                    for sym in ["EURUSD", "GBPUSD", "XAUUSD"]:
                         price = self.data_pipeline.get_price(sym)
                         df = self.data_pipeline.get_ohlcv(sym, "1h")
                         bars = len(df) if df is not None else 0
-                        fresh_symbols.append(f"{sym}={price:.5f}({bars}b)")
+                        src = self.data_pipeline.data_manager.freshness.get(sym, type('',(),dict(last_source='?'))()).last_source
+                        fresh_symbols.append(f"{sym}={price:.5f}({bars}b,{src})")
                     logger.info(f"[status] cycle={self.cycle_counter} "
                                f"ticks/s={tick_rate} "
-                               f"bars_closed={bars_closed} "
-                               f"signals={self._signal_count} "
-                               f"trades={self._trade_count}  |  "
-                               f"{'  '.join(fresh_symbols[:3])}")
+                               f"bars/min={bars_closed} "
+                               f"sig={self._signal_count} "
+                               f"trd={self._trade_count}  |  "
+                               f"{'  '.join(fresh_symbols)}")
 
                 # --- Heartbeat every 60s: account-level summary ---
                 if now - last_heartbeat > 60:
