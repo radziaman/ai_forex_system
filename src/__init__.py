@@ -1,1 +1,1 @@
-"""Institutional Forex AI Moneybot - Python System"""
+"""RTS: AI Moneybot System Elite - Python System"""

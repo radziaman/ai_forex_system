@@ -49,7 +49,7 @@ latest_state: Dict[str, Any] = {
 
 # Authentication
 security = HTTPBasic() if FASTAPI_AVAILABLE else None
-JWT_SECRET = os.getenv("DASHBOARD_JWT_SECRET", "ai_forex_secret_key_2026")
+JWT_SECRET = os.getenv("DASHBOARD_JWT_SECRET", "moneybot_secret_key_2026")
 
 # Alerts
 alerts_queue: List[Dict] = []
@@ -79,7 +79,7 @@ def verify_token(token: str) -> Optional[Dict]:
 def verify_credentials(credentials: HTTPBasicCredentials) -> bool:
     """Verify HTTP Basic credentials."""
     correct_username = os.getenv("DASHBOARD_USER", "admin")
-    correct_password = os.getenv("DASHBOARD_PASS", "ai_forex_2026")
+    correct_password = os.getenv("DASHBOARD_PASS", "moneybot_2026")
     username_hash = hashlib.sha256(credentials.username.encode()).hexdigest()
     password_hash = hashlib.sha256(credentials.password.encode()).hexdigest()
     return (
@@ -109,7 +109,7 @@ def get_dashboard_html() -> str:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RTS AI Forex</title>
+<title>RTS: AI Moneybot System Elite</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 <style>
@@ -167,7 +167,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
   <rect x="10" y="23" width="12" height="1.5" rx=".75" fill="#fff" opacity=".4"/>
   <defs><linearGradient id="lg" x1="0" y1="0" x2="32" y2="32"><stop stop-color="#f59e0b"/><stop offset="1" stop-color="#10b981"/></linearGradient></defs>
 </svg>
-<h1>RTS AI Forex</h1>
+<h1>RTS: AI Moneybot System Elite</h1>
 <div class="topbar-right">
   <span class="mode-badge" id="mode">PAPER</span>
   <span class="status-dot ok" id="statusDot"></span>

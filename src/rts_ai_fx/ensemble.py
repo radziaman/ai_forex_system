@@ -197,13 +197,11 @@ class MoEEnsemble:
     def _determine_direction(
         self, ensemble_price: float, confidences: list, weights: np.ndarray
     ) -> str:
-        """Determine trading direction based on weighted predictions."""
-        # Use simple majority of weighted predictions
+        """Determine trading direction based on whether mean of predictions is above/below 1.0.
+        Only used as fallback — should_trade() computes direction independently from expert outputs."""
         avg_conf = np.average(confidences, weights=weights) if weights.sum() > 0 else 0.0
-        if avg_conf > 0.6:
-            return "BUY"
-        elif avg_conf < 0.4:
-            return "SELL"
+        if avg_conf > 0.5:
+            return "BUY" if ensemble_price > 1.0 else "SELL"
         return "HOLD"
 
     def update_elo(self, name: str, was_correct: bool, k: float = 32.0):

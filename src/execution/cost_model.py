@@ -75,8 +75,8 @@ class CostModel:
             is_acceptable = True
             rejection_reason = ""
 
-        # Convert pips to price units (pip = 0.0001 for most pairs)
-        pip_size = 0.0001 if "JPY" not in symbol.upper() else 0.01
+        # Convert pips to price units (pip size varies by symbol)
+        pip_size = self._pip_size(symbol)
         spread_cost = spread_pips * pip_size * volume
 
         # Commission (1 lot = 100,000 units)
@@ -117,11 +117,27 @@ class CostModel:
         return pnl - cost.total
 
     @staticmethod
+    def _pip_size(symbol: str) -> float:
+        sym = symbol.upper()
+        if sym in ("XAUUSD", "XAGUSD", "XTIUSD", "XBRUSD"):
+            return 0.01
+        if sym in ("XNGUSD",):
+            return 0.001
+        if sym in ("BTCUSD", "ETHUSD", "LTCUSD"):
+            return 1.0
+        if sym in ("XRPUSD",):
+            return 0.0001
+        if sym in ("US500", "US30", "USTEC", "UK100", "DE40"):
+            return 1.0
+        if "JPY" in sym:
+            return 0.01
+        return 0.0001
+
+    @staticmethod
     def pip_to_price(symbol: str) -> float:
-        return 0.0001 if "JPY" not in symbol.upper() else 0.01
+        return CostModel._pip_size(symbol)
 
     @staticmethod
     def calculate_pips(symbol: str, price_diff: float) -> float:
-        """Convert price difference to pips."""
-        pip_size = 0.0001 if "JPY" not in symbol.upper() else 0.01
+        pip_size = CostModel._pip_size(symbol)
         return price_diff / pip_size

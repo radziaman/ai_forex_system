@@ -1,5 +1,5 @@
 """
-Dashboard for RTS - AI FX Trading System v3.0
+Dashboard for RTS: AI Moneybot System Elite v3.0
 Provides real-time monitoring via FastAPI and WebSockets.
 Integrates with cTrader (IC Markets) - macOS compatible SSL solution.
 """

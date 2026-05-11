@@ -76,7 +76,12 @@ class RiskManager:
             atr = price * 0.001
 
         # Base Kelly calculation
-        win_rate = self.get_win_rate() or 0.55
+        win_rate = self.get_win_rate()
+        if win_rate == 0.0 and self.total_trades == 0:
+            win_rate = 0.55  # optimistic default for new accounts
+        elif win_rate == 0.0 and self.total_trades > 0:
+            win_rate = 0.10  # 0% after real trades — near zero to reduce sizing
+
         wins = [t.pnl for t in self.trade_history if t.status == "CLOSED" and t.pnl > 0]
         losses = [t.pnl for t in self.trade_history if t.status == "CLOSED" and t.pnl < 0]
         avg_win = np.mean(wins) if wins else 0.02
@@ -122,18 +127,16 @@ class RiskManager:
         return 1.0
 
     def _portfolio_var(self, open_positions: List[Dict]) -> float:
-        """Calculate correlation-adjusted portfolio VaR."""
         if not open_positions:
             return 0.0
 
-        # Simplified: sum individual VaRs with correlation adjustment
-        # In production, use full covariance matrix
         total_var = 0.0
         for pos in open_positions:
-            pos_var = abs(self.var()) * float(pos.get("volume", 0.01)) / 100000.0
+            volume = float(pos.get("volume", 0))
+            portfolio_share = volume / 100_000.0 if volume > 0 else 0.01
+            pos_var = abs(self.var()) * portfolio_share
             total_var += pos_var
 
-        # Assume average correlation of 0.5 for simplicity
         n = len(open_positions)
         correlation_adjustment = (n + 0.5 * n * (n - 1)) ** 0.5 / n if n > 1 else 1.0
         return total_var * correlation_adjustment
@@ -209,16 +212,20 @@ class RiskManager:
         """Run all pre-trade risk checks. Returns (approved, reason)."""
         if self.kill_switch_triggered:
             return False, "Kill switch active"
-        # Track peak balance for accurate drawdown
-        if balance > self.peak_balance:
-            self.peak_balance = balance
-        drawdown = (self.peak_balance - balance) / self.peak_balance if self.peak_balance > 0 else 0.0
+
+        # Track peak equity for accurate drawdown (includes floating PnL)
+        if equity > self.peak_balance:
+            self.peak_balance = equity
+        drawdown = (self.peak_balance - equity) / self.peak_balance if self.peak_balance > 0 else 0.0
         if drawdown > self.params.max_drawdown:
             self.kill_switch_triggered = True
             return False, f"Max drawdown exceeded: {drawdown:.1%}"
-        daily_loss = current_pnl / self.initial_balance
+
+        # Daily loss check uses tracked daily PnL, not total unrealized
+        daily_loss = self.daily_pnl / self.initial_balance if self.initial_balance > 0 else 0.0
         if daily_loss < -self.params.max_daily_loss:
             return False, f"Daily loss limit hit: {daily_loss:.1%}"
+
         if self.consecutive_losses >= self.params.max_consecutive_losses:
             return False, f"Max consecutive losses: {self.consecutive_losses}"
         margin_used = margin / equity if equity > 0 else 0

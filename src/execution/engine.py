@@ -81,6 +81,12 @@ class ExecutionEngine:
         if sym in ("USDJPY", "EURJPY", "GBPJPY"):
             usdjpy = self._live_price("USDJPY") or 100.0
             return round(diff / usdjpy, 2)
+        if sym in ("USDCHF",):
+            usdchf = self._live_price("USDCHF") or 0.88
+            return round(diff / usdchf, 2)
+        if sym in ("USDCAD",):
+            usdcad = self._live_price("USDCAD") or 1.35
+            return round(diff / usdcad, 2)
         if sym == "EURGBP":
             gbpusd = self._live_price("GBPUSD") or 1.2
             return round(diff * gbpusd, 2)
@@ -144,7 +150,7 @@ class ExecutionEngine:
         order = TradeOrder(
             symbol=trade.symbol, symbol_id=self._get_symbol_id(trade.symbol),
             side=close_side, order_type="MARKET",
-            volume=int(trade.volume * 100000), position_id=position_id,
+            volume=int(trade.volume), position_id=position_id,
         )
         try:
             result = await self.client.place_order(order)

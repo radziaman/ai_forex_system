@@ -177,8 +177,8 @@ class HMMRegimeDetector:
         total_observations = len(self.regime_history) - 1
         transition_freq = transition_count / max(total_observations, 1)
 
-        # Higher confidence if transition is rare (more predictable)
-        confidence = min(1.0, transition_freq * 5) if in_transition else 0.0
+        # Higher confidence when transitions are rare (more stable/predictable)
+        confidence = min(1.0, (1.0 - transition_freq) * 5) if in_transition else 0.0
 
         # Adjust SL/TP during transitions (higher volatility)
         if in_transition:

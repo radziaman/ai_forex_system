@@ -1,5 +1,5 @@
 """
-RTS AI Forex Trading System -- Elite Edition.
+RTS: AI Moneybot System Elite
 Multi-pair async trading loop with 7 major forex pairs, per-symbol regime
 detection, MoE ensemble, economic calendar gating, FinBERT sentiment,
 and institutional-grade risk management.
@@ -111,7 +111,7 @@ def get_asset_class(symbol: str) -> str:
     return "unknown"
 
 
-class RTSForexBot:
+class RTSMoneybotSystem:
     """Multi-pair AI forex trading bot with full institutional toolchain."""
 
     def __init__(self, config_path: str = "config.yaml", mode: str = "paper", initial_balance: float = 100000.0):
@@ -162,7 +162,7 @@ class RTSForexBot:
         self._last_eval_count: int = 0
 
         logger.info("=" * 60)
-        logger.info("  RTS AI Forex Trading System v4.0 (Multi-Pair)")
+        logger.info("  RTS: AI Moneybot System Elite v4.0 (Multi-Pair)")
         logger.info("  Pairs: EURUSD | GBPUSD | USDJPY | AUDUSD")
         logger.info("         USDCAD | USDCHF | NZDUSD")
         logger.info("  Economic Calendar | FinBERT Sentiment | Alt Data")
@@ -2139,21 +2139,57 @@ def signal_handler(sig, frame):
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="RTS: AI Moneybot System Elite")
-    parser.add_argument("--mode", choices=["live", "paper", "backtest", "validate", "train"], default="paper")
-    parser.add_argument("--config", default="config.yaml", help="Path to config YAML")
-    parser.add_argument("--capital", type=float, default=100000.0, help="Starting capital")
-    parser.add_argument("--walk-forward", action="store_true")
-    parser.add_argument("--mc-test", action="store_true")
-    parser.add_argument("--bt-sensitivity", action="store_true")
+    parser = argparse.ArgumentParser(
+        prog="python -m src.main",
+        description="RTS: AI Moneybot System Elite v4.0 — Multi-pair AI forex trading system",
+        epilog="""
+Examples:
+  python -m src.main --mode paper          Paper trade with $100K
+  python -m src.main --mode live           Live trading (requires .env)
+  python -m src.main --mode backtest       Run vectorized backtest
+  python -m src.main --mode validate       Walk-forward + Monte Carlo validation
+  python -m src.main --mode train          Run training pipeline
+  python -m src.main --mode paper --capital 50000  $50K paper trading
+        """,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("--mode", choices=["live", "paper", "backtest", "validate", "train"],
+                        default="paper", help="Operation mode")
+    parser.add_argument("--config", default="config.yaml",
+                        help="Path to config YAML (default: config.yaml)")
+    parser.add_argument("--capital", type=float, default=100000.0,
+                        help="Starting capital in USD (default: 100000)")
+    parser.add_argument("--walk-forward", action="store_true",
+                        help="Run walk-forward validation (validate mode)")
+    parser.add_argument("--mc-test", action="store_true",
+                        help="Run Monte Carlo significance test (validate mode)")
+    parser.add_argument("--bt-sensitivity", action="store_true",
+                        help="Run backtest with sensitivity analysis")
+    parser.add_argument("--info", action="store_true",
+                        help="Print system info and exit")
+    parser.add_argument("--version", action="store_true",
+                        help="Print version and exit")
     args = parser.parse_args()
+
+    if args.version:
+        from infrastructure.system_info import VERSION as ver
+        print(f"RTS: AI Moneybot System Elite v{ver}")
+        sys.exit(0)
+
+    if args.info:
+        from infrastructure.config_v2 import AppConfig
+        from infrastructure.system_info import collect_report
+        config = AppConfig.from_yaml(args.config)
+        report = collect_report(config, mode=args.mode, balance=args.capital)
+        print(report.print_summary())
+        sys.exit(0)
 
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     for d in ["data/logs", "data/trades", "models", "data/alternative_data"]:
         os.makedirs(d, exist_ok=True)
 
-    bot = RTSForexBot(args.config, mode=args.mode, initial_balance=args.capital)
+    bot = RTSMoneybotSystem(args.config, mode=args.mode, initial_balance=args.capital)
 
     if args.mode in ("backtest",) or args.bt_sensitivity:
         prices = bot.data_manager.get_ohlcv("EURUSD", "1h")
