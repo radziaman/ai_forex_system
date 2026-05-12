@@ -2,6 +2,7 @@
 Market Sentiment Analysis via FinBERT and news feeds.
 Provides orthogonal signal dimension beyond price-based features.
 """
+
 import numpy as np
 import time
 import json
@@ -13,6 +14,7 @@ from loguru import logger
 
 try:
     import feedparser
+
     FEEDPARSER_AVAILABLE = True
 except ImportError:
     FEEDPARSER_AVAILABLE = False
@@ -20,6 +22,7 @@ except ImportError:
 FINBERT_AVAILABLE = False
 try:
     from transformers import pipeline
+
     FINBERT_AVAILABLE = True
 except ImportError:
     pass
@@ -102,9 +105,7 @@ class SentimentAnalyzer:
             logger.warning(f"FinBERT init failed, using fallback: {e}")
             self.use_finbert = False
 
-    def fetch_news(
-        self, currencies: Optional[List[str]] = None
-    ) -> List[NewsItem]:
+    def fetch_news(self, currencies: Optional[List[str]] = None) -> List[NewsItem]:
         items = []
         for feed_url in FINANCE_NEWS_FEEDS:
             if not FEEDPARSER_AVAILABLE:
@@ -138,9 +139,7 @@ class SentimentAnalyzer:
         items.sort(key=lambda x: x.published, reverse=True)
         return items[: self.max_articles]
 
-    def analyze_sentiment(
-        self, items: List[NewsItem]
-    ) -> SentimentSnapshot:
+    def analyze_sentiment(self, items: List[NewsItem]) -> SentimentSnapshot:
         if not items:
             return SentimentSnapshot(
                 timestamp=time.time(),
@@ -211,16 +210,63 @@ class SentimentAnalyzer:
 
     def _lexicon_score(self, texts: List[str]) -> List[float]:
         positive_words = {
-            "grow", "growth", "surge", "rally", "bull", "bullish", "gain", "profit",
-            "strong", "upgrade", "outperform", "beat", "positive", "recovery", "boom",
-            "expansion", "momentum", "uptrend", "breakout", "higher", "improve",
-            "improvement", "increase", "rising", "boost", "opportunity", "optimistic",
+            "grow",
+            "growth",
+            "surge",
+            "rally",
+            "bull",
+            "bullish",
+            "gain",
+            "profit",
+            "strong",
+            "upgrade",
+            "outperform",
+            "beat",
+            "positive",
+            "recovery",
+            "boom",
+            "expansion",
+            "momentum",
+            "uptrend",
+            "breakout",
+            "higher",
+            "improve",
+            "improvement",
+            "increase",
+            "rising",
+            "boost",
+            "opportunity",
+            "optimistic",
         }
         negative_words = {
-            "drop", "crash", "decline", "bear", "bearish", "loss", "weak", "downgrade",
-            "underperform", "miss", "negative", "recession", "slowdown", "crisis",
-            "selloff", "plunge", "lower", "decrease", "falling", "risk", "uncertainty",
-            "volatile", "downturn", "fear", "panic", "correction", "tumble", "slump",
+            "drop",
+            "crash",
+            "decline",
+            "bear",
+            "bearish",
+            "loss",
+            "weak",
+            "downgrade",
+            "underperform",
+            "miss",
+            "negative",
+            "recession",
+            "slowdown",
+            "crisis",
+            "selloff",
+            "plunge",
+            "lower",
+            "decrease",
+            "falling",
+            "risk",
+            "uncertainty",
+            "volatile",
+            "downturn",
+            "fear",
+            "panic",
+            "correction",
+            "tumble",
+            "slump",
         }
         scores = []
         for text in texts:
@@ -252,13 +298,15 @@ class SentimentAnalyzer:
                     pass
         return time.time() - 3600
 
-    def get_latest(
-        self, force_refresh: bool = False
-    ) -> SentimentSnapshot:
+    def get_latest(self, force_refresh: bool = False) -> SentimentSnapshot:
         with self._lock:
             cached = self._cache.get("latest")
             last_fetch = self._last_fetch.get("latest", 0)
-            if cached and not force_refresh and time.time() - last_fetch < self.cache_ttl:
+            if (
+                cached
+                and not force_refresh
+                and time.time() - last_fetch < self.cache_ttl
+            ):
                 return cached
 
         cached_file = self._load_cache()

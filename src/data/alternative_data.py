@@ -5,6 +5,7 @@ Alternative Data Integration for institutional-grade signal enrichment.
 - Macroeconomic indicators via FRED
 - Cross-asset data (futures, bonds, equities)
 """
+
 import numpy as np
 import pandas as pd
 import time
@@ -16,12 +17,14 @@ from loguru import logger
 
 try:
     import requests
+
     REQUESTS_AVAILABLE = True
 except ImportError:
     REQUESTS_AVAILABLE = False
 
 try:
     from transformers import pipeline
+
     TRANSFORMERS_AVAILABLE = True
 except ImportError:
     TRANSFORMERS_AVAILABLE = False
@@ -30,6 +33,7 @@ YFINANCE_AVAILABLE = False  # Removed — use FIX API + Dukascopy instead
 
 try:
     import feedparser
+
     FEEDPARSER_AVAILABLE = True
 except ImportError:
     FEEDPARSER_AVAILABLE = False
@@ -174,9 +178,7 @@ class AlternativeDataProvider:
 
         for symbol, cot_id in COT_FX_SYMBOLS.items():
             try:
-                url = (
-                    f"https://www.cftc.gov/dea/futures/deanxsf.htm"
-                )
+                url = f"https://www.cftc.gov/dea/futures/deanxsf.htm"
                 resp = requests.get(url, timeout=15)
                 if resp.status_code == 200:
                     lines = resp.text.split("\n")
@@ -186,17 +188,45 @@ class AlternativeDataProvider:
                             if len(parts) >= 10:
                                 cot = COTData(
                                     symbol=symbol,
-                                    report_date=parts[0].strip() if len(parts) > 0 else "",
-                                    long_positions=float(parts[2]) if len(parts) > 2 else 0,
-                                    short_positions=float(parts[3]) if len(parts) > 3 else 0,
-                                    net_positions=float(parts[2]) - float(parts[3]) if len(parts) > 3 else 0,
-                                    open_interest=float(parts[4]) if len(parts) > 4 else 0,
-                                    net_change=float(parts[2]) - float(parts[3]) - (
-                                        float(parts[8]) - float(parts[9])
-                                    ) if len(parts) > 9 else 0,
-                                    net_pct_of_oi=float(parts[2]) / max(float(parts[4]), 1) * 100 if len(parts) > 4 else 0,
-                                    long_pct_of_oi=float(parts[2]) / max(float(parts[4]), 1) * 100 if len(parts) > 4 else 0,
-                                    short_pct_of_oi=float(parts[3]) / max(float(parts[4]), 1) * 100 if len(parts) > 4 else 0,
+                                    report_date=(
+                                        parts[0].strip() if len(parts) > 0 else ""
+                                    ),
+                                    long_positions=(
+                                        float(parts[2]) if len(parts) > 2 else 0
+                                    ),
+                                    short_positions=(
+                                        float(parts[3]) if len(parts) > 3 else 0
+                                    ),
+                                    net_positions=(
+                                        float(parts[2]) - float(parts[3])
+                                        if len(parts) > 3
+                                        else 0
+                                    ),
+                                    open_interest=(
+                                        float(parts[4]) if len(parts) > 4 else 0
+                                    ),
+                                    net_change=(
+                                        float(parts[2])
+                                        - float(parts[3])
+                                        - (float(parts[8]) - float(parts[9]))
+                                        if len(parts) > 9
+                                        else 0
+                                    ),
+                                    net_pct_of_oi=(
+                                        float(parts[2]) / max(float(parts[4]), 1) * 100
+                                        if len(parts) > 4
+                                        else 0
+                                    ),
+                                    long_pct_of_oi=(
+                                        float(parts[2]) / max(float(parts[4]), 1) * 100
+                                        if len(parts) > 4
+                                        else 0
+                                    ),
+                                    short_pct_of_oi=(
+                                        float(parts[3]) / max(float(parts[4]), 1) * 100
+                                        if len(parts) > 4
+                                        else 0
+                                    ),
                                 )
                                 cot_data[symbol] = cot
             except Exception as e:
@@ -260,9 +290,16 @@ class AlternativeDataProvider:
 
     def _fred_fallback(self, name: str) -> float:
         fallbacks = {
-            "GDP": 5.0, "CPI": 3.0, "UNEMP": 4.0, "FEDFUNDS": 4.5,
-            "US10Y": 4.2, "US2Y": 4.0, "US10Y2Y": 0.2, "VIX": 15.0,
-            "DXY": 104.0, "INDPRO": 100.0,
+            "GDP": 5.0,
+            "CPI": 3.0,
+            "UNEMP": 4.0,
+            "FEDFUNDS": 4.5,
+            "US10Y": 4.2,
+            "US2Y": 4.0,
+            "US10Y2Y": 0.2,
+            "VIX": 15.0,
+            "DXY": 104.0,
+            "INDPRO": 100.0,
         }
         return fallbacks.get(name, 0.0)
 
@@ -283,14 +320,16 @@ class AlternativeDataProvider:
                     summary = entry.get("summary", entry.get("description", ""))
                     text = f"{title}. {summary}"[:512]
                     sentiment = self._classify_text(text) if self._classifier else 0.0
-                    comms.append(CentralBankComm(
-                        timestamp=time.time(),
-                        bank=bank_name,
-                        title=title,
-                        summary=summary[:200],
-                        sentiment=sentiment,
-                        topic_tags=self._extract_topics(text),
-                    ))
+                    comms.append(
+                        CentralBankComm(
+                            timestamp=time.time(),
+                            bank=bank_name,
+                            title=title,
+                            summary=summary[:200],
+                            sentiment=sentiment,
+                            topic_tags=self._extract_topics(text),
+                        )
+                    )
             except Exception:
                 continue
 
@@ -298,14 +337,18 @@ class AlternativeDataProvider:
             avg_sentiment = 0.0
         else:
             sentiments = [c.sentiment for c in comms]
-            weights = np.array([
-                2.0 if c.bank == "FED" else 1.5 if c.bank == "ECB" else 1.0
-                for c in comms
-            ])
+            weights = np.array(
+                [
+                    2.0 if c.bank == "FED" else 1.5 if c.bank == "ECB" else 1.0
+                    for c in comms
+                ]
+            )
             avg_sentiment = float(np.average(sentiments, weights=weights))
 
         self._cb_cache = comms
-        self._save_cache(CB_CACHE_PATH, {"sentiment": avg_sentiment, "count": len(comms)})
+        self._save_cache(
+            CB_CACHE_PATH, {"sentiment": avg_sentiment, "count": len(comms)}
+        )
         return avg_sentiment
 
     def fetch_cross_asset_returns(self) -> Dict[str, float]:
@@ -323,45 +366,70 @@ class AlternativeDataProvider:
 
     def get_cot_feature_vector(self) -> np.ndarray:
         vec = []
-        for sym in ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD"]:
+        for sym in [
+            "EURUSD",
+            "GBPUSD",
+            "USDJPY",
+            "AUDUSD",
+            "USDCAD",
+            "USDCHF",
+            "NZDUSD",
+        ]:
             cot = self._cot_cache.get(sym)
             if cot:
-                vec.extend([
-                    cot.net_pct_of_oi / 100.0,
-                    cot.net_change / 10000.0,
-                    cot.long_pct_of_oi / 100.0,
-                ])
+                vec.extend(
+                    [
+                        cot.net_pct_of_oi / 100.0,
+                        cot.net_change / 10000.0,
+                        cot.long_pct_of_oi / 100.0,
+                    ]
+                )
             else:
                 vec.extend([0.0, 0.0, 0.5])
         return np.array(vec, dtype=np.float32)
 
     def get_fred_feature_vector(self) -> np.ndarray:
         fred = self.fetch_fred()
-        vec = np.array([
-            fred.get(key, 0.0) for key in [
-                "GDP", "CPI", "UNEMP", "FEDFUNDS", "US10Y",
-                "US10Y2Y", "VIX", "DXY", "INDPRO",
-            ]
-        ], dtype=np.float32)
+        vec = np.array(
+            [
+                fred.get(key, 0.0)
+                for key in [
+                    "GDP",
+                    "CPI",
+                    "UNEMP",
+                    "FEDFUNDS",
+                    "US10Y",
+                    "US10Y2Y",
+                    "VIX",
+                    "DXY",
+                    "INDPRO",
+                ]
+            ],
+            dtype=np.float32,
+        )
         vec = np.nan_to_num(vec, nan=0.0)
         vec = np.clip(vec / (np.abs(vec).max() + 1e-8), -10, 10)
         return vec
 
     def get_cross_asset_feature_vector(self) -> np.ndarray:
         rets = self.fetch_cross_asset_returns()
-        return np.array([
-            rets.get(name, 0.0) for name in [
-                "SPX", "NDX", "VIX", "GOLD", "OIL", "COPPER", "US10Y"
-            ]
-        ], dtype=np.float32)
+        return np.array(
+            [
+                rets.get(name, 0.0)
+                for name in ["SPX", "NDX", "VIX", "GOLD", "OIL", "COPPER", "US10Y"]
+            ],
+            dtype=np.float32,
+        )
 
     def get_full_feature_vector(self) -> np.ndarray:
-        return np.concatenate([
-            self.get_cot_feature_vector(),
-            self.get_fred_feature_vector(),
-            self.get_cross_asset_feature_vector(),
-            np.array([self.fetch_central_bank_sentiment()], dtype=np.float32),
-        ])
+        return np.concatenate(
+            [
+                self.get_cot_feature_vector(),
+                self.get_fred_feature_vector(),
+                self.get_cross_asset_feature_vector(),
+                np.array([self.fetch_central_bank_sentiment()], dtype=np.float32),
+            ]
+        )
 
     def _classify_text(self, text: str) -> float:
         if not self._classifier:
@@ -370,7 +438,9 @@ class AlternativeDataProvider:
             result = self._classifier(text[:512])[0]
             label = result.get("label", "neutral").lower()
             score = result.get("score", 0.5)
-            return score if label == "positive" else -score if label == "negative" else 0.0
+            return (
+                score if label == "positive" else -score if label == "negative" else 0.0
+            )
         except Exception:
             return 0.0
 

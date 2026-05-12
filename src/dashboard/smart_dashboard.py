@@ -2,6 +2,7 @@
 AI-Backed Smart Enhanced Dashboard (Enhancement #17).
 Authentication, real-time equity curve, risk metrics, WebSocket improvements.
 """
+
 import os
 import json
 import time
@@ -12,16 +13,25 @@ from datetime import datetime
 from loguru import logger
 
 try:
-    from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Security
+    from fastapi import (
+        FastAPI,
+        WebSocket,
+        WebSocketDisconnect,
+        HTTPException,
+        Depends,
+        Security,
+    )
     from fastapi.security import HTTPBasic, HTTPBasicCredentials
     from fastapi.responses import HTMLResponse, JSONResponse
     import uvicorn
+
     FASTAPI_AVAILABLE = True
 except ImportError:
     FASTAPI_AVAILABLE = False
 
 try:
     import jwt
+
     JWT_AVAILABLE = True
 except ImportError:
     JWT_AVAILABLE = False
@@ -47,9 +57,16 @@ latest_state: Dict[str, Any] = {
     "last_update": time.time(),
 }
 
-# Authentication
+# Authentication — secrets from env only, no hardcoded defaults
 security = HTTPBasic() if FASTAPI_AVAILABLE else None
-JWT_SECRET = os.getenv("DASHBOARD_JWT_SECRET", "moneybot_secret_key_2026")
+JWT_SECRET = os.getenv("DASHBOARD_JWT_SECRET")
+if not JWT_SECRET:
+    import uuid
+
+    JWT_SECRET = str(uuid.uuid4())
+    logger.warning(
+        "DASHBOARD_JWT_SECRET not set — using random per-run secret (sessions invalidated on restart)"
+    )
 
 # Alerts
 alerts_queue: List[Dict] = []
@@ -99,7 +116,15 @@ def update_state(**kwargs):
 
 async def broadcast_update(state: Dict):
     """Broadcast update to all WebSocket clients."""
-    pass
+    dead = []
+    for c in connected_clients:
+        try:
+            await c.send_json(state)
+        except Exception:
+            dead.append(c)
+    for c in dead:
+        if c in connected_clients:
+            connected_clients.remove(c)
 
 
 def get_dashboard_html() -> str:
@@ -334,13 +359,37 @@ if FASTAPI_AVAILABLE:
         token = create_access_token({"sub": credentials.username})
         return {"token": token, "token_type": "bearer"}
 
+    @app.get("/health")
+    async def health():
+        elapsed = time.time() - latest_state.get("last_update", time.time())
+        pos_count = len(latest_state.get("open_positions", []))
+        bal = latest_state.get("balance", 0)
+        eq = latest_state.get("equity", 0)
+        dd = (
+            (latest_state.get("initial_balance", bal) - bal)
+            / max(latest_state.get("initial_balance", bal), 1)
+            * 100
+        )
+        return {
+            "status": "ok" if elapsed < 60 else "stale",
+            "dashboard": True,
+            "last_update_s": round(elapsed, 1),
+            "trading": latest_state.get("mode", "UNKNOWN"),
+            "balance": round(bal, 2),
+            "equity": round(eq, 2),
+            "drawdown_pct": round(max(dd, 0), 2),
+            "open_positions": pos_count,
+        }
+
     @app.get("/api/state")
     async def get_state(token: str = None):
         """Get current dashboard state (requires auth)."""
-        if JWT_AVAILABLE and token:
-            payload = verify_token(token)
-            if not payload:
-                raise HTTPException(status_code=401, detail="Invalid token")
+        payload = verify_token(token) if token else None
+        if not payload:
+            raise HTTPException(
+                status_code=401,
+                detail="Missing or invalid token — POST /api/login first",
+            )
         return latest_state
 
     @app.get("/api/risk_metrics")
@@ -358,12 +407,16 @@ if FASTAPI_AVAILABLE:
     async def websocket_endpoint(websocket: WebSocket):
         """WebSocket for real-time updates."""
         await websocket.accept()
+        connected_clients.append(websocket)
+        await websocket.send_json(latest_state)
         try:
             while True:
-                await websocket.send_json(latest_state)
-                await asyncio.sleep(1)
+                msg = await websocket.receive_text()
+                if msg == "ping":
+                    await websocket.send_json({"type": "pong"})
         except WebSocketDisconnect:
-            pass
+            if websocket in connected_clients:
+                connected_clients.remove(websocket)
 
     @app.get("/api/positions")
     async def get_positions():

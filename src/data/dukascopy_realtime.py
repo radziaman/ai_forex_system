@@ -3,6 +3,7 @@ High-performance Dukascopy real-time tick provider.
 Uses HTTP keep-alive + efficient binary protocol for minimal latency.
 Falls back to cloudscraper for historical data.
 """
+
 import asyncio
 import aiohttp
 import struct
@@ -19,10 +20,17 @@ from api.base import DataProvider, PriceTick, OHLCV
 logger = logging.getLogger(__name__)
 
 DUKASCOPE_SYMBOLS = {
-    "EURUSD": "EURUSD", "GBPUSD": "GBPUSD", "USDJPY": "USDJPY",
-    "AUDUSD": "AUDUSD", "USDCAD": "USDCAD", "USDCHF": "USDCHF",
-    "NZDUSD": "NZDUSD", "EURJPY": "EURJPY", "GBPJPY": "GBPJPY",
-    "EURGBP": "EURGBP", "XAUUSD": "XAUUSD",
+    "EURUSD": "EURUSD",
+    "GBPUSD": "GBPUSD",
+    "USDJPY": "USDJPY",
+    "AUDUSD": "AUDUSD",
+    "USDCAD": "USDCAD",
+    "USDCHF": "USDCHF",
+    "NZDUSD": "NZDUSD",
+    "EURJPY": "EURJPY",
+    "GBPJPY": "GBPJPY",
+    "EURGBP": "EURGBP",
+    "XAUUSD": "XAUUSD",
 }
 
 # Real-time tick endpoint (Dukascopy provides tick data via their public API)
@@ -35,7 +43,7 @@ CACHE_DIR = Path("data/dukascopy_cache")
 class DukascopyProvider(DataProvider):
     """
     High-performance data provider using Dukascopy's public API.
-    
+
     Features:
     - HTTP/2 compatible with connection pooling
     - Binary BI5 format (efficient compression)
@@ -44,7 +52,9 @@ class DukascopyProvider(DataProvider):
     - Automatic rate limiting (respectful ~100ms between requests)
     """
 
-    def __init__(self, cache: bool = True, rate_limit: float = 0.1, poll_interval: float = 0.5):
+    def __init__(
+        self, cache: bool = True, rate_limit: float = 0.1, poll_interval: float = 0.5
+    ):
         self.cache_enabled = cache
         self.rate_limit = rate_limit
         self.poll_interval = poll_interval
@@ -53,7 +63,7 @@ class DukascopyProvider(DataProvider):
         self._latest_prices: Dict[str, PriceTick] = {}
         self._poll_tasks: Dict[str, asyncio.Task] = {}
         self._running = False
-        
+
         if cache:
             CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -69,7 +79,7 @@ class DukascopyProvider(DataProvider):
             self._session = aiohttp.ClientSession(
                 timeout=timeout,
                 connector=connector,
-                headers={"User-Agent": "Mozilla/5.0 (compatible; RTS-AI-Forex/4.0)"}
+                headers={"User-Agent": "Mozilla/5.0 (compatible; RTS-AI-Forex/4.0)"},
             )
         return self._session
 
@@ -85,11 +95,11 @@ class DukascopyProvider(DataProvider):
             decompressed = lzma.decompress(data)
         except lzma.LZMAError:
             decompressed = data
-        
+
         ticks = []
         tick_size = 20
         for i in range(0, len(decompressed), tick_size):
-            chunk = decompressed[i:i + tick_size]
+            chunk = decompressed[i : i + tick_size]
             if len(chunk) < tick_size:
                 break
             ms = struct.unpack(">I", chunk[0:4])[0]
@@ -97,7 +107,9 @@ class DukascopyProvider(DataProvider):
             bid_raw = struct.unpack(">I", chunk[8:12])[0]
             ask_vol = struct.unpack(">f", chunk[12:16])[0]
             bid_vol = struct.unpack(">f", chunk[16:20])[0]
-            ticks.append((ms / 1000.0, bid_raw / 100000.0, ask_raw / 100000.0, bid_vol, ask_vol))
+            ticks.append(
+                (ms / 1000.0, bid_raw / 100000.0, ask_raw / 100000.0, bid_vol, ask_vol)
+            )
         return ticks
 
     async def fetch_ticks(self, symbol: str, date: str) -> List[PriceTick]:
@@ -105,30 +117,32 @@ class DukascopyProvider(DataProvider):
         duk_symbol = DUKASCOPE_SYMBOLS.get(symbol.upper())
         if not duk_symbol:
             raise ValueError(f"Symbol {symbol} not supported")
-        
+
         dt = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        
+
         # Skip future dates and only fetch up to current hour - 1
         now = datetime.now(timezone.utc)
         max_hour = 23
         if dt.date() == now.date():
             max_hour = now.hour - 1  # Don't fetch current hour (not available yet)
-        
+
         all_ticks = []
         for hour in range(max_hour + 1):
             url = TICK_BI5_URL.format(
                 symbol=duk_symbol, year=dt.year, month=dt.month, day=dt.day, hour=hour
             )
-            
+
             cache_file = CACHE_DIR / f"{symbol}_{dt.strftime('%Y%m%d')}_{hour:02d}.bi5"
-            
+
             data = None
             if self.cache_enabled and cache_file.exists():
                 data = cache_file.read_bytes()
             else:
                 try:
                     session = await self._get_session()
-                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                    async with session.get(
+                        url, timeout=aiohttp.ClientTimeout(total=5)
+                    ) as resp:
                         if resp.status == 200:
                             data = await resp.read()
                             if self.cache_enabled and data and len(data) > 10:
@@ -136,42 +150,59 @@ class DukascopyProvider(DataProvider):
                     if data:
                         await asyncio.sleep(self.rate_limit)
                 except Exception as e:
-                    logger.debug(f"Dukascopy fetch error for {symbol} {date} {hour}:00 - {e}")
+                    logger.debug(
+                        f"Dukascopy fetch error for {symbol} {date} {hour}:00 - {e}"
+                    )
                     continue
-            
+
             if not data or len(data) < 10:
                 continue
-                
+
             try:
                 decoded = self._decode_bi5(data)
             except Exception as e:
                 logger.debug(f"Decode error for {symbol} {date} {hour}:00 - {e}")
                 continue
-            
+
             base_ts = dt.timestamp() + hour * 3600
             for ms_offset, bid, ask, bv, av in decoded:
-                all_ticks.append(PriceTick(
-                    symbol=symbol,
-                    bid=bid,
-                    ask=ask,
-                    spread=round(ask - bid, 5),
-                    volume=bv + av,
-                    timestamp=base_ts + ms_offset
-                ))
-        
+                all_ticks.append(
+                    PriceTick(
+                        symbol=symbol,
+                        bid=bid,
+                        ask=ask,
+                        spread=round(ask - bid, 5),
+                        volume=bv + av,
+                        timestamp=base_ts + ms_offset,
+                    )
+                )
+
         all_ticks.sort(key=lambda t: t.timestamp)
         return all_ticks
 
-    async def fetch_ohlcv(self, symbol: str, timeframe: str = "1h", start: str = "", end: str = "") -> List[OHLCV]:
+    async def fetch_ohlcv(
+        self, symbol: str, timeframe: str = "1h", start: str = "", end: str = ""
+    ) -> List[OHLCV]:
         """Fetch OHLCV data by aggregating ticks."""
-        period_map = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
+        period_map = {
+            "1m": 60,
+            "5m": 300,
+            "15m": 900,
+            "1h": 3600,
+            "4h": 14400,
+            "1d": 86400,
+        }
         period_seconds = period_map.get(timeframe, 3600)
-        
-        dt_start = datetime.fromisoformat(start) if "T" in start else datetime.strptime(start, "%Y-%m-%d")
+
+        dt_start = (
+            datetime.fromisoformat(start)
+            if "T" in start
+            else datetime.strptime(start, "%Y-%m-%d")
+        )
         dt_start = dt_start.replace(tzinfo=timezone.utc)
         dt_end = datetime.fromisoformat(end) if end else datetime.now(timezone.utc)
         dt_end = dt_end.replace(tzinfo=timezone.utc)
-        
+
         all_ticks = []
         current = dt_start
         while current <= dt_end:
@@ -181,15 +212,15 @@ class DukascopyProvider(DataProvider):
             except Exception as e:
                 logger.debug(f"Error fetching {symbol} for {current.date()}: {e}")
             current += timedelta(days=1)
-        
+
         if not all_ticks:
             return []
-        
+
         # Aggregate ticks to OHLCV
         bars = []
         current_bar = None
         bar_start = None
-        
+
         for tick in all_ticks:
             bar_idx = int(tick.timestamp // period_seconds)
             if current_bar is None or bar_idx != bar_start:
@@ -209,10 +240,10 @@ class DukascopyProvider(DataProvider):
                 current_bar["low"] = min(current_bar["low"], tick.bid)
                 current_bar["close"] = tick.bid
                 current_bar["volume"] += tick.volume
-        
+
         if current_bar:
             bars.append(current_bar)
-        
+
         return [OHLCV(**b) for b in bars]
 
     async def stream_prices(self, symbols: List[str], callback: Callable):
@@ -221,28 +252,26 @@ class DukascopyProvider(DataProvider):
         Polls Dukascopy's tick data every `poll_interval` seconds.
         """
         self._running = True
-        
+
         for symbol in symbols:
             if symbol not in self._subscribers:
                 self._subscribers[symbol] = []
             self._subscribers[symbol].append(callback)
-            
+
             if symbol not in self._poll_tasks:
-                self._poll_tasks[symbol] = asyncio.create_task(
-                    self._poll_ticks(symbol)
-                )
-        
+                self._poll_tasks[symbol] = asyncio.create_task(self._poll_ticks(symbol))
+
         logger.info(f"Started streaming {len(symbols)} symbols from Dukascopy")
 
     async def _poll_ticks(self, symbol: str):
         """Poll for new ticks at high frequency."""
         last_minute = -1
-        
+
         while self._running:
             try:
                 now = datetime.now(timezone.utc)
                 current_minute = now.minute
-                
+
                 # Only fetch new data when minute changes (ticks are per-minute)
                 if current_minute != last_minute:
                     ticks = await self._fetch_latest_ticks(symbol)
@@ -255,16 +284,18 @@ class DukascopyProvider(DataProvider):
                                 except Exception as e:
                                     logger.error(f"Callback error for {symbol}: {e}")
                     last_minute = current_minute
-                
+
                 await asyncio.sleep(self.poll_interval)
-                
+
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"Poll error for {symbol}: {e}")
                 await asyncio.sleep(self.poll_interval * 2)
 
-    async def _fetch_latest_ticks(self, symbol: str, minutes_back: int = 5) -> List[PriceTick]:
+    async def _fetch_latest_ticks(
+        self, symbol: str, minutes_back: int = 5
+    ) -> List[PriceTick]:
         """Fetch the latest ticks for a symbol."""
         now = datetime.now(timezone.utc)
         # Fetch ticks for the last few minutes
@@ -272,14 +303,16 @@ class DukascopyProvider(DataProvider):
         for mins in range(minutes_back):
             check_time = now - timedelta(minutes=mins)
             try:
-                day_ticks = await self.fetch_ticks(symbol, check_time.strftime("%Y-%m-%d"))
+                day_ticks = await self.fetch_ticks(
+                    symbol, check_time.strftime("%Y-%m-%d")
+                )
                 # Filter to recent ticks (last few minutes)
                 cutoff = (now - timedelta(minutes=minutes_back)).timestamp()
                 recent = [t for t in day_ticks if t.timestamp >= cutoff]
                 ticks.extend(recent)
             except Exception:
                 continue
-        
+
         ticks.sort(key=lambda t: t.timestamp)
         return ticks
 
@@ -290,17 +323,17 @@ class DukascopyProvider(DataProvider):
     async def close(self):
         """Clean up resources."""
         self._running = False
-        
+
         for task in self._poll_tasks.values():
             task.cancel()
             try:
                 await task
             except asyncio.CancelledError:
                 pass
-        
+
         if self._session and not self._session.closed:
             await self._session.close()
-        
+
         logger.info("Dukascopy provider closed")
 
     async def __aenter__(self):

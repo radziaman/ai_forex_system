@@ -3,6 +3,7 @@ Distributed Training Pipeline for scaling model training.
 Supports Ray-based parallel training, hyperparameter sweeps,
 and experiment tracking with Weights & Biases.
 """
+
 import numpy as np
 import os
 import json
@@ -13,18 +14,21 @@ from loguru import logger
 
 try:
     import ray
+
     RAY_AVAILABLE = True
 except ImportError:
     RAY_AVAILABLE = False
 
 try:
     import wandb
+
     WANDB_AVAILABLE = True
 except ImportError:
     WANDB_AVAILABLE = False
 
 try:
     import optuna
+
     OPTUNA_AVAILABLE = True
 except ImportError:
     OPTUNA_AVAILABLE = False
@@ -114,11 +118,14 @@ class DistributedTrainer:
         n_trials: int,
     ) -> List[TrialResult]:
         if not RAY_AVAILABLE:
-            return self._local_sweep(param_grid, train_fn, X_train, y_train, X_val, y_val, n_trials)
+            return self._local_sweep(
+                param_grid, train_fn, X_train, y_train, X_val, y_val, n_trials
+            )
 
         @ray.remote(num_gpus=0.5)
         def _train_trial(config_dict: Dict) -> Dict:
             import tensorflow as tf
+
             tf.get_logger().setLevel("ERROR")
             cfg = TrialConfig(**config_dict)
             start = time.time()
@@ -134,7 +141,9 @@ class DistributedTrainer:
             }
 
         all_params = self._generate_param_combinations(param_grid, n_trials)
-        logger.info(f"Launching {len(all_params)} Ray trials across {self.num_workers} workers")
+        logger.info(
+            f"Launching {len(all_params)} Ray trials across {self.num_workers} workers"
+        )
 
         futures = [_train_trial.remote(p) for p in all_params]
         results = []
@@ -145,14 +154,16 @@ class DistributedTrainer:
             for ref in ready:
                 try:
                     result = ray.get(ref)
-                    results.append(TrialResult(
-                        config=TrialConfig(**result["config"]),
-                        val_loss=result["val_loss"],
-                        val_mae=result["val_mae"],
-                        val_accuracy=result["val_accuracy"],
-                        train_time=result["train_time"],
-                        params_count=result["params_count"],
-                    ))
+                    results.append(
+                        TrialResult(
+                            config=TrialConfig(**result["config"]),
+                            val_loss=result["val_loss"],
+                            val_mae=result["val_mae"],
+                            val_accuracy=result["val_accuracy"],
+                            train_time=result["train_time"],
+                            params_count=result["params_count"],
+                        )
+                    )
                     self._log_progress(result, i + len(results), len(all_params))
                 except Exception as e:
                     logger.error(f"Trial failed: {e}")
@@ -206,17 +217,35 @@ class DistributedTrainer:
         n_trials: int,
     ) -> List[TrialResult]:
         if not OPTUNA_AVAILABLE:
-            return self._local_sweep(param_grid, train_fn, X_train, y_train, X_val, y_val, n_trials)
+            return self._local_sweep(
+                param_grid, train_fn, X_train, y_train, X_val, y_val, n_trials
+            )
 
         def objective(trial):
             cfg = TrialConfig(
-                lstm_units=trial.suggest_int("lstm_units", *param_grid.get("lstm_units", [32, 256])),
-                cnn_filters=trial.suggest_int("cnn_filters", *param_grid.get("cnn_filters", [32, 256])),
-                learning_rate=trial.suggest_float("learning_rate", *param_grid.get("learning_rate", [1e-5, 1e-2]), log=True),
-                dropout=trial.suggest_float("dropout", *param_grid.get("dropout", [0.1, 0.5])),
-                batch_size=trial.suggest_categorical("batch_size", param_grid.get("batch_size", [16, 32, 64])),
-                n_lstm_layers=trial.suggest_int("n_lstm_layers", *param_grid.get("n_lstm_layers", [1, 3])),
-                n_dense_units=trial.suggest_int("n_dense_units", *param_grid.get("n_dense_units", [32, 256])),
+                lstm_units=trial.suggest_int(
+                    "lstm_units", *param_grid.get("lstm_units", [32, 256])
+                ),
+                cnn_filters=trial.suggest_int(
+                    "cnn_filters", *param_grid.get("cnn_filters", [32, 256])
+                ),
+                learning_rate=trial.suggest_float(
+                    "learning_rate",
+                    *param_grid.get("learning_rate", [1e-5, 1e-2]),
+                    log=True,
+                ),
+                dropout=trial.suggest_float(
+                    "dropout", *param_grid.get("dropout", [0.1, 0.5])
+                ),
+                batch_size=trial.suggest_categorical(
+                    "batch_size", param_grid.get("batch_size", [16, 32, 64])
+                ),
+                n_lstm_layers=trial.suggest_int(
+                    "n_lstm_layers", *param_grid.get("n_lstm_layers", [1, 3])
+                ),
+                n_dense_units=trial.suggest_int(
+                    "n_dense_units", *param_grid.get("n_dense_units", [32, 256])
+                ),
             )
             metrics = train_fn(X_train, y_train, X_val, y_val, cfg)
             val_mae = metrics.get("val_mae", 999)
@@ -230,14 +259,16 @@ class DistributedTrainer:
         results = []
         for t in study.trials:
             if t.value is not None:
-                results.append(TrialResult(
-                    config=TrialConfig(**t.params),
-                    val_loss=t.value,
-                    val_mae=t.value,
-                    val_accuracy=0.0,
-                    train_time=0.0,
-                    params_count=0,
-                ))
+                results.append(
+                    TrialResult(
+                        config=TrialConfig(**t.params),
+                        val_loss=t.value,
+                        val_mae=t.value,
+                        val_accuracy=0.0,
+                        train_time=0.0,
+                        params_count=0,
+                    )
+                )
         return results
 
     def train_distributed(
@@ -271,6 +302,7 @@ class DistributedTrainer:
         @ray.remote(num_gpus=0.5)
         def _train(config_dict: Dict) -> Dict:
             import tensorflow as tf
+
             tf.get_logger().setLevel("ERROR")
             return train_fn(X_train, y_train, X_val, y_val, TrialConfig(**config_dict))
 
@@ -285,6 +317,7 @@ class DistributedTrainer:
         self, param_grid: Dict[str, List[Any]], n_trials: int
     ) -> List[Dict]:
         import itertools
+
         keys = list(param_grid.keys())
         values = list(param_grid.values())
         all_combs = list(itertools.product(*values))
@@ -315,6 +348,8 @@ class DistributedTrainer:
         logger.info(f"Sweep results saved to {path}")
         if results:
             best = results[0]
-            logger.info(f"Best: val_loss={best.val_loss:.6f}, "
-                        f"lstm={best.config.lstm_units}, "
-                        f"lr={best.config.learning_rate}")
+            logger.info(
+                f"Best: val_loss={best.val_loss:.6f}, "
+                f"lstm={best.config.lstm_units}, "
+                f"lr={best.config.learning_rate}"
+            )

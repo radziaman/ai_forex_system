@@ -1,4 +1,5 @@
 """Tests for DataPipeline."""
+
 import time
 import numpy as np
 from infrastructure.config_v2 import AppConfig
@@ -20,13 +21,16 @@ class TestDataPipeline:
 
     def test_start_stop(self):
         import asyncio
+
         asyncio.run(self.svc.start())
         assert self.svc.is_running
         asyncio.run(self.svc.stop())
         assert not self.svc.is_running
 
     def test_ingest_tick_updates_data_manager(self):
-        tick = PriceTick(symbol="EURUSD", bid=1.1200, ask=1.1201, volume=100, timestamp=time.time())
+        tick = PriceTick(
+            symbol="EURUSD", bid=1.1200, ask=1.1201, volume=100, timestamp=time.time()
+        )
         self.svc.ingest_tick(tick)
         price = self.svc.data_manager.get_price("EURUSD", "1h")
         assert price > 0

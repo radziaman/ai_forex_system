@@ -1,6 +1,7 @@
 """
 cTrader Open API Client — Async-safe SSL+Protobuf with retry, Level II DOM, and order lifecycle tracking.
 """
+
 import ssl
 import asyncio
 import time
@@ -25,6 +26,7 @@ try:
         ProtoOAGetTrendbarsRes,
     )
     from ctrader_open_api.messages.OpenApiModelMessages_pb2 import ProtoOATrendbar
+
     _HAS_PROTOBUF = True
     print("cTrader Open API protobuf loaded successfully")
 except ImportError as e:
@@ -38,34 +40,34 @@ logger = logging.getLogger(__name__)
 # Symbol IDs VERIFIED by user from cTrader Symbol Info
 SYMBOL_MAP = {
     # Forex Majors (VERIFIED)
-    "EURUSD": 1,       # VERIFIED
-    "GBPUSD": 2,       # VERIFIED
-    "USDJPY": 4,       # VERIFIED (was 3)
-    "XAUUSD": 41,      # VERIFIED
-    "BTCUSD": 114,     # VERIFIED (was 5)
-    "AUDUSD": 5,       # VERIFIED (was 6)
-    "USDCAD": 8,       # VERIFIED (was 7)
-    "USDCHF": 6,       # VERIFIED (was 8)
-    "NZDUSD": 12,      # VERIFIED (was 9)
+    "EURUSD": 1,  # VERIFIED
+    "GBPUSD": 2,  # VERIFIED
+    "USDJPY": 4,  # VERIFIED (was 3)
+    "XAUUSD": 41,  # VERIFIED
+    "BTCUSD": 114,  # VERIFIED (was 5)
+    "AUDUSD": 5,  # VERIFIED (was 6)
+    "USDCAD": 8,  # VERIFIED (was 7)
+    "USDCHF": 6,  # VERIFIED (was 8)
+    "NZDUSD": 12,  # VERIFIED (was 9)
     # Forex Minors (VERIFIED)
-    "EURJPY": 3,       # VERIFIED (was 10)
-    "GBPJPY": 7,       # VERIFIED (was 11)
-    "EURGBP": 9,       # VERIFIED (was 12)
+    "EURJPY": 3,  # VERIFIED (was 10)
+    "GBPJPY": 7,  # VERIFIED (was 11)
+    "EURGBP": 9,  # VERIFIED (was 12)
     # Commodities (Metals & Energy) - VERIFIED
-    "XAGUSD": 42,      # VERIFIED (was 13)
-    "XTIUSD": 99,      # VERIFIED (was 14)
-    "XBRUSD": 100,     # VERIFIED (was 15)
-    "XNGUSD": 121,     # VERIFIED (was 16)
+    "XAGUSD": 42,  # VERIFIED (was 13)
+    "XTIUSD": 99,  # VERIFIED (was 14)
+    "XBRUSD": 100,  # VERIFIED (was 15)
+    "XNGUSD": 121,  # VERIFIED (was 16)
     # Indices - VERIFIED
-    "US500": 115,      # VERIFIED (was 17)
-    "US30": 125,       # VERIFIED (was 18)
-    "USTEC": 108,      # VERIFIED (was 19)
-    "UK100": 116,      # VERIFIED (was 20)
-    "DE40": 139,       # VERIFIED (was 21)
+    "US500": 115,  # VERIFIED (was 17)
+    "US30": 125,  # VERIFIED (was 18)
+    "USTEC": 108,  # VERIFIED (was 19)
+    "UK100": 116,  # VERIFIED (was 20)
+    "DE40": 139,  # VERIFIED (was 21)
     # Crypto - VERIFIED
-    "ETHUSD": 105,     # VERIFIED (was 22)
-    "LTCUSD": 112,     # VERIFIED (was 23)
-    "XRPUSD": 215,     # VERIFIED (was 24)
+    "ETHUSD": 105,  # VERIFIED (was 22)
+    "LTCUSD": 112,  # VERIFIED (was 23)
+    "XRPUSD": 215,  # VERIFIED (was 24)
 }
 
 REVERSE_SYMBOL_MAP = {v: k for k, v in SYMBOL_MAP.items()}
@@ -81,6 +83,7 @@ PROTO_OA_UNSUBSCRIBE_DEPTH_QUOTES_RES = 2159
 @dataclass
 class DepthLevel:
     """Single price level in the order book."""
+
     price: float = 0.0
     size: float = 0.0  # in units
 
@@ -88,6 +91,7 @@ class DepthLevel:
 @dataclass
 class MarketDepth:
     """Full Level II market depth with bid/ask stacks."""
+
     symbol: str = ""
     bid: float = 0.0
     ask: float = 0.0
@@ -142,6 +146,7 @@ class AccountInfo:
 
 class CtraderClient:
     """Async-safe cTrader client with thread-pool IO, Level II DOM, and retry logic."""
+
     def __init__(
         self,
         app_id: str = "",
@@ -280,6 +285,7 @@ class CtraderClient:
             ProtoOAGetAccountListByAccessTokenReq,
             ProtoOAGetAccountListByAccessTokenRes,
         )
+
         req = ProtoOAGetAccountListByAccessTokenReq()
         req.accessToken = self.access_token
 
@@ -287,19 +293,27 @@ class CtraderClient:
             return False
 
         response = await self._recv_msg()
-        logger.info(f"Account list response: payloadType={response.payloadType if response else 'None'}")
+        logger.info(
+            f"Account list response: payloadType={response.payloadType if response else 'None'}"
+        )
         if response and response.payloadType == 2150:
             res = ProtoOAGetAccountListByAccessTokenRes()
             res.ParseFromString(response.payload)
 
             # Find the account by traderLogin (or use first)
-            matching = [a for a in res.ctidTraderAccount if a.traderLogin == self.account_id]
+            matching = [
+                a for a in res.ctidTraderAccount if a.traderLogin == self.account_id
+            ]
             if matching:
                 self.account_id = matching[0].ctidTraderAccountId
-                logger.info(f"Matched account: traderLogin={matching[0].traderLogin} -> ctidTraderAccountId={self.account_id}")
+                logger.info(
+                    f"Matched account: traderLogin={matching[0].traderLogin} -> ctidTraderAccountId={self.account_id}"
+                )
             elif res.ctidTraderAccount and len(res.ctidTraderAccount) > 0:
                 self.account_id = res.ctidTraderAccount[0].ctidTraderAccountId
-                logger.info(f"Using first available account: ctidTraderAccountId={self.account_id}")
+                logger.info(
+                    f"Using first available account: ctidTraderAccountId={self.account_id}"
+                )
         elif response:
             logger.warning(f"Unexpected response type: {response.payloadType}")
 
@@ -319,14 +333,20 @@ class CtraderClient:
             logger.warning(f"Account auth failed: Invalid/expired access token (2142)")
             return False
         elif response:
-            logger.warning(f"Account auth unexpected response: payloadType={response.payloadType}")
+            logger.warning(
+                f"Account auth unexpected response: payloadType={response.payloadType}"
+            )
         return False
 
     async def _fetch_account_info(self):
         if not self._authenticated:
             return
-        from ctrader_open_api.messages.OpenApiMessages_pb2 import ProtoOATraderRes, ProtoOAErrorRes
+        from ctrader_open_api.messages.OpenApiMessages_pb2 import (
+            ProtoOATraderRes,
+            ProtoOAErrorRes,
+        )
         from ctrader_open_api.messages.OpenApiModelMessages_pb2 import ProtoOATrader
+
         trader_req = ProtoOATraderReq()
         trader_req.ctidTraderAccountId = self.account_id
         if not await self._send_msg(2121, trader_req):
@@ -339,14 +359,17 @@ class CtraderClient:
             self._account_info = AccountInfo(
                 account_id=str(trader.traderLogin),
                 ctid_trader_account_id=trader.ctidTraderAccountId,
-                balance=trader.balance / (10 ** trader.moneyDigits),
-                equity=trader.balance / (10 ** trader.moneyDigits),
+                balance=trader.balance / (10**trader.moneyDigits),
+                equity=trader.balance / (10**trader.moneyDigits),
                 margin=0.0,
                 free_margin=0.0,
                 margin_level=0.0,
                 currency="USD",
-                leverage=f"1:{int(trader.leverageInCents / 100)}"
-                if trader.leverageInCents else "1:30",
+                leverage=(
+                    f"1:{int(trader.leverageInCents / 100)}"
+                    if trader.leverageInCents
+                    else "1:30"
+                ),
                 account_type="Demo" if self.demo else "Live",
                 is_live=not self.demo,
             )
@@ -355,7 +378,9 @@ class CtraderClient:
         elif response and response.payloadType == 2142:
             err = ProtoOAErrorRes()
             err.ParseFromString(response.payload)
-            logger.warning(f"Trader info fetch failed: {err.errorCode} - {err.description}")
+            logger.warning(
+                f"Trader info fetch failed: {err.errorCode} - {err.description}"
+            )
 
     def get_account_info(self) -> Optional[AccountInfo]:
         return self._account_info
@@ -389,11 +414,11 @@ class CtraderClient:
                             self.on_order_update(result)
                         return result
                 if attempt < max_retries - 1:
-                    await asyncio.sleep(2 ** attempt)
+                    await asyncio.sleep(2**attempt)
             except Exception as e:
                 logger.warning(f"Order attempt {attempt + 1} failed: {e}")
                 if attempt < max_retries - 1:
-                    await asyncio.sleep(2 ** attempt)
+                    await asyncio.sleep(2**attempt)
         return TradeResult(status="REJECTED", error="Order failed after retries")
 
     def _simulate_order(self, order: TradeOrder) -> TradeResult:
@@ -426,8 +451,12 @@ class CtraderClient:
         return self._is_connected
 
     async def _fetch_trendbar_batch(
-        self, symbol_id: int, period: int,
-        from_ms: int, to_ms: int, count: int = 500,
+        self,
+        symbol_id: int,
+        period: int,
+        from_ms: int,
+        to_ms: int,
+        count: int = 500,
     ) -> Optional[List]:
         """Single trendbar request with future-based response."""
         req = ProtoOAGetTrendbarsReq()
@@ -449,8 +478,11 @@ class CtraderClient:
         return list(res.trendbar)
 
     async def fetch_historical_ohlcv(
-        self, symbol: str, timeframe: str = "1h",
-        days_back: int = 365, max_bars: int = 10000,
+        self,
+        symbol: str,
+        timeframe: str = "1h",
+        days_back: int = 365,
+        max_bars: int = 10000,
     ) -> Optional[List[Dict]]:
         """Fetch historical OHLCV via cTrader protobuf, auto-batching for full range."""
         if not _HAS_PROTOBUF or not self._authenticated or not self._is_connected:
@@ -461,13 +493,22 @@ class CtraderClient:
         if symbol_id is None:
             return None
 
-        tf_map = {"1m": 1, "5m": 5, "15m": 7, "30m": 8,
-                  "1h": 9, "4h": 10, "1d": 12, "1w": 13}
+        tf_map = {
+            "1m": 1,
+            "5m": 5,
+            "15m": 7,
+            "30m": 8,
+            "1h": 9,
+            "4h": 10,
+            "1d": 12,
+            "1w": 13,
+        }
         period = tf_map.get(timeframe)
         if period is None:
             return None
 
         from datetime import datetime, timezone, timedelta
+
         now = datetime.now(timezone.utc)
 
         batch_window_hours = {9: 4000, 10: 16000, 12: 60000}.get(period, 4000)
@@ -480,7 +521,10 @@ class CtraderClient:
         while batch_to > earliest:
             try:
                 bars = await self._fetch_trendbar_batch(
-                    symbol_id, period, max(batch_from, earliest), batch_to,
+                    symbol_id,
+                    period,
+                    max(batch_from, earliest),
+                    batch_to,
                 )
                 if not bars:
                     break
@@ -490,7 +534,9 @@ class CtraderClient:
                 batch_to = (oldest_min - 1) * 60 * 1000
                 batch_from = batch_to - int(window_secs * 1000)
             except asyncio.TimeoutError:
-                logger.debug(f"cTrader batch timeout for {sym}, using {len(all_bars)} bars so far")
+                logger.debug(
+                    f"cTrader batch timeout for {sym}, using {len(all_bars)} bars so far"
+                )
                 break
             except Exception as e:
                 logger.debug(f"cTrader batch error for {sym}: {e}")
@@ -508,15 +554,19 @@ class CtraderClient:
         for ts_min in sorted_minutes:
             tb = all_bars[ts_min]
             low_f = tb.low / divisor
-            result.append({
-                "timestamp": ts_min * 60,
-                "open": round(low_f + tb.deltaOpen / divisor, 5),
-                "high": round(low_f + tb.deltaHigh / divisor, 5),
-                "low": round(low_f, 5),
-                "close": round(low_f + tb.deltaClose / divisor, 5),
-                "volume": tb.volume,
-            })
-        logger.info(f"cTrader proto: {len(result)} {timeframe} bars for {sym} ({days_back}d)")
+            result.append(
+                {
+                    "timestamp": ts_min * 60,
+                    "open": round(low_f + tb.deltaOpen / divisor, 5),
+                    "high": round(low_f + tb.deltaHigh / divisor, 5),
+                    "low": round(low_f, 5),
+                    "close": round(low_f + tb.deltaClose / divisor, 5),
+                    "volume": tb.volume,
+                }
+            )
+        logger.info(
+            f"cTrader proto: {len(result)} {timeframe} bars for {sym} ({days_back}d)"
+        )
         return result
 
     async def start_background_listener(self):
@@ -599,7 +649,9 @@ class CtraderClient:
             asks_dict = {p: l for p, l in asks_dict.items() if p not in deleted_prices}
 
             # Sort: bids descending (best bid first), asks ascending (best ask first)
-            md.bids = sorted(bids_dict.values(), key=lambda x: x.price, reverse=True)[:20]
+            md.bids = sorted(bids_dict.values(), key=lambda x: x.price, reverse=True)[
+                :20
+            ]
             md.asks = sorted(asks_dict.values(), key=lambda x: x.price)[:20]
 
             # Update best bid/ask
@@ -614,7 +666,9 @@ class CtraderClient:
             if self.on_market_data and md.bid > 0:
                 await self.on_market_data(md)
 
-            logger.debug(f"DOM update {symbol}: {len(md.bids)} bids, {len(md.asks)} asks")
+            logger.debug(
+                f"DOM update {symbol}: {len(md.bids)} bids, {len(md.asks)} asks"
+            )
         except Exception as e:
             logger.warning(f"Failed to parse depth event: {e}")
 
@@ -630,7 +684,9 @@ class CtraderClient:
             req.symbolId.append(symbol_id)
             if await self._send_msg(PROTO_OA_SUBSCRIBE_DEPTH_QUOTES_REQ, req):
                 self._subscribed_depth[symbol_id] = True
-                logger.info(f"Subscribed to Level II DOM for {REVERSE_SYMBOL_MAP.get(symbol_id, symbol_id)}")
+                logger.info(
+                    f"Subscribed to Level II DOM for {REVERSE_SYMBOL_MAP.get(symbol_id, symbol_id)}"
+                )
                 return True
             return False
         except Exception as e:
@@ -647,7 +703,9 @@ class CtraderClient:
             req.symbolId.append(symbol_id)
             if await self._send_msg(PROTO_OA_UNSUBSCRIBE_DEPTH_QUOTES_REQ, req):
                 del self._subscribed_depth[symbol_id]
-                logger.info(f"Unsubscribed from Level II DOM for {REVERSE_SYMBOL_MAP.get(symbol_id, symbol_id)}")
+                logger.info(
+                    f"Unsubscribed from Level II DOM for {REVERSE_SYMBOL_MAP.get(symbol_id, symbol_id)}"
+                )
                 return True
             return False
         except Exception as e:

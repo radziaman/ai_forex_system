@@ -3,12 +3,14 @@ HMM-based Market Regime Detector — replaces hardcoded ADX thresholds.
 Learns regime transition probabilities from historical data.
 Enhanced with smart regime transition trading (Enhancement #12).
 """
+
 import numpy as np
 import pandas as pd
 from typing import Optional, Tuple, List, Dict
 
 try:
     from hmmlearn import hmm
+
     HMM_AVAILABLE = True
 except ImportError:
     HMM_AVAILABLE = False
@@ -36,11 +38,13 @@ class HMMRegimeDetector:
         vol = df.get("atr_14", df["close"].rolling(14).std()).values
         vol_ratio = vol / np.mean(vol[-60:]) if len(vol) > 60 else np.ones_like(vol)
         vol_ratio = np.clip(vol_ratio, 0.1, 5.0)
-        features = np.column_stack([
-            returns,
-            vol_ratio[1:],
-            np.abs(returns),
-        ])
+        features = np.column_stack(
+            [
+                returns,
+                vol_ratio[1:],
+                np.abs(returns),
+            ]
+        )
         features = np.nan_to_num(features, nan=0.0, posinf=5.0, neginf=-5.0)
         features = np.clip(features, -5, 5)
         means = np.mean(features, axis=0)
@@ -56,6 +60,7 @@ class HMMRegimeDetector:
         if len(features) < 100:
             return
         import warnings as _warnings
+
         with _warnings.catch_warnings():
             _warnings.filterwarnings("ignore", message=".*not converging.*")
             _warnings.filterwarnings("ignore", message=".*transmat_.*zero sum.*")
@@ -71,7 +76,9 @@ class HMMRegimeDetector:
         if np.any(np.isnan(self.model.startprob_)):
             self.model.startprob_ = np.full(self.n_regimes, 1.0 / self.n_regimes)
         if np.any(np.isnan(self.model.transmat_)):
-            self.model.transmat_ = np.full((self.n_regimes, self.n_regimes), 1.0 / self.n_regimes)
+            self.model.transmat_ = np.full(
+                (self.n_regimes, self.n_regimes), 1.0 / self.n_regimes
+            )
 
     def detect_regime(self, df: pd.DataFrame) -> str:
         """Detect current regime using Viterbi decoding."""
@@ -81,7 +88,7 @@ class HMMRegimeDetector:
         if len(features) < 5:
             return "ranging"
         # Use last window of features for decoding
-        recent = features[-self.lookback:]
+        recent = features[-self.lookback :]
         if len(recent) < 5:
             return "ranging"
         hidden_states = self.model.predict(recent)
@@ -102,7 +109,7 @@ class HMMRegimeDetector:
 
     def _fallback_regime(self, df: pd.DataFrame) -> str:
         """Fallback rule-based regime detection when HMM unavailable."""
-        recent = df.iloc[-self.lookback:] if len(df) >= self.lookback else df
+        recent = df.iloc[-self.lookback :] if len(df) >= self.lookback else df
         if len(recent) < 10:
             return "ranging"
         adx = recent.get("adx_14", pd.Series([25] * len(recent))).iloc[-1]
@@ -130,14 +137,31 @@ class HMMRegimeDetector:
 
     def get_regime_params(self, regime: str) -> dict:
         params = {
-            "trending": {"sl_atr": 2.0, "tp_atr": 4.0, "pos_mult": 1.0, "min_conf": 0.60},
-            "ranging": {"sl_atr": 1.5, "tp_atr": 3.0, "pos_mult": 1.0, "min_conf": 0.65},
-            "volatile": {"sl_atr": 2.5, "tp_atr": 5.0, "pos_mult": 0.5, "min_conf": 0.75},
+            "trending": {
+                "sl_atr": 2.0,
+                "tp_atr": 4.0,
+                "pos_mult": 1.0,
+                "min_conf": 0.60,
+            },
+            "ranging": {
+                "sl_atr": 1.5,
+                "tp_atr": 3.0,
+                "pos_mult": 1.0,
+                "min_conf": 0.65,
+            },
+            "volatile": {
+                "sl_atr": 2.5,
+                "tp_atr": 5.0,
+                "pos_mult": 0.5,
+                "min_conf": 0.75,
+            },
             "crisis": {"sl_atr": 1.0, "tp_atr": 2.0, "pos_mult": 0.0, "min_conf": 0.95},
         }
         return params.get(regime, params["ranging"])
-    
-    def get_position_size_multiplier(self, regime: str, sentiment_score: float = 0.0) -> float:
+
+    def get_position_size_multiplier(
+        self, regime: str, sentiment_score: float = 0.0
+    ) -> float:
         """Get position size multiplier based on regime and sentiment."""
         base_mult = self.get_regime_params(regime).get("pos_mult", 1.0)
         # Adjust based on sentiment (positive sentiment = increase size)
@@ -171,8 +195,9 @@ class HMMRegimeDetector:
 
         # Calculate transition probability (simplified)
         transition_count = sum(
-            1 for i in range(1, len(self.regime_history))
-            if self.regime_history[i] != self.regime_history[i-1]
+            1
+            for i in range(1, len(self.regime_history))
+            if self.regime_history[i] != self.regime_history[i - 1]
         )
         total_observations = len(self.regime_history) - 1
         transition_freq = transition_count / max(total_observations, 1)
@@ -186,8 +211,9 @@ class HMMRegimeDetector:
             if current == "volatile" or previous == "volatile":
                 sl_tp_adj = 1.5
             # Trend-to-range = tighter stops
-            elif (previous == "trending" and current == "ranging") or \
-                 (previous == "ranging" and current == "trending"):
+            elif (previous == "trending" and current == "ranging") or (
+                previous == "ranging" and current == "trending"
+            ):
                 sl_tp_adj = 1.2
             else:
                 sl_tp_adj = 1.3
@@ -230,8 +256,7 @@ class HMMRegimeDetector:
 
         # Count transitions in last 5 observations
         transitions = sum(
-            1 for i in range(1, len(recent))
-            if recent[i] != recent[i-1]
+            1 for i in range(1, len(recent)) if recent[i] != recent[i - 1]
         )
 
         # Pause if too many transitions (high uncertainty)

@@ -2,6 +2,7 @@
 Dashboard — FastAPI server that exposes bot state via REST + WebSocket.
 The bot writes to latest_state; the dashboard reads it.
 """
+
 import time
 import json
 import os
@@ -93,8 +94,27 @@ async def broadcast_update(state: dict):
 @app.get("/health")
 async def health():
     elapsed = time.time() - latest_state.get("timestamp", time.time())
+    state = latest_state
+    pos_count = len(state.get("open_positions", []))
+    bal = state.get("balance", 0)
+    eq = state.get("equity", 0)
+    dd = (
+        (state.get("initial_balance", bal) - bal)
+        / max(state.get("initial_balance", bal), 1)
+        * 100
+    )
     return {
         "status": "ok" if elapsed < 60 else "stale",
         "last_update_s": round(elapsed, 1),
         "clients": len(connected_clients),
+        "trading": state.get("mode", "UNKNOWN"),
+        "balance": round(bal, 2),
+        "equity": round(eq, 2),
+        "drawdown_pct": round(max(dd, 0), 2),
+        "open_positions": pos_count,
+        "total_trades": state.get("total_trades", 0),
+        "win_rate": state.get("win_rate", 0),
+        "regime": state.get("regime", "unknown"),
+        "signal_count": state.get("signal_count", 0),
+        "timestamp": state.get("timestamp", 0),
     }

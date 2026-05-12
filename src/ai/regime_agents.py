@@ -3,6 +3,7 @@ Multi-Agent Regime Specialist System.
 Each regime has a dedicated PPO agent with specialized hyperparameters and SL/TP logic.
 Gating network routes decisions to the correct specialist.
 """
+
 import os
 import numpy as np
 import torch
@@ -16,6 +17,7 @@ from loguru import logger
 @dataclass
 class RegimeAgentConfig:
     """Per-regime PPO hyperparameters."""
+
     name: str
     hidden_dims: list
     sl_atr_mult: float
@@ -91,7 +93,7 @@ class RegimeSpecialistSystem:
     def __init__(self, state_dim: int, n_actions: int = 5):
         self.state_dim = state_dim
         self.n_actions = n_actions
-        self.agents: Dict[str, 'PPOAgent'] = {}
+        self.agents: Dict[str, "PPOAgent"] = {}
         self.enabled: bool = True
         self.gating_network = RegimeGatingNetwork(state_dim)
         self._init_agents()
@@ -105,13 +107,16 @@ class RegimeSpecialistSystem:
         for regime, config in REGIME_CONFIGS.items():
             try:
                 from ai.rl_agent import PPOAgent
+
                 agent = PPOAgent(
                     state_dim=self.state_dim,
                     n_actions=self.n_actions,
                     hidden_dims=config.hidden_dims,
                     clip_range=config.clip_range,
                 )
-                agent.optimizer = optim.Adam(agent.actor.parameters(), lr=config.learning_rate)
+                agent.optimizer = optim.Adam(
+                    agent.actor.parameters(), lr=config.learning_rate
+                )
                 agent_path = f"models/{config.name}_agent.pth"
                 # Load pre-trained if exists (graceful on shape mismatch)
                 if os.path.exists(agent_path):
@@ -119,7 +124,9 @@ class RegimeSpecialistSystem:
                         agent.load(agent_path)
                         logger.info(f"Loaded {regime} agent from {agent_path}")
                     except Exception as load_err:
-                        logger.info(f"Fresh {regime} agent (saved dim differs from current {state_dim})")
+                        logger.info(
+                            f"Fresh {regime} agent (saved dim differs from current {state_dim})"
+                        )
                 self.agents[regime] = agent
             except Exception as e:
                 logger.warning(f"Failed to init {regime} agent: {e}")

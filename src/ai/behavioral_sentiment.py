@@ -3,6 +3,7 @@ Social Media / Satellite / News / Behavioral Sentiment AI Logic.
 Multi-source sentiment: Reddit (scraped), News RSS, Google News, satellite, on-chain.
 Uses transformer models for deep sentiment analysis with scraping fallbacks.
 """
+
 import numpy as np
 import time
 import json
@@ -87,8 +88,12 @@ class BehavioralSentimentSnapshot:
     recent_headlines: List[str] = field(default_factory=list)
     # Enhancement #11: Sentiment Alpha Refinement
     sentiment_momentum: float = 0.0  # Rate of change in sentiment
-    cross_asset_spillover: Dict[str, float] = field(default_factory=dict)  # USD affects all USD pairs
-    contrarian_signal: Dict[str, str] = field(default_factory=dict)  # BUY/SELL/HOLD for extreme sentiment
+    cross_asset_spillover: Dict[str, float] = field(
+        default_factory=dict
+    )  # USD affects all USD pairs
+    contrarian_signal: Dict[str, str] = field(
+        default_factory=dict
+    )  # BUY/SELL/HOLD for extreme sentiment
     sentiment_history: List[float] = field(default_factory=list)  # For momentum calc
 
 
@@ -112,18 +117,36 @@ class BehavioralSentimentAI:
     }
 
     SATELLITE_REGIONS = {
-        "XTIUSD": "Cushing_OK", "XBRUSD": "North_Sea", "XNGUSD": "Henry_Hub_LA",
-        "XAUUSD": "Witwatersrand_SA", "XAGUSD": "Fresnillo_MX",
+        "XTIUSD": "Cushing_OK",
+        "XBRUSD": "North_Sea",
+        "XNGUSD": "Henry_Hub_LA",
+        "XAUUSD": "Witwatersrand_SA",
+        "XAGUSD": "Fresnillo_MX",
     }
 
     CRYPTO_COINGECKO_IDS = {
-        "BTCUSD": "bitcoin", "ETHUSD": "ethereum", "LTCUSD": "litecoin", "XRPUSD": "ripple",
+        "BTCUSD": "bitcoin",
+        "ETHUSD": "ethereum",
+        "LTCUSD": "litecoin",
+        "XRPUSD": "ripple",
     }
 
-    REDDIT_SUBREDDITS = ["Forex", "CryptoCurrency", "WallStreetBets", "Trading", "investing"]
+    REDDIT_SUBREDDITS = [
+        "Forex",
+        "CryptoCurrency",
+        "WallStreetBets",
+        "Trading",
+        "investing",
+    ]
 
-    def __init__(self, use_transformers: bool = True, cache_ttl: int = 300,
-                 max_posts: int = 200, satellite_enabled: bool = True, onchain_enabled: bool = True):
+    def __init__(
+        self,
+        use_transformers: bool = True,
+        cache_ttl: int = 300,
+        max_posts: int = 200,
+        satellite_enabled: bool = True,
+        onchain_enabled: bool = True,
+    ):
         self.use_transformers = use_transformers
         self.cache_ttl = cache_ttl
         self.max_posts = max_posts
@@ -143,6 +166,7 @@ class BehavioralSentimentAI:
     def _get_secrets(self):
         if self._secrets is None:
             from infrastructure.secrets import Secrets
+
             self._secrets = Secrets()
         return self._secrets
 
@@ -150,7 +174,10 @@ class BehavioralSentimentAI:
         if self.use_transformers:
             try:
                 from transformers import pipeline
-                self._classifier = pipeline("sentiment-analysis", model="ProsusAI/finbert", device=-1)
+
+                self._classifier = pipeline(
+                    "sentiment-analysis", model="ProsusAI/finbert", device=-1
+                )
                 logger.info("FinBERT model loaded for sentiment analysis")
             except Exception as e:
                 logger.warning(f"FinBERT init failed, using lexicon fallback: {e}")
@@ -165,9 +192,15 @@ class BehavioralSentimentAI:
     # ------------------------------------------------------------------
 
     def analyze_social_media(
-        self, symbols: Optional[List[str]] = None, sources: Optional[List[SentimentSource]] = None,
+        self,
+        symbols: Optional[List[str]] = None,
+        sources: Optional[List[SentimentSource]] = None,
     ) -> BehavioralSentimentSnapshot:
-        sources = sources or [SentimentSource.TWITTER, SentimentSource.REDDIT, SentimentSource.NEWS]
+        sources = sources or [
+            SentimentSource.TWITTER,
+            SentimentSource.REDDIT,
+            SentimentSource.NEWS,
+        ]
         symbols = symbols or ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD", "BTCUSD"]
         cache_key = f"social_{'_'.join(sorted(symbols))}_{'_'.join(sorted(s.name for s in sources))}"
         with self._lock:
@@ -197,14 +230,18 @@ class BehavioralSentimentAI:
                     sat = self._get_satellite_signal(sym)
                     if sat:
                         snapshot.satellite_score = sat.activity_score * 2 - 1
-                        logger.info(f"Satellite {sym}: activity={sat.activity_score:.2f}")
+                        logger.info(
+                            f"Satellite {sym}: activity={sat.activity_score:.2f}"
+                        )
         if self.onchain_enabled:
             for sym in symbols:
                 if sym in self.CRYPTO_COINGECKO_IDS:
                     chain = self._get_onchain_metrics(sym)
                     if chain:
                         snapshot.onchain_score = chain.sentiment_score
-                        logger.info(f"On-chain {sym}: sentiment={chain.sentiment_score:.3f}")
+                        logger.info(
+                            f"On-chain {sym}: sentiment={chain.sentiment_score:.3f}"
+                        )
         snapshot.fear_greed_index = self._calculate_fear_greed(snapshot)
         snapshot.spillover_matrix = self._calculate_spillover(snapshot, symbols)
         with self._lock:
@@ -230,6 +267,7 @@ class BehavioralSentimentAI:
         posts = []
         try:
             import feedparser
+
             seen = set()
             for key, feed_url in self.GOOGLE_NEWS_QUERIES.items():
                 try:
@@ -240,20 +278,27 @@ class BehavioralSentimentAI:
                         if title in seen:
                             continue
                         seen.add(title)
-                        matched = [s for s in symbols if s.upper() in title.upper()] or \
-                                  [s for s in symbols if s.replace("USD", "").lower() in title.lower()]
+                        matched = [
+                            s for s in symbols if s.upper() in title.upper()
+                        ] or [
+                            s
+                            for s in symbols
+                            if s.replace("USD", "").lower() in title.lower()
+                        ]
                         if not matched:
                             matched = self._extract_tickers(title)
                         if matched:
                             pub = entry.get("published_parsed")
-                            posts.append(SocialMediaPost(
-                                id=f"gn_{hash(link)}",
-                                source=SentimentSource.TWITTER,
-                                text=title[:500],
-                                timestamp=time.mktime(pub) if pub else time.time(),
-                                url=link,
-                                tickers=matched[:3],
-                            ))
+                            posts.append(
+                                SocialMediaPost(
+                                    id=f"gn_{hash(link)}",
+                                    source=SentimentSource.TWITTER,
+                                    text=title[:500],
+                                    timestamp=time.mktime(pub) if pub else time.time(),
+                                    url=link,
+                                    tickers=matched[:3],
+                                )
+                            )
                 except Exception:
                     continue
         except ImportError:
@@ -281,17 +326,21 @@ class BehavioralSentimentAI:
         ]
         for sym in symbols[:5]:
             is_bullish = np.random.random() > 0.4
-            phrase = np.random.choice(phrases_bullish if is_bullish else phrases_bearish)
-            posts.append(SocialMediaPost(
-                id=f"tw_{int(time.time())}_{sym}",
-                source=SentimentSource.TWITTER,
-                text=phrase.format(sym),
-                author=f"trader_{np.random.randint(1000, 9999)}",
-                timestamp=time.time() - np.random.randint(0, 3600),
-                likes=int(np.random.exponential(50)),
-                retweets=int(np.random.exponential(10)),
-                tickers=[sym],
-            ))
+            phrase = np.random.choice(
+                phrases_bullish if is_bullish else phrases_bearish
+            )
+            posts.append(
+                SocialMediaPost(
+                    id=f"tw_{int(time.time())}_{sym}",
+                    source=SentimentSource.TWITTER,
+                    text=phrase.format(sym),
+                    author=f"trader_{np.random.randint(1000, 9999)}",
+                    timestamp=time.time() - np.random.randint(0, 3600),
+                    likes=int(np.random.exponential(50)),
+                    retweets=int(np.random.exponential(10)),
+                    tickers=[sym],
+                )
+            )
         return posts
 
     # ------------------------------------------------------------------
@@ -309,7 +358,7 @@ class BehavioralSentimentAI:
         """Fetch Reddit posts via public JSON API (no auth needed)."""
         posts = []
         seen_ids = set()
-        headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'}
+        headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"}
         import requests
 
         for subreddit in self.REDDIT_SUBREDDITS:
@@ -319,30 +368,32 @@ class BehavioralSentimentAI:
                 if resp.status_code != 200:
                     continue
                 data = resp.json()
-                children = data.get('data', {}).get('children', [])
+                children = data.get("data", {}).get("children", [])
                 for child in children:
-                    d = child['data']
-                    pid = d.get('id', '')
+                    d = child["data"]
+                    pid = d.get("id", "")
                     if pid in seen_ids:
                         continue
                     seen_ids.add(pid)
-                    title = d.get('title', '')
-                    selftext = d.get('selftext', '') or ''
+                    title = d.get("title", "")
+                    selftext = d.get("selftext", "") or ""
                     text = f"{title}. {selftext}"[:500]
                     matched = [s for s in symbols if s.upper() in text.upper()]
                     if not matched:
                         continue
-                    posts.append(SocialMediaPost(
-                        id=f"rd_{pid}",
-                        source=SentimentSource.REDDIT,
-                        text=text,
-                        author=str(d.get('author', 'deleted')),
-                        timestamp=d.get('created_utc', time.time()),
-                        likes=d.get('score', 0),
-                        comments=d.get('num_comments', 0),
-                        url=f"https://reddit.com{d.get('permalink', '')}",
-                        tickers=matched,
-                    ))
+                    posts.append(
+                        SocialMediaPost(
+                            id=f"rd_{pid}",
+                            source=SentimentSource.REDDIT,
+                            text=text,
+                            author=str(d.get("author", "deleted")),
+                            timestamp=d.get("created_utc", time.time()),
+                            likes=d.get("score", 0),
+                            comments=d.get("num_comments", 0),
+                            url=f"https://reddit.com{d.get('permalink', '')}",
+                            tickers=matched,
+                        )
+                    )
                     if len(posts) >= self.max_posts:
                         break
             except Exception as e:
@@ -361,12 +412,18 @@ class BehavioralSentimentAI:
                 f"{'Strong bullish divergence on RSI.' if not is_bearish else 'Bearish pennant forming. Volume declining.'} "
                 f"Key levels inside."
             )
-            posts.append(SocialMediaPost(
-                id=f"rd_{int(time.time())}_{sym}", source=SentimentSource.REDDIT,
-                text=text, author=f"analyst_{np.random.randint(100, 999)}",
-                timestamp=time.time() - np.random.randint(0, 7200),
-                likes=int(np.random.exponential(200)), comments=int(np.random.exponential(50)), tickers=[sym],
-            ))
+            posts.append(
+                SocialMediaPost(
+                    id=f"rd_{int(time.time())}_{sym}",
+                    source=SentimentSource.REDDIT,
+                    text=text,
+                    author=f"analyst_{np.random.randint(100, 999)}",
+                    timestamp=time.time() - np.random.randint(0, 7200),
+                    likes=int(np.random.exponential(200)),
+                    comments=int(np.random.exponential(50)),
+                    tickers=[sym],
+                )
+            )
         return posts
 
     # ------------------------------------------------------------------
@@ -378,6 +435,7 @@ class BehavioralSentimentAI:
         posts = []
         try:
             import feedparser
+
             seen_links = set()
             for feed_url in self.NEWS_FEEDS:
                 try:
@@ -388,7 +446,11 @@ class BehavioralSentimentAI:
                             continue
                         seen_links.add(link)
                         title = entry.get("title", "")
-                        summary = entry.get("summary", "") or entry.get("description", "") or ""
+                        summary = (
+                            entry.get("summary", "")
+                            or entry.get("description", "")
+                            or ""
+                        )
                         full_text = f"{title}. {summary}"
                         matched = [s for s in symbols if s.upper() in full_text.upper()]
                         if not matched:
@@ -396,11 +458,16 @@ class BehavioralSentimentAI:
                         if not matched:
                             continue
                         pub = entry.get("published_parsed")
-                        posts.append(SocialMediaPost(
-                            id=f"news_{hash(link)}", source=SentimentSource.NEWS,
-                            text=full_text[:500], timestamp=time.mktime(pub) if pub else time.time(),
-                            url=link, tickers=matched[:5],
-                        ))
+                        posts.append(
+                            SocialMediaPost(
+                                id=f"news_{hash(link)}",
+                                source=SentimentSource.NEWS,
+                                text=full_text[:500],
+                                timestamp=time.mktime(pub) if pub else time.time(),
+                                url=link,
+                                tickers=matched[:5],
+                            )
+                        )
                 except Exception:
                     continue
         except ImportError:
@@ -419,11 +486,16 @@ class BehavioralSentimentAI:
         ]
         for sym in symbols[:5]:
             text = np.random.choice(headlines).format(sym=sym)
-            posts.append(SocialMediaPost(
-                id=f"news_{int(time.time())}_{sym}", source=SentimentSource.NEWS,
-                text=text, author="NewsBot",
-                timestamp=time.time() - np.random.randint(0, 3600), tickers=[sym],
-            ))
+            posts.append(
+                SocialMediaPost(
+                    id=f"news_{int(time.time())}_{sym}",
+                    source=SentimentSource.NEWS,
+                    text=text,
+                    author="NewsBot",
+                    timestamp=time.time() - np.random.randint(0, 3600),
+                    tickers=[sym],
+                )
+            )
         return posts
 
     # ------------------------------------------------------------------
@@ -436,7 +508,11 @@ class BehavioralSentimentAI:
         cached = self._satellite_cache.get(symbol)
         if cached and time.time() - cached.timestamp < self.cache_ttl:
             return cached
-        signal = self._fetch_nasa_viirs(symbol) or self._fetch_noaa_inventory(symbol) or self._satellite_fallback(symbol)
+        signal = (
+            self._fetch_nasa_viirs(symbol)
+            or self._fetch_noaa_inventory(symbol)
+            or self._satellite_fallback(symbol)
+        )
         if signal:
             self._satellite_cache[symbol] = signal
         return signal
@@ -444,16 +520,19 @@ class BehavioralSentimentAI:
     def _fetch_nasa_viirs(self, symbol: str) -> Optional[SatelliteSignal]:
         try:
             import requests
+
             region = self.SATELLITE_REGIONS.get(symbol, "global")
             resp = requests.get(
                 "https://eonet.gsfc.nasa.gov/api/v3/events",
-                params={"limit": 10, "status": "open"}, timeout=15
+                params={"limit": 10, "status": "open"},
+                timeout=15,
             )
             if resp.status_code == 200:
                 events = resp.json().get("events", [])
                 activity = np.clip(1.0 - (len(events) / 50.0), 0.0, 1.0)
                 return SatelliteSignal(
-                    symbol=symbol, region=region,
+                    symbol=symbol,
+                    region=region,
                     activity_score=float(activity),
                     storage_level=float(np.random.uniform(0.3, 0.8)),
                     shipping_traffic=int(np.random.uniform(30, 120)),
@@ -466,26 +545,37 @@ class BehavioralSentimentAI:
     def _fetch_noaa_inventory(self, symbol: str) -> Optional[SatelliteSignal]:
         try:
             import requests
+
             region = self.SATELLITE_REGIONS.get(symbol, "")
             if symbol == "XTIUSD":
                 api_key = self._get_secrets().fred_api_key
                 if api_key:  # Removed comparison to placeholder string
                     resp = requests.get(
                         "https://api.eia.gov/v2/petroleum/stoc/wstk/data",
-                        params={"api_key": api_key, "frequency": "weekly", "data[0]": "value",
-                                "facets[duoarea][]": "NUS", "facets[product][]": "EPC0",
-                                "sort[0][column]": "period", "sort[0][direction]": "desc", "length": 5},
-                        timeout=15
+                        params={
+                            "api_key": api_key,
+                            "frequency": "weekly",
+                            "data[0]": "value",
+                            "facets[duoarea][]": "NUS",
+                            "facets[product][]": "EPC0",
+                            "sort[0][column]": "period",
+                            "sort[0][direction]": "desc",
+                            "length": 5,
+                        },
+                        timeout=15,
                     )
                     if resp.status_code == 200:
                         series = resp.json().get("response", {}).get("data", [])
                         if series:
                             latest = float(series[0]["value"])
-                            prev = float(series[1]["value"]) if len(series) > 1 else latest
+                            prev = (
+                                float(series[1]["value"]) if len(series) > 1 else latest
+                            )
                             change_pct = (latest - prev) / prev if prev > 0 else 0
                             activity = np.clip(0.5 - change_pct, 0.0, 1.0)
                             return SatelliteSignal(
-                                symbol=symbol, region=region,
+                                symbol=symbol,
+                                region=region,
                                 activity_score=float(activity),
                                 storage_level=float(np.clip(latest / 500000, 0.1, 0.9)),
                                 shipping_traffic=int(np.random.randint(40, 150)),
@@ -499,10 +589,17 @@ class BehavioralSentimentAI:
         logger.warning(f"Using synthetic satellite data fallback for {symbol}")
         region = self.SATELLITE_REGIONS.get(symbol, "global")
         hour = time.localtime().tm_hour
-        base = 0.5 + (0.2 if 8 <= hour <= 18 else 0) + (0.05 if time.localtime().tm_wday < 5 else -0.05)
+        base = (
+            0.5
+            + (0.2 if 8 <= hour <= 18 else 0)
+            + (0.05 if time.localtime().tm_wday < 5 else -0.05)
+        )
         return SatelliteSignal(
-            symbol=symbol, region=region,
-            activity_score=float(np.clip(base + np.random.uniform(-0.15, 0.15), 0.1, 0.95)),
+            symbol=symbol,
+            region=region,
+            activity_score=float(
+                np.clip(base + np.random.uniform(-0.15, 0.15), 0.1, 0.95)
+            ),
             storage_level=float(np.random.uniform(0.3, 0.8)),
             shipping_traffic=int(np.random.poisson(60)),
             night_lights=float(np.random.uniform(15, 50)),
@@ -518,7 +615,11 @@ class BehavioralSentimentAI:
         cached = self._onchain_cache.get(symbol)
         if cached and time.time() - cached.timestamp < self.cache_ttl:
             return cached
-        metrics = self._fetch_coingecko(symbol) or self._fetch_blockchair(symbol) or self._onchain_fallback(symbol)
+        metrics = (
+            self._fetch_coingecko(symbol)
+            or self._fetch_blockchair(symbol)
+            or self._onchain_fallback(symbol)
+        )
         if metrics:
             self._onchain_cache[symbol] = metrics
         return metrics
@@ -526,14 +627,20 @@ class BehavioralSentimentAI:
     def _fetch_coingecko(self, symbol: str) -> Optional[OnChainMetrics]:
         try:
             import requests
+
             coin_id = self.CRYPTO_COINGECKO_IDS.get(symbol)
             if not coin_id:
                 return None
             resp = requests.get(
                 f"https://api.coingecko.com/api/v3/coins/{coin_id}",
-                params={"localization": "false", "tickers": "false",
-                        "community_data": "false", "developer_data": "false", "sparkline": "false"},
-                timeout=15
+                params={
+                    "localization": "false",
+                    "tickers": "false",
+                    "community_data": "false",
+                    "developer_data": "false",
+                    "sparkline": "false",
+                },
+                timeout=15,
             )
             if resp.status_code != 200:
                 return None
@@ -560,7 +667,8 @@ class BehavioralSentimentAI:
             elif nvt < 20:
                 sentiment += 0.2
             return OnChainMetrics(
-                symbol=symbol, network=coin_id,
+                symbol=symbol,
+                network=coin_id,
                 active_addresses=int(np.random.randint(500000, 1500000)),
                 transaction_volume=float(volume),
                 nvt_ratio=float(np.clip(nvt, 0, 500)),
@@ -575,6 +683,7 @@ class BehavioralSentimentAI:
     def _fetch_blockchair(self, symbol: str) -> Optional[OnChainMetrics]:
         try:
             import requests
+
             coin_map = {"BTCUSD": "bitcoin", "ETHUSD": "ethereum", "LTCUSD": "litecoin"}
             chain = coin_map.get(symbol)
             if not chain:
@@ -590,7 +699,8 @@ class BehavioralSentimentAI:
             mempool_score = np.clip(mempool / 100000, 0, 1) * 0.4 - 0.2
             diff_trend = 0.1 if data.get("difficulty_24h_change", 0) > 0 else -0.1
             return OnChainMetrics(
-                symbol=symbol, network=chain,
+                symbol=symbol,
+                network=chain,
                 active_addresses=int(active),
                 nvt_ratio=float(np.random.uniform(30, 80)),
                 sentiment_score=float(np.clip(mempool_score + diff_trend, -1, 1)),
@@ -605,7 +715,8 @@ class BehavioralSentimentAI:
         nvt = np.random.normal(50, 20)
         sentiment = np.clip((50 - nvt) / 50.0, -0.8, 0.8)
         return OnChainMetrics(
-            symbol=symbol, network=coin_id,
+            symbol=symbol,
+            network=coin_id,
             active_addresses=int(np.random.poisson(900000)),
             transaction_volume=float(np.random.uniform(50000, 200000)),
             exchange_inflows=float(np.random.uniform(10000, 50000)),
@@ -620,8 +731,11 @@ class BehavioralSentimentAI:
     # NLP - Sentiment Analysis
     # ------------------------------------------------------------------
 
-    def _analyze_posts(self, posts: List[SocialMediaPost], snapshot: BehavioralSentimentSnapshot,
-                       ) -> BehavioralSentimentSnapshot:
+    def _analyze_posts(
+        self,
+        posts: List[SocialMediaPost],
+        snapshot: BehavioralSentimentSnapshot,
+    ) -> BehavioralSentimentSnapshot:
         if not posts:
             return snapshot
         texts = [f"{p.text}"[:512] for p in posts]
@@ -634,14 +748,20 @@ class BehavioralSentimentAI:
                     post.confidence = abs(score)
                     scores.append(score)
             except Exception as e:
-                logger.warning(f"Transformer classification failed, using lexicon fallback: {e}")
+                logger.warning(
+                    f"Transformer classification failed, using lexicon fallback: {e}"
+                )
                 scores = self._lexicon_score(texts)
         else:
             scores = self._lexicon_score(texts)
         weights = [np.log1p(p.likes + p.retweets + p.comments) for p in posts]
         if scores and weights:
-            snapshot.overall_score = float(np.mean([s * w for s, w in zip(scores, weights)]))
-            snapshot.confidence = float(np.std([s * w for s, w in zip(scores, weights)]))
+            snapshot.overall_score = float(
+                np.mean([s * w for s, w in zip(scores, weights)])
+            )
+            snapshot.confidence = float(
+                np.std([s * w for s, w in zip(scores, weights)])
+            )
         tw = [p.sentiment_score for p in posts if p.source == SentimentSource.TWITTER]
         rd = [p.sentiment_score for p in posts if p.source == SentimentSource.REDDIT]
         nw = [p.sentiment_score for p in posts if p.source == SentimentSource.NEWS]
@@ -659,19 +779,52 @@ class BehavioralSentimentAI:
         return snapshot
 
     def _batch_classify(self, texts: List[str]) -> List[Tuple[float, str]]:
-        results = self._classifier(texts[:self.max_posts])
+        results = self._classifier(texts[: self.max_posts])
         scores = []
         for r in results:
             label = r.get("label", "neutral").lower()
             score = r.get("score", 0.5)
-            scores.append(score if "positive" in label else (-score if "negative" in label else 0.0))
+            scores.append(
+                score
+                if "positive" in label
+                else (-score if "negative" in label else 0.0)
+            )
         return [(s, "positive" if s > 0 else "negative") for s in scores]
 
     def _lexicon_score(self, texts: List[str]) -> List[float]:
-        positive = {"bull", "bullish", "buy", "long", "gain", "profit", "surge", "rally", "growth",
-                    "breakout", "accumulation", "support", "momentum", "upside", "strong"}
-        negative = {"bear", "bearish", "sell", "short", "loss", "crash", "drop", "decline",
-                    "breakdown", "distribution", "resistance", "weakness", "downside", "dump"}
+        positive = {
+            "bull",
+            "bullish",
+            "buy",
+            "long",
+            "gain",
+            "profit",
+            "surge",
+            "rally",
+            "growth",
+            "breakout",
+            "accumulation",
+            "support",
+            "momentum",
+            "upside",
+            "strong",
+        }
+        negative = {
+            "bear",
+            "bearish",
+            "sell",
+            "short",
+            "loss",
+            "crash",
+            "drop",
+            "decline",
+            "breakdown",
+            "distribution",
+            "resistance",
+            "weakness",
+            "downside",
+            "dump",
+        }
         scores = []
         for text in texts:
             words = set(text.lower().split())
@@ -681,12 +834,17 @@ class BehavioralSentimentAI:
         return scores
 
     def _calculate_fear_greed(self, snapshot: BehavioralSentimentSnapshot) -> float:
-        fg = ((snapshot.overall_score + 1) / 2 * 100 * 0.35 +
-              (snapshot.twitter_score + snapshot.reddit_score + 1) / 2 * 100 * 0.25 +
-              (snapshot.onchain_score + 1) / 2 * 100 * 0.20 + 50 * 0.20)
+        fg = (
+            (snapshot.overall_score + 1) / 2 * 100 * 0.35
+            + (snapshot.twitter_score + snapshot.reddit_score + 1) / 2 * 100 * 0.25
+            + (snapshot.onchain_score + 1) / 2 * 100 * 0.20
+            + 50 * 0.20
+        )
         return float(np.clip(fg, 0, 100))
 
-    def _calculate_spillover(self, snapshot: BehavioralSentimentSnapshot, symbols: List[str]) -> Dict[str, float]:
+    def _calculate_spillover(
+        self, snapshot: BehavioralSentimentSnapshot, symbols: List[str]
+    ) -> Dict[str, float]:
         spillover = {}
         base = snapshot.overall_score
         for sym in symbols:
@@ -705,28 +863,46 @@ class BehavioralSentimentAI:
         return spillover
 
     def _extract_tickers(self, text: str) -> List[str]:
-        return list(set(re.findall(r'\$([A-Za-z]{2,6})', text.upper())))
+        return list(set(re.findall(r"\$([A-Za-z]{2,6})", text.upper())))
 
     def get_feature_vector(self) -> np.ndarray:
         snapshot = self.analyze_social_media()
-        return np.array([
-            snapshot.overall_score, snapshot.confidence, snapshot.twitter_score,
-            snapshot.reddit_score, snapshot.news_score, snapshot.satellite_score,
-            snapshot.onchain_score, snapshot.fear_greed_index / 100.0,
-            np.log1p(snapshot.social_volume) / 10.0, snapshot.viral_posts / 100.0,
-        ], dtype=np.float32)
+        return np.array(
+            [
+                snapshot.overall_score,
+                snapshot.confidence,
+                snapshot.twitter_score,
+                snapshot.reddit_score,
+                snapshot.news_score,
+                snapshot.satellite_score,
+                snapshot.onchain_score,
+                snapshot.fear_greed_index / 100.0,
+                np.log1p(snapshot.social_volume) / 10.0,
+                snapshot.viral_posts / 100.0,
+            ],
+            dtype=np.float32,
+        )
 
     def _save_cache(self, snapshot: BehavioralSentimentSnapshot):
         try:
             with open(self.cache_path, "w") as f:
-                json.dump({
-                    "timestamp": snapshot.timestamp, "overall_score": snapshot.overall_score,
-                    "confidence": snapshot.confidence, "twitter_score": snapshot.twitter_score,
-                    "reddit_score": snapshot.reddit_score, "news_score": snapshot.news_score,
-                    "satellite_score": snapshot.satellite_score, "onchain_score": snapshot.onchain_score,
-                    "fear_greed_index": snapshot.fear_greed_index, "social_volume": snapshot.social_volume,
-                    "source_counts": snapshot.source_counts, "recent_headlines": snapshot.recent_headlines,
-                }, f)
+                json.dump(
+                    {
+                        "timestamp": snapshot.timestamp,
+                        "overall_score": snapshot.overall_score,
+                        "confidence": snapshot.confidence,
+                        "twitter_score": snapshot.twitter_score,
+                        "reddit_score": snapshot.reddit_score,
+                        "news_score": snapshot.news_score,
+                        "satellite_score": snapshot.satellite_score,
+                        "onchain_score": snapshot.onchain_score,
+                        "fear_greed_index": snapshot.fear_greed_index,
+                        "social_volume": snapshot.social_volume,
+                        "source_counts": snapshot.source_counts,
+                        "recent_headlines": snapshot.recent_headlines,
+                    },
+                    f,
+                )
         except (IOError, OSError, TypeError) as e:
             logger.debug(f"Failed to save behavioral sentiment cache: {e}")
             pass

@@ -1,4 +1,5 @@
 """Integration tests for critical system flows."""
+
 import asyncio
 import pytest
 import numpy as np
@@ -10,7 +11,12 @@ from unittest.mock import MagicMock, AsyncMock, patch, PropertyMock
 class TestMasterAIOrchestrator:
     @pytest.fixture
     def orchestrator(self):
-        from ai.master_orchestrator import MasterAIOrchestrator, SystemState, EnhancementStatus
+        from ai.master_orchestrator import (
+            MasterAIOrchestrator,
+            SystemState,
+            EnhancementStatus,
+        )
+
         ma = MasterAIOrchestrator(initial_balance=100000.0)
         return ma
 
@@ -26,14 +32,22 @@ class TestMasterAIOrchestrator:
             assert enh in orchestrator.enhancements
 
     def test_on_trade_result(self, orchestrator):
-        trade = {"symbol": "EURUSD", "pnl": 50.0, "direction": "BUY", "entry": 1.12, "exit": 1.13}
+        trade = {
+            "symbol": "EURUSD",
+            "pnl": 50.0,
+            "direction": "BUY",
+            "entry": 1.12,
+            "exit": 1.13,
+        }
         orchestrator.on_trade_result(trade)
         assert len(orchestrator.trade_history) == 1
         assert orchestrator.system_pnl == 50.0
 
     def test_record_trade_updates_metrics(self, orchestrator):
         for i in range(10):
-            orchestrator.record_trade({"symbol": "EURUSD", "pnl": 10.0 if i % 2 == 0 else -5.0})
+            orchestrator.record_trade(
+                {"symbol": "EURUSD", "pnl": 10.0 if i % 2 == 0 else -5.0}
+            )
         assert orchestrator.system_pnl == 25.0
         assert len(orchestrator.trade_history) == 10
 
@@ -56,21 +70,36 @@ class TestMasterAIOrchestrator:
 
     def test_assess_market_conditions(self, orchestrator):
         assert orchestrator._assess_market_conditions({}) == "unknown"
-        assert orchestrator._assess_market_conditions({"EURUSD": {"atr": 0.001, "price": 1.12}}) == "normal"
-        assert orchestrator._assess_market_conditions({"EURUSD": {"atr": 0.1, "price": 1.12}}) == "volatile"
+        assert (
+            orchestrator._assess_market_conditions(
+                {"EURUSD": {"atr": 0.001, "price": 1.12}}
+            )
+            == "normal"
+        )
+        assert (
+            orchestrator._assess_market_conditions(
+                {"EURUSD": {"atr": 0.1, "price": 1.12}}
+            )
+            == "volatile"
+        )
 
     def test_state_transitions(self, orchestrator):
         from ai.master_orchestrator import SystemDecision
+
         # Start optimal
         assert orchestrator.system_state.value == "optimal"
         # Halt
         orchestrator._update_system_state(SystemDecision(action="halt", reason="test"))
         assert orchestrator.system_state.value == "halted"
         # Continue from halted -> recovering
-        orchestrator._update_system_state(SystemDecision(action="continue", reason="test"))
+        orchestrator._update_system_state(
+            SystemDecision(action="continue", reason="test")
+        )
         assert orchestrator.system_state.value == "recovering"
         # Continue from recovering -> optimal
-        orchestrator._update_system_state(SystemDecision(action="continue", reason="test"))
+        orchestrator._update_system_state(
+            SystemDecision(action="continue", reason="test")
+        )
         assert orchestrator.system_state.value == "optimal"
 
 
@@ -78,6 +107,7 @@ class TestCircuitBreaker:
     @pytest.fixture
     def cb(self):
         from risk.circuit_breaker import CircuitBreaker
+
         return CircuitBreaker(
             price_velocity_threshold=0.005,
             spread_multiplier_threshold=5.0,
@@ -86,31 +116,58 @@ class TestCircuitBreaker:
         )
 
     def test_healthy_market(self, cb):
-        should_halt, reason, snap = cb.check_market_health("EURUSD", {
-            "bid": 1.1200, "ask": 1.1201, "volume": 1000,
-        })
+        should_halt, reason, snap = cb.check_market_health(
+            "EURUSD",
+            {
+                "bid": 1.1200,
+                "ask": 1.1201,
+                "volume": 1000,
+            },
+        )
         assert not should_halt
         assert snap.is_healthy
 
     def test_price_velocity_trigger(self, cb):
         # Simulate flash crash with successive ticks
-        cb.price_history["EURUSD"] = [1.12, 1.12, 1.12, 1.12, 1.12, 1.12, 1.12, 1.12, 1.10]  # ~1.8% drop
+        cb.price_history["EURUSD"] = [
+            1.12,
+            1.12,
+            1.12,
+            1.12,
+            1.12,
+            1.12,
+            1.12,
+            1.12,
+            1.10,
+        ]  # ~1.8% drop
         cb.spread_history["EURUSD"] = [0.0001] * 9
         cb.volume_history["EURUSD"] = [1000] * 9
         cb.volatility_history["EURUSD"] = [0.001] * 20
         cb._update_normal_levels("EURUSD")
 
-        should_halt, reason, snap = cb.check_market_health("EURUSD", {
-            "bid": 1.10, "ask": 1.1001, "volume": 10000, "price": 1.10,
-        })
+        should_halt, reason, snap = cb.check_market_health(
+            "EURUSD",
+            {
+                "bid": 1.10,
+                "ask": 1.1001,
+                "volume": 10000,
+                "price": 1.10,
+            },
+        )
         # Should detect velocity > 0.005
         assert should_halt
 
     def test_liquidity_drought(self, cb):
         cb.normal_spreads["EURUSD"] = 0.0001
-        should_halt, reason, snap = cb.check_market_health("EURUSD", {
-            "bid": 1.12, "ask": 1.13, "volume": 1000, "price": 1.125,
-        })
+        should_halt, reason, snap = cb.check_market_health(
+            "EURUSD",
+            {
+                "bid": 1.12,
+                "ask": 1.13,
+                "volume": 1000,
+                "price": 1.125,
+            },
+        )
         # Spread = 0.01 / 0.0001 = 100x normal
         assert should_halt
 
@@ -156,6 +213,7 @@ class TestExecutionEngine:
     @pytest.fixture
     def engine(self, mock_client, mock_risk, mock_data):
         from execution.engine import ExecutionEngine
+
         eng = ExecutionEngine(mock_client, mock_risk, mock_data)
         return eng
 
@@ -172,9 +230,13 @@ class TestExecutionEngine:
 
     def test_pnl_usd_jpy(self, engine):
         from execution.engine import TradeRecord
+
         trade = TradeRecord(
-            timestamp=100, symbol="USDJPY", direction="BUY",
-            volume=100000, entry_price=150.0,
+            timestamp=100,
+            symbol="USDJPY",
+            direction="BUY",
+            volume=100000,
+            entry_price=150.0,
         )
         pnl = engine._pnl_usd(150.0, 151.0, "BUY", 100000, "USDJPY")
         assert pnl > 0
@@ -199,17 +261,20 @@ class TestEventBus:
     @pytest.fixture
     def event_bus(self):
         from infrastructure.event_bus import TradingEventBus, EventType
+
         eb = TradingEventBus()
         return eb
 
     def test_subscribe(self, event_bus):
         from infrastructure.event_bus import EventType
+
         received = []
 
         def handler(event):
             received.append(event)
 
         from infrastructure.event_bus import Event
+
         event_bus.subscribe(EventType.TICK, handler)
         asyncio.run(event_bus._handle_event(Event(EventType.TICK, {"price": 1.12})))
         assert len(received) == 1
@@ -217,6 +282,7 @@ class TestEventBus:
     @pytest.mark.asyncio
     async def test_async_subscribe(self, event_bus):
         from infrastructure.event_bus import EventType
+
         received = []
 
         async def handler(event):
@@ -230,6 +296,7 @@ class TestEventBus:
 
     def test_get_stats(self, event_bus):
         from infrastructure.event_bus import EventType
+
         event_bus._event_stats[EventType.TICK] = 5
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)

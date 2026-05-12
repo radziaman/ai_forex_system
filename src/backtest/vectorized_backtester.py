@@ -2,11 +2,10 @@
 Vectorized Backtester for rapid strategy evaluation.
 Processes bars at array speed (no 1-second loop) with realistic costs.
 """
+
 import numpy as np
-import pandas as pd
-from typing import Dict, List, Optional, Tuple, Callable
+from typing import Dict, Optional, Tuple, Callable
 from dataclasses import dataclass, field
-from loguru import logger
 
 
 @dataclass
@@ -88,14 +87,23 @@ class VectorizedBacktester:
 
             if position == 0 and sig != 0:
                 position = sig
-                entry_price = prices[i] + self._slippage(prices[i], sig)
+                slippage = self._slippage(prices[i], sig)
+                entry_price = prices[i] + slippage if sig == 1 else prices[i] - slippage
                 entry_idx = i
                 continue
 
             if position != 0:
                 sl_hit = tp_hit = False
-                sl_price = entry_price - position * atr[i] * sl_atr * self.pip_size if atr is not None else None
-                tp_price = entry_price + position * atr[i] * tp_atr * self.pip_size if atr is not None else None
+                sl_price = (
+                    entry_price - position * atr[i] * sl_atr * self.pip_size
+                    if atr is not None
+                    else None
+                )
+                tp_price = (
+                    entry_price + position * atr[i] * tp_atr * self.pip_size
+                    if atr is not None
+                    else None
+                )
 
                 if sl_price is not None:
                     if position == 1 and prices[i] <= sl_price:
@@ -114,9 +122,15 @@ class VectorizedBacktester:
                 should_close = close_signal or exit_sig
 
                 if should_close or i == n - 1:
-                    exit_price = prices[i] - self._slippage(prices[i], position)
-                    raw_pnl = position * (exit_price - entry_price) / self.pip_size
-                    cost = self._transaction_cost(abs(entry_price - exit_price), entry_price)
+                    slippage = self._slippage(prices[i], position)
+                    exit_price = (
+                        prices[i] - slippage if position == 1 else prices[i] + slippage
+                    )
+                    price_diff = (exit_price - entry_price) * position
+                    raw_pnl = price_diff / self.pip_size * 10.0
+                    cost = self._transaction_cost(
+                        abs(entry_price - exit_price), entry_price
+                    )
                     net_pnl = raw_pnl - cost * cost_multiplier
                     trades_pnls.append(net_pnl)
                     trade_entry_idx.append(entry_idx)
@@ -125,18 +139,28 @@ class VectorizedBacktester:
                         trade_regimes.append(regimes[entry_idx])
                     position = 0
 
-            equity.append(equity[-1] * (1 + (trades_pnls[-1] / 100) if trades_pnls else 0))
+            pnl_pct = trades_pnls[-1] / 100 if trades_pnls else 0.0
+            equity.append(equity[-1] * (1 + pnl_pct))
 
         trade_pnls = np.array(trades_pnls)
         equity_curve = np.array(equity)
 
         if len(trade_pnls) == 0:
             return BacktestResult(
-                total_return_pct=0.0, annual_return_pct=0.0, sharpe=0.0,
-                max_drawdown_pct=0.0, win_rate=0.0, profit_factor=0.0,
-                total_trades=0, avg_hold_bars=0.0, avg_win_pct=0.0,
-                avg_loss_pct=0.0, calmar_ratio=0.0, sortino=0.0,
-                trade_pnls=trade_pnls, equity_curve=equity_curve,
+                total_return_pct=0.0,
+                annual_return_pct=0.0,
+                sharpe=0.0,
+                max_drawdown_pct=0.0,
+                win_rate=0.0,
+                profit_factor=0.0,
+                total_trades=0,
+                avg_hold_bars=0.0,
+                avg_win_pct=0.0,
+                avg_loss_pct=0.0,
+                calmar_ratio=0.0,
+                sortino=0.0,
+                trade_pnls=trade_pnls,
+                equity_curve=equity_curve,
             )
 
         total_return = float(equity_curve[-1] - 1.0) * 100
@@ -145,7 +169,11 @@ class VectorizedBacktester:
         annual_return_pct = annual_return * 100
 
         returns = np.diff(equity_curve) / equity_curve[:-1]
-        sharpe = float(np.mean(returns) / max(np.std(returns), 1e-10) * np.sqrt(252)) if len(returns) > 1 else 0.0
+        sharpe = (
+            float(np.mean(returns) / max(np.std(returns), 1e-10) * np.sqrt(252))
+            if len(returns) > 1
+            else 0.0
+        )
 
         cum = np.maximum.accumulate(equity_curve)
         dd = (cum - equity_curve) / cum
@@ -156,13 +184,21 @@ class VectorizedBacktester:
         win_rate = len(wins) / max(len(trade_pnls), 1)
         profit_factor = float(np.sum(wins) / max(abs(np.sum(losses)), 1e-10))
 
-        avg_hold = float(np.mean(np.array(trade_exit_idx) - np.array(trade_entry_idx))) if trade_exit_idx else 0.0
+        avg_hold = (
+            float(np.mean(np.array(trade_exit_idx) - np.array(trade_entry_idx)))
+            if trade_exit_idx
+            else 0.0
+        )
         avg_win = float(np.mean(wins)) if len(wins) > 0 else 0.0
         avg_loss = float(np.mean(losses)) if len(losses) > 0 else 0.0
 
         calmar = annual_return_pct / max(max_dd, 0.01)
         downside = returns[returns < 0]
-        sortino = float(np.mean(returns) / max(np.std(downside), 1e-10) * np.sqrt(252)) if len(downside) > 1 else 0.0
+        sortino = (
+            float(np.mean(returns) / max(np.std(downside), 1e-10) * np.sqrt(252))
+            if len(downside) > 1
+            else 0.0
+        )
 
         regime_returns = {}
         if regimes is not None and trade_regimes:
@@ -237,7 +273,8 @@ class VectorizedBacktester:
 
     @staticmethod
     def compute_confidence_intervals(
-        curves: np.ndarray, confidence: float = 0.95,
+        curves: np.ndarray,
+        confidence: float = 0.95,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         lower = (1 - confidence) / 2 * 100
         upper = (1 + confidence) / 2 * 100
@@ -259,7 +296,11 @@ class VectorizedBacktester:
             self.slippage_model = slip
             for mult in [0.5, 1.0, 2.0]:
                 r = self.run(
-                    prices, signal_fn, features, atr, regimes,
+                    prices,
+                    signal_fn,
+                    features,
+                    atr,
+                    regimes,
                     cost_multiplier=mult,
                 )
                 key = f"{slip}_cost{mult}x"

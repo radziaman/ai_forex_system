@@ -9,7 +9,8 @@ from unittest.mock import patch, MagicMock
 
 # Add src to path
 import sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from api.ctrader_env import cTraderEnvClient
 
@@ -31,11 +32,14 @@ class TestCTraderEnvClient:
         test_account = "9999999"
         test_client_id = "test_client_id_123"
 
-        with patch.dict(os.environ, {
-            "CTRADER_ACCESS_TOKEN": test_token,
-            "CTRADER_ACCOUNT_ID": test_account,
-            "CTRADER_CLIENT_ID": test_client_id
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "CTRADER_ACCESS_TOKEN": test_token,
+                "CTRADER_ACCOUNT_ID": test_account,
+                "CTRADER_CLIENT_ID": test_client_id,
+            },
+        ):
             client = cTraderEnvClient(env_file="nonexistent.env")
             assert client.access_token == test_token
             assert client.account_id == test_account
@@ -53,8 +57,8 @@ CTRADER_REFRESH_TOKEN=refresh_from_file
         assert client.access_token == "token_from_file"
         assert client.refresh_token == "refresh_from_file"
 
-    @patch('socket.socket')
-    @patch('ssl.create_default_context')
+    @patch("socket.socket")
+    @patch("ssl.create_default_context")
     def test_connect_success(self, mock_ssl_context, mock_socket):
         """Test successful SSL connection."""
         mock_sock = MagicMock()
@@ -69,8 +73,8 @@ CTRADER_REFRESH_TOKEN=refresh_from_file
         assert client.connection_status == "connected"
         mock_ssl_socket.connect.assert_called_once_with(("demo.ctraderapi.com", 5035))
 
-    @patch('socket.socket')
-    @patch('ssl.create_default_context')
+    @patch("socket.socket")
+    @patch("ssl.create_default_context")
     def test_connect_failure(self, mock_ssl_context, mock_socket):
         """Test connection failure."""
         mock_ssl_context.return_value.wrap_socket.side_effect = Exception("SSL Error")

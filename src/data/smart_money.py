@@ -2,6 +2,7 @@
 Smart Money Tracking via COTC COT (Commitment of Traders) reports.
 Tracks where institutional money is positioning — fade them at extremes.
 """
+
 import numpy as np
 import pandas as pd
 import time
@@ -14,13 +15,16 @@ import os
 @dataclass
 class COTSnapshot:
     """Commercial (smart money) vs Non-Commercial positioning."""
+
     symbol: str
     commercial_long: float = 0.0
     commercial_short: float = 0.0
     noncommercial_long: float = 0.0
     noncommercial_short: float = 0.0
     net_commercial: float = 0.0  # Positive = commercials net long
-    institutional_signal: str = "neutral"  # long | short | neutral | extreme_long | extreme_short
+    institutional_signal: str = (
+        "neutral"  # long | short | neutral | extreme_long | extreme_short
+    )
     position_extreme: bool = False
     recommended_action: str = "follow"  # follow | fade | neutral
 
@@ -75,52 +79,81 @@ class COTAnalyzer:
             return self.snapshots.get(symbol, COTSnapshot(symbol=symbol))
 
     def _fetch_cot_report(self, symbol: str) -> COTSnapshot:
-        """Fetch and parse CFTC COT report."""
-        import requests
-        from lxml import html
-
-        # For demo/placeholder: generate synthetic institutional data
-        # In production, parse the actual CFTC Excel/CSV
+        """Fetch and parse CFTC COT report. Returns neutral on failure."""
         cot_code = self.COT_CODES.get(symbol, "096742")
 
-        # Simulate COT data (replace with actual API call)
-        np.random.seed(hash(symbol) % 2**32)
-        commercial_long = np.random.normal(50000, 5000)
-        commercial_short = np.random.normal(45000, 5000)
-        noncom_long = np.random.normal(30000, 3000)
-        noncom_short = np.random.normal(35000, 3000)
+        # Try CFTC JSON API first (modern endpoint)
+        try:
+            import requests
 
-        net_commercial = commercial_long - commercial_short
-        total = commercial_long + commercial_short + noncom_long + noncom_short
-        net_ratio = net_commercial / total if total > 0 else 0.0
+            url = f"https://www.cftc.gov/dea/futures/deacmxsf.htm"
+            resp = requests.get(url, timeout=10)
+            if resp.status_code == 200:
+                parsed = self._parse_cot_html(resp.text, symbol, cot_code)
+                if parsed:
+                    return parsed
+        except Exception as e:
+            logger.debug(f"COT HTTP fetch failed for {symbol}: {e}")
 
-        # Determine signal
-        if net_ratio > 0.15:
-            signal = "extreme_long" if net_ratio > 0.25 else "long"
-        elif net_ratio < -0.15:
-            signal = "extreme_short" if net_ratio < -0.25 else "short"
-        else:
-            signal = "neutral"
-
-        # At extremes, fade the commercials (they're usually right at extremes)
-        action = "fade" if abs(net_ratio) > 0.25 else "follow"
-
-        snapshot = COTSnapshot(
+        logger.warning(f"COT data unavailable for {symbol} — returning neutral")
+        return COTSnapshot(
             symbol=symbol,
-            commercial_long=commercial_long,
-            commercial_short=commercial_short,
-            noncommercial_long=noncom_long,
-            noncommercial_short=noncom_short,
-            net_commercial=net_ratio,
-            institutional_signal=signal,
-            position_extreme=abs(net_ratio) > 0.25,
-            recommended_action=action,
+            institutional_signal="neutral",
+            recommended_action="neutral",
         )
 
-        logger.info(
-            f"COT {symbol}: commercial_net={net_ratio:.2f} → {signal} → {action}"
-        )
-        return snapshot
+    def _parse_cot_html(
+        self, html_text: str, symbol: str, cot_code: str
+    ) -> Optional[COTSnapshot]:
+        """Parse CFTC legacy HTML format to extract positioning data."""
+        try:
+            import re
+
+            pattern = re.compile(
+                r"<tr[^>]*>.*?" + re.escape(cot_code) + r".*?</tr>", re.DOTALL
+            )
+            match = pattern.search(html_text)
+            if not match:
+                return None
+            cells = re.findall(r"<td[^>]*>(.*?)</td>", match.group())
+            numbers = []
+            for c in cells:
+                cleaned = re.sub(r"<[^>]+>", "", c).strip().replace(",", "")
+                try:
+                    numbers.append(float(cleaned))
+                except ValueError:
+                    continue
+            if len(numbers) < 12:
+                return None
+            commercial_long = numbers[4]
+            commercial_short = numbers[5]
+            noncom_long = numbers[8]
+            noncom_short = numbers[9]
+            net_commercial = commercial_long - commercial_short
+            total = commercial_long + commercial_short + noncom_long + noncom_short
+            net_ratio = net_commercial / total if total > 0 else 0.0
+            signal = "neutral"
+            if net_ratio > 0.15:
+                signal = "extreme_long" if net_ratio > 0.25 else "long"
+            elif net_ratio < -0.15:
+                signal = "extreme_short" if net_ratio < -0.25 else "short"
+            action = "fade" if abs(net_ratio) > 0.25 else "follow"
+            snapshot = COTSnapshot(
+                symbol=symbol,
+                commercial_long=commercial_long,
+                commercial_short=commercial_short,
+                noncommercial_long=noncom_long,
+                noncommercial_short=noncom_short,
+                net_commercial=net_ratio,
+                institutional_signal=signal,
+                position_extreme=abs(net_ratio) > 0.25,
+                recommended_action=action,
+            )
+            logger.info(f"COT {symbol}: net={net_ratio:.2f} → {signal} → {action}")
+            return snapshot
+        except Exception as e:
+            logger.debug(f"COT HTML parse failed: {e}")
+            return None
 
     def get_trading_signal(
         self, symbol: str, current_direction: str
@@ -150,18 +183,23 @@ class COTAnalyzer:
         vec = []
         for sym in targets:
             snap = self.fetch_latest(sym)
-            vec.extend([
-                snap.net_commercial,
-                1.0 if snap.position_extreme else 0.0,
-                1.0 if "long" in snap.institutional_signal else (
-                    -1.0 if "short" in snap.institutional_signal else 0.0
-                ),
-            ])
+            vec.extend(
+                [
+                    snap.net_commercial,
+                    1.0 if snap.position_extreme else 0.0,
+                    (
+                        1.0
+                        if "long" in snap.institutional_signal
+                        else (-1.0 if "short" in snap.institutional_signal else 0.0)
+                    ),
+                ]
+            )
         return np.array(vec, dtype=np.float32)
 
     def _save_cache(self):
         try:
             import json
+
             data = {
                 sym: {
                     "commercial_long": s.commercial_long,
@@ -183,6 +221,7 @@ class COTAnalyzer:
     def _load_cache(self):
         try:
             import json
+
             if not os.path.exists(self.cache_path):
                 return
             with open(self.cache_path) as f:

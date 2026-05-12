@@ -2,6 +2,7 @@
 Position Persistence Service — saves/loads open positions and trade history to/from disk.
 Prevents state loss on bot restart.
 """
+
 import json
 import os
 import time
@@ -107,8 +108,12 @@ class PositionPersistence:
             risk_manager.total_trades = state.get("total_trades", 0)
             risk_manager.wins = state.get("wins", 0)
             risk_manager.losses = state.get("losses", 0)
-            risk_manager.peak_balance = state.get("peak_balance", risk_manager.initial_balance)
-            risk_manager.kill_switch_triggered = state.get("kill_switch_triggered", False)
+            risk_manager.peak_balance = state.get(
+                "peak_balance", risk_manager.initial_balance
+            )
+            risk_manager.kill_switch_triggered = state.get(
+                "kill_switch_triggered", False
+            )
             return True
         except Exception as e:
             logger.error(f"Failed to load risk state: {e}")
@@ -117,12 +122,22 @@ class PositionPersistence:
     def save_all(self, execution_engine, risk_manager) -> bool:
         """Save all trading state."""
         try:
-            positions = execution_engine.get_open_positions() if hasattr(execution_engine, 'get_open_positions') else []
-            history = execution_engine.get_trade_history(500) if hasattr(execution_engine, 'get_trade_history') else []
+            positions = (
+                execution_engine.get_open_positions()
+                if hasattr(execution_engine, "get_open_positions")
+                else []
+            )
+            history = (
+                execution_engine.get_trade_history(500)
+                if hasattr(execution_engine, "get_trade_history")
+                else []
+            )
             self.save_positions(positions)
             self.save_trade_history(history)
             self.save_risk_state(risk_manager)
-            logger.debug(f"State saved: {len(positions)} positions, {len(history)} trades")
+            logger.debug(
+                f"State saved: {len(positions)} positions, {len(history)} trades"
+            )
             return True
         except Exception as e:
             logger.warning(f"State save failed: {e}")

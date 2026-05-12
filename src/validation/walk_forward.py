@@ -2,6 +2,7 @@
 Purged Walk-Forward Validation with embargo periods.
 Prevents data leakage between train/test splits for time series.
 """
+
 import numpy as np
 import pandas as pd
 from typing import Optional, Tuple, List, Callable, Dict
@@ -38,9 +39,7 @@ class PurgedWalkForward:
         self.embargo = embargo
         self.min_train_window = min_train_window
 
-    def split(
-        self, prices: np.ndarray
-    ) -> List[Tuple[int, int, int, int]]:
+    def split(self, prices: np.ndarray) -> List[Tuple[int, int, int, int]]:
         total = len(prices)
         folds = []
         for i in range(self.n_folds):
@@ -90,9 +89,7 @@ class PurgedWalkForward:
                 gross_loss = abs(np.sum(pnls[~wins])) if np.any(~wins) else 1.0
                 res.profit_factor = float(gross_win / max(gross_loss, 1e-8))
                 if len(pnls) > 1 and np.std(pnls) > 0:
-                    res.sharpe = float(
-                        np.mean(pnls) / np.std(pnls) * np.sqrt(252)
-                    )
+                    res.sharpe = float(np.mean(pnls) / np.std(pnls) * np.sqrt(252))
                 cum = np.cumsum(pnls)
                 peak = np.maximum.accumulate(cum)
                 dd = peak - cum

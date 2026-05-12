@@ -1,4 +1,5 @@
 """Data pipeline: tick ingestion, OHLCV aggregation, feature caching + emission."""
+
 import asyncio
 import time
 from typing import Dict, List, Optional, Any
@@ -32,7 +33,9 @@ class DataPipeline(TradingService):
 
     async def start(self) -> None:
         self._running = True
-        logger.info(f"DataPipeline: {len(SYMBOLS)} symbols x {self.config.features.timeframes}")
+        logger.info(
+            f"DataPipeline: {len(SYMBOLS)} symbols x {self.config.features.timeframes}"
+        )
 
     async def stop(self) -> None:
         self._running = False
@@ -42,7 +45,9 @@ class DataPipeline(TradingService):
             return
         self.tick_counter += 1
         sym = tick.symbol
-        self.data_manager.update_tick(sym, tick.bid, tick.ask, tick.volume, tick.timestamp)
+        self.data_manager.update_tick(
+            sym, tick.bid, tick.ask, tick.volume, tick.timestamp
+        )
         df = self.data_manager.get_ohlcv(sym, "1m")
         if df is not None and not df.empty:
             current_bar_ts = float(df["timestamp"].iloc[-1])
@@ -55,7 +60,9 @@ class DataPipeline(TradingService):
         if features is not None:
             df = self.data_manager.get_ohlcv(symbol, "1h")
             price = self.data_manager.get_price(symbol, "1h")
-            logger.info(f"[data] {symbol}: features ready (price={price:.5f}, features.shape={features.shape})")
+            logger.info(
+                f"[data] {symbol}: features ready (price={price:.5f}, features.shape={features.shape})"
+            )
             update = FeatureUpdate(
                 symbol=symbol,
                 timeframe="1h",
@@ -65,7 +72,9 @@ class DataPipeline(TradingService):
                 timestamp=time.time(),
             )
             asyncio.ensure_future(
-                self.event_bus.emit(EventType.FEATURES_READY, update, source="data_pipeline")
+                self.event_bus.emit(
+                    EventType.FEATURES_READY, update, source="data_pipeline"
+                )
             )
             self._features_dirty[symbol] = False
         else:
@@ -82,7 +91,8 @@ class DataPipeline(TradingService):
 
         try:
             features = self.feature_pipeline.transform(
-                self.data_manager.ohlcv, symbol=symbol,
+                self.data_manager.ohlcv,
+                symbol=symbol,
             )
             if features is not None:
                 self.data_manager.set_cached_features(symbol, "1h", features)
@@ -97,6 +107,7 @@ class DataPipeline(TradingService):
     def get_live_price(self, symbol: str) -> float:
         """Latest mid-price from tick stream. Falls back to 1h close if no tick yet."""
         from data.data_manager import BASE_PRICES
+
         latest = self.data_manager._last_realtime_price.get(symbol)
         if latest and latest > 0:
             default = BASE_PRICES.get(symbol, 0)

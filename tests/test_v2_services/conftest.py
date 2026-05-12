@@ -1,4 +1,5 @@
 """Test configuration for service tests — ensures src/ is on sys.path."""
+
 import sys
 import os
 

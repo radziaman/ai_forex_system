@@ -10,12 +10,10 @@ class TradingService(ABC):
         self._running = False
 
     @abstractmethod
-    async def start(self) -> None:
-        ...
+    async def start(self) -> None: ...
 
     @abstractmethod
-    async def stop(self) -> None:
-        ...
+    async def stop(self) -> None: ...
 
     @property
     def is_running(self) -> bool:

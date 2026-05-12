@@ -1,4 +1,5 @@
 """Risk Gatekeeper: evaluates Signal → TradeDecision or rejects."""
+
 from typing import Optional
 from loguru import logger
 
@@ -21,7 +22,9 @@ class RiskGatekeeper(TradingService):
             max_margin_usage=config.trading.max_margin_usage,
         )
         self.risk_manager = RiskManager(params, initial_balance)
-        self.cost_model = CostModel(commission_per_lot=config.trading.commission_per_lot)
+        self.cost_model = CostModel(
+            commission_per_lot=config.trading.commission_per_lot
+        )
 
     async def start(self) -> None:
         self._running = True
@@ -45,23 +48,36 @@ class RiskGatekeeper(TradingService):
 
         # Max positions check
         if open_positions_count >= self.config.trading.max_positions:
-            logger.info(f"Risk reject {signal.symbol}: max positions reached ({open_positions_count})")
+            logger.info(
+                f"Risk reject {signal.symbol}: max positions reached ({open_positions_count})"
+            )
             return None
 
         # Pre-trade risk checks (drawdown, daily loss, consecutive losses, margin)
-        approved, reason = self.risk_manager.pre_trade_checks(balance, equity, margin, equity - balance)
+        approved, reason = self.risk_manager.pre_trade_checks(
+            balance, equity, margin, equity - balance
+        )
         if not approved:
             logger.info(f"Risk reject {signal.symbol}: {reason}")
             return None
 
         volume = self.risk_manager.calculate_kelly_size(
-            balance, signal.price, atr, signal.confidence, symbol=signal.symbol,
+            balance,
+            signal.price,
+            atr,
+            signal.confidence,
+            symbol=signal.symbol,
         )
-        volume = max(int(volume), 1)
+        lot_min = 0.01
+        volume = max(round(volume / lot_min) * lot_min, lot_min)
+        volume = min(volume, balance * 0.5 / signal.price)
 
         cost = self.cost_model.calculate(
-            symbol=signal.symbol, direction=signal.direction.value,
-            volume=volume, price=signal.price, atr=atr,
+            symbol=signal.symbol,
+            direction=signal.direction.value,
+            volume=volume,
+            price=signal.price,
+            atr=atr,
         )
         if not cost.is_acceptable:
             logger.info(f"Cost reject {signal.symbol}: {cost.rejection_reason}")

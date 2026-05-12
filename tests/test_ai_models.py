@@ -2,12 +2,13 @@
 """
 Tests for AI models - LSTM-CNN Hybrid, Profitability Classifier, PPO Agent, and Ensemble.
 """
+
 import os
 import sys
 import numpy as np
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from rts_ai_fx.model import LSTMCNNHybrid, ProfitabilityClassifier
 from rts_ai_fx.ensemble import MoEEnsemble, Expert, EnsemblePrediction
@@ -48,7 +49,7 @@ class TestLSTMCNNHybrid:
         X_train, y_train = X[20:], y[20:]
         history = model.train(X_train, y_train, X_val, y_val, epochs=2, batch_size=32)
         assert history is not None
-        assert 'loss' in history.history
+        assert "loss" in history.history
 
     def test_save_load(self, model, sample_data, tmp_path):
         X, y = sample_data
@@ -101,9 +102,11 @@ class TestProfitabilityClassifier:
         X, prices = sample_data
         X_val, prices_val = X[:20], prices[:21]
         X_train, prices_train = X[20:], prices[20:]
-        history = model.train(X_train, prices_train, X_val, prices_val, epochs=2, batch_size=32)
+        history = model.train(
+            X_train, prices_train, X_val, prices_val, epochs=2, batch_size=32
+        )
         assert history is not None
-        assert 'loss' in history.history
+        assert "loss" in history.history
 
 
 class TestMoEEnsemble:
@@ -117,15 +120,31 @@ class TestMoEEnsemble:
     def sample_experts(self):
         def predict_up(X):
             return np.array([1.12])
+
         def predict_down(X):
             return np.array([1.10])
+
         def conf_high(X):
             return np.array([0.9])
+
         def conf_low(X):
             return np.array([0.6])
+
         return [
-            Expert(name="bull_expert", predict=predict_up, confidence=conf_high, regime="trending", elo=1300.0),
-            Expert(name="bear_expert", predict=predict_down, confidence=conf_low, regime="volatile", elo=1100.0),
+            Expert(
+                name="bull_expert",
+                predict=predict_up,
+                confidence=conf_high,
+                regime="trending",
+                elo=1300.0,
+            ),
+            Expert(
+                name="bear_expert",
+                predict=predict_down,
+                confidence=conf_low,
+                regime="volatile",
+                elo=1100.0,
+            ),
         ]
 
     def test_empty_ensemble_predict(self, ensemble):
@@ -137,12 +156,16 @@ class TestMoEEnsemble:
 
     def test_add_expert(self, ensemble, sample_experts):
         for expert in sample_experts:
-            ensemble.add_expert(expert.name, expert.predict, expert.confidence, expert.regime)
+            ensemble.add_expert(
+                expert.name, expert.predict, expert.confidence, expert.regime
+            )
         assert len(ensemble.experts) == 2
 
     def test_predict_with_experts(self, ensemble, sample_experts):
         for expert in sample_experts:
-            ensemble.add_expert(expert.name, expert.predict, expert.confidence, expert.regime)
+            ensemble.add_expert(
+                expert.name, expert.predict, expert.confidence, expert.regime
+            )
         X = np.random.randn(1, 30, 51)
         pred = ensemble.predict(X, regime="trending")
         assert pred.price > 0
@@ -151,16 +174,26 @@ class TestMoEEnsemble:
 
     def test_regime_weighting(self, ensemble, sample_experts):
         for expert in sample_experts:
-            ensemble.add_expert(expert.name, expert.predict, expert.confidence, expert.regime)
+            ensemble.add_expert(
+                expert.name, expert.predict, expert.confidence, expert.regime
+            )
         X = np.random.randn(1, 30, 51)
         pred_trending = ensemble.predict(X, regime="trending")
         pred_volatile = ensemble.predict(X, regime="volatile")
-        assert pred_trending.expert_outputs["bull_expert"]["weight"] > pred_trending.expert_outputs["bear_expert"]["weight"]
-        assert pred_volatile.expert_outputs["bear_expert"]["weight"] > pred_volatile.expert_outputs["bull_expert"]["weight"]
+        assert (
+            pred_trending.expert_outputs["bull_expert"]["weight"]
+            > pred_trending.expert_outputs["bear_expert"]["weight"]
+        )
+        assert (
+            pred_volatile.expert_outputs["bear_expert"]["weight"]
+            > pred_volatile.expert_outputs["bull_expert"]["weight"]
+        )
 
     def test_should_trade(self, ensemble, sample_experts):
         for expert in sample_experts:
-            ensemble.add_expert(expert.name, expert.predict, expert.confidence, expert.regime)
+            ensemble.add_expert(
+                expert.name, expert.predict, expert.confidence, expert.regime
+            )
         X = np.random.randn(1, 30, 51)
         pred = ensemble.predict(X, regime="trending")
         current_price = 1.11

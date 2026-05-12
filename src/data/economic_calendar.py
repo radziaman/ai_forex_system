@@ -2,6 +2,7 @@
 Economic Calendar integration with event detection.
 Fetches high-impact events and suppresses trading during critical periods.
 """
+
 import time
 import json
 import os
@@ -12,6 +13,7 @@ from loguru import logger
 
 try:
     import requests
+
     REQUESTS_AVAILABLE = True
 except ImportError:
     REQUESTS_AVAILABLE = False
@@ -49,7 +51,16 @@ HIGH_IMPACT_EVENTS = {
 }
 
 CURRENCY_KEYWORDS = {
-    "USD": ["FOMC", "Federal Reserve", "Non-Farm", "Unemployment", "GDP", "CPI", "ISM", "Treasury"],
+    "USD": [
+        "FOMC",
+        "Federal Reserve",
+        "Non-Farm",
+        "Unemployment",
+        "GDP",
+        "CPI",
+        "ISM",
+        "Treasury",
+    ],
     "EUR": ["ECB", "Eurozone", "German", "French", "Italian", "EU"],
     "GBP": ["BOE", "Bank of England", "UK ", "British", "London"],
     "JPY": ["BOJ", "Bank of Japan", "Japanese", "Tokyo CPI"],
@@ -111,7 +122,10 @@ class EconomicCalendar:
         return self.events
 
     def _fetch_from_sources(
-        self, days_forward: int, days_backward: int, currencies: Optional[List[str]] = None,
+        self,
+        days_forward: int,
+        days_backward: int,
+        currencies: Optional[List[str]] = None,
     ) -> List[EconomicEvent]:
         events = []
         events.extend(self._fetch_forexfactory(days_forward, days_backward))
@@ -124,7 +138,9 @@ class EconomicCalendar:
         return events
 
     def _fetch_forexfactory(
-        self, days_forward: int, days_backward: int,
+        self,
+        days_forward: int,
+        days_backward: int,
     ) -> List[EconomicEvent]:
         if not REQUESTS_AVAILABLE:
             return self._generate_fallback_events(days_forward)
@@ -135,10 +151,13 @@ class EconomicCalendar:
         ]
         for url in urls:
             try:
-                resp = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+                resp = requests.get(
+                    url, timeout=10, headers={"User-Agent": "Mozilla/5.0"}
+                )
                 if resp.status_code in (429, 403):
                     try:
                         import cloudscraper
+
                         scraper = cloudscraper.create_scraper()
                         resp = scraper.get(url, timeout=10)
                     except Exception:
@@ -146,7 +165,11 @@ class EconomicCalendar:
                 if resp.status_code != 200:
                     continue
                 data = resp.json()
-                items = data if isinstance(data, list) else data.get("data", data.get("items", []))
+                items = (
+                    data
+                    if isinstance(data, list)
+                    else data.get("data", data.get("items", []))
+                )
                 for item in items:
                     ev = self._parse_fxitem(item)
                     if ev:
@@ -165,7 +188,11 @@ class EconomicCalendar:
             if not title:
                 return None
             currency = item.get("currency") or item.get("country", "USD")
-            impact_str = (item.get("impact") or item.get("volatility") or item.get("importance", "low")).lower()
+            impact_str = (
+                item.get("impact")
+                or item.get("volatility")
+                or item.get("importance", "low")
+            ).lower()
             impact_map = {"high": 3, "medium": 2, "low": 1, "speaker": 1, "holiday": 0}
             impact = impact_map.get(impact_str, 1)
             raw_time = item.get("date") or item.get("time") or item.get("timestamp", "")
@@ -180,13 +207,18 @@ class EconomicCalendar:
             if dt is None:
                 dt = datetime.now()
             return EconomicEvent(
-                timestamp=dt.timestamp(), title=title, currency=currency,
-                impact=impact, source=item.get("source", "forexfactory"),
+                timestamp=dt.timestamp(),
+                title=title,
+                currency=currency,
+                impact=impact,
+                source=item.get("source", "forexfactory"),
             )
         except Exception:
             return None
 
-    def _parse_forexfactory_item(self, item: Dict, date_str: str) -> Optional[EconomicEvent]:
+    def _parse_forexfactory_item(
+        self, item: Dict, date_str: str
+    ) -> Optional[EconomicEvent]:
         try:
             title = item.get("title", item.get("event", ""))
             impact = item.get("impact", item.get("importance", "low"))
@@ -237,16 +269,31 @@ class EconomicCalendar:
                             if date_str:
                                 dt = datetime.strptime(date_str, "%Y-%m-%d")
                                 if dt < datetime.now() + timedelta(days=days_forward):
-                                    events.append(EconomicEvent(
-                                        timestamp=dt.timestamp(),
-                                        title=release.get("name", "Economic Release"),
-                                        currency="USD",
-                                        impact="high" if any(
-                                            kw in release.get("name", "").lower()
-                                            for kw in ["gdp", "cpi", "employment", "fed", "ism"]
-                                        ) else "low",
-                                        event_id=f"fred_{rel_id}_{date_str}",
-                                    ))
+                                    events.append(
+                                        EconomicEvent(
+                                            timestamp=dt.timestamp(),
+                                            title=release.get(
+                                                "name", "Economic Release"
+                                            ),
+                                            currency="USD",
+                                            impact=(
+                                                "high"
+                                                if any(
+                                                    kw
+                                                    in release.get("name", "").lower()
+                                                    for kw in [
+                                                        "gdp",
+                                                        "cpi",
+                                                        "employment",
+                                                        "fed",
+                                                        "ism",
+                                                    ]
+                                                )
+                                                else "low"
+                                            ),
+                                            event_id=f"fred_{rel_id}_{date_str}",
+                                        )
+                                    )
         except Exception:
             pass
         return events
@@ -255,11 +302,30 @@ class EconomicCalendar:
         today = datetime.now()
         events = []
         high_impact_dates = {
-            0: "USD", 1: "EUR", 2: "USD", 3: "JPY", 4: "GBP",
-            5: "USD", 6: "USD", 7: "EUR", 8: "USD", 9: "JPY",
-            10: "GBP", 11: "USD", 12: "EUR", 13: "USD", 14: "JPY",
-            15: "USD", 16: "GBP", 17: "USD", 18: "EUR", 19: "USD",
-            20: "JPY", 21: "USD", 22: "GBP", 23: "USD",
+            0: "USD",
+            1: "EUR",
+            2: "USD",
+            3: "JPY",
+            4: "GBP",
+            5: "USD",
+            6: "USD",
+            7: "EUR",
+            8: "USD",
+            9: "JPY",
+            10: "GBP",
+            11: "USD",
+            12: "EUR",
+            13: "USD",
+            14: "JPY",
+            15: "USD",
+            16: "GBP",
+            17: "USD",
+            18: "EUR",
+            19: "USD",
+            20: "JPY",
+            21: "USD",
+            22: "GBP",
+            23: "USD",
         }
         for day_offset in range(days_forward + 1):
             d = today + timedelta(days=day_offset)
@@ -270,16 +336,20 @@ class EconomicCalendar:
                         event_dt = d.replace(hour=hour_offset, minute=minute, second=0)
                         if event_dt > today:
                             currency = high_impact_dates.get(weekday, "USD")
-                            events.append(EconomicEvent(
-                                timestamp=event_dt.timestamp(),
-                                title=f"High-Impact Economic Data ({currency})",
-                                currency=currency,
-                                impact="high",
-                                event_id=f"fallback_{event_dt.timestamp()}",
-                            ))
+                            events.append(
+                                EconomicEvent(
+                                    timestamp=event_dt.timestamp(),
+                                    title=f"High-Impact Economic Data ({currency})",
+                                    currency=currency,
+                                    impact="high",
+                                    event_id=f"fallback_{event_dt.timestamp()}",
+                                )
+                            )
         return events
 
-    def is_suppressed(self, timestamp: Optional[float] = None) -> Tuple[bool, Optional[EconomicEvent]]:
+    def is_suppressed(
+        self, timestamp: Optional[float] = None
+    ) -> Tuple[bool, Optional[EconomicEvent]]:
         ts = timestamp or time.time()
         for event in self.events:
             before = event.suppress_minutes_before * 60
@@ -296,7 +366,9 @@ class EconomicCalendar:
             key=lambda e: e.timestamp,
         )
 
-    def get_events_by_currency(self, currency: str, limit: int = 20) -> List[EconomicEvent]:
+    def get_events_by_currency(
+        self, currency: str, limit: int = 20
+    ) -> List[EconomicEvent]:
         return sorted(
             [e for e in self.events if e.currency == currency],
             key=lambda e: e.timestamp,

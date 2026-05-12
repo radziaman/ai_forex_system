@@ -1,4 +1,5 @@
 """Tests for RiskGatekeeper."""
+
 from infrastructure.config_v2 import AppConfig
 from services.risk_gatekeeper import RiskGatekeeper
 from services import Signal, SignalDirection, Regime, TradeDecision
@@ -18,8 +19,11 @@ class TestRiskGatekeeper:
 
     def test_evaluate_returns_decision_for_valid_signal(self):
         signal = Signal(
-            symbol="EURUSD", direction=SignalDirection.BUY,
-            confidence=0.75, regime=Regime.RANGING, price=1.12,
+            symbol="EURUSD",
+            direction=SignalDirection.BUY,
+            confidence=0.75,
+            regime=Regime.RANGING,
+            price=1.12,
         )
         decision = self.svc.evaluate(
             signal=signal,
@@ -38,23 +42,37 @@ class TestRiskGatekeeper:
     def test_evaluate_rejects_when_kill_switch_active(self):
         self.svc.risk_manager.kill_switch_triggered = True
         signal = Signal(
-            symbol="EURUSD", direction=SignalDirection.BUY,
-            confidence=0.75, regime=Regime.RANGING, price=1.12,
+            symbol="EURUSD",
+            direction=SignalDirection.BUY,
+            confidence=0.75,
+            regime=Regime.RANGING,
+            price=1.12,
         )
         decision = self.svc.evaluate(
-            signal=signal, balance=100_000, equity=100_000,
-            margin=0, atr=0.002, open_positions_count=0,
+            signal=signal,
+            balance=100_000,
+            equity=100_000,
+            margin=0,
+            atr=0.002,
+            open_positions_count=0,
         )
         assert decision is None
 
     def test_evaluate_sell_direction_sl_tp(self):
         signal = Signal(
-            symbol="USDJPY", direction=SignalDirection.SELL,
-            confidence=0.8, regime=Regime.TRENDING, price=150.0,
+            symbol="USDJPY",
+            direction=SignalDirection.SELL,
+            confidence=0.8,
+            regime=Regime.TRENDING,
+            price=150.0,
         )
         decision = self.svc.evaluate(
-            signal=signal, balance=100_000, equity=100_000,
-            margin=0, atr=0.5, open_positions_count=0,
+            signal=signal,
+            balance=100_000,
+            equity=100_000,
+            margin=0,
+            atr=0.5,
+            open_positions_count=0,
         )
         if decision is not None:
             assert decision.sl_price > signal.price  # SELL: SL above entry
@@ -64,11 +82,18 @@ class TestRiskGatekeeper:
         self.svc.risk_manager.peak_balance = 100_000.0
         self.svc.risk_manager.pre_trade_checks(85_000, 85_000, 0, 0)  # 15% drawdown
         signal = Signal(
-            symbol="EURUSD", direction=SignalDirection.BUY,
-            confidence=0.6, regime=Regime.RANGING, price=1.12,
+            symbol="EURUSD",
+            direction=SignalDirection.BUY,
+            confidence=0.6,
+            regime=Regime.RANGING,
+            price=1.12,
         )
         decision = self.svc.evaluate(
-            signal=signal, balance=85_000, equity=85_000,
-            margin=0, atr=0.002, open_positions_count=0,
+            signal=signal,
+            balance=85_000,
+            equity=85_000,
+            margin=0,
+            atr=0.002,
+            open_positions_count=0,
         )
         assert decision is None  # max_drawdown exceeded

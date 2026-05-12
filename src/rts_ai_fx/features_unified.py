@@ -3,6 +3,7 @@ Unified feature pipeline — single source of truth for all feature engineering.
 Multi-timeframe support, proper cyclical encoding, ADX, market microstructure,
 order flow dynamics, and cross-asset features.
 """
+
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional, Tuple, Callable
@@ -23,7 +24,9 @@ def _adx(df: pd.DataFrame, period: int = 14) -> pd.Series:
     minus_dm = low.diff()
     plus_dm[plus_dm < 0] = 0
     minus_dm[minus_dm > 0] = 0
-    tr = pd.concat([high - low, (high - close.shift()).abs(), (low - close.shift()).abs()], axis=1).max(axis=1)
+    tr = pd.concat(
+        [high - low, (high - close.shift()).abs(), (low - close.shift()).abs()], axis=1
+    ).max(axis=1)
     atr = tr.rolling(period).mean()
     plus_di = 100 * (plus_dm.ewm(span=period).mean() / atr)
     minus_di = 100 * (minus_dm.abs().ewm(span=period).mean() / atr)
@@ -62,8 +65,12 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     # Price dynamics
     df["body"] = abs(df["close"] - df["open"]) / df["open"].replace(0, np.nan)
     df["range"] = (df["high"] - df["low"]) / df["open"].replace(0, np.nan)
-    df["upper_shadow"] = (df["high"] - df[["open", "close"]].max(axis=1)) / df["open"].replace(0, np.nan)
-    df["lower_shadow"] = (df[["open", "close"]].min(axis=1) - df["low"]) / df["open"].replace(0, np.nan)
+    df["upper_shadow"] = (df["high"] - df[["open", "close"]].max(axis=1)) / df[
+        "open"
+    ].replace(0, np.nan)
+    df["lower_shadow"] = (df[["open", "close"]].min(axis=1) - df["low"]) / df[
+        "open"
+    ].replace(0, np.nan)
 
     # Momentum
     df["rsi_14"] = _rsi(df["close"], 14)
@@ -78,11 +85,14 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     df["mom_10"] = df["close"].pct_change(10)
 
     # Volatility
-    tr = pd.concat([
-        df["high"] - df["low"],
-        (df["high"] - df["close"].shift()).abs(),
-        (df["low"] - df["close"].shift()).abs(),
-    ], axis=1).max(1)
+    tr = pd.concat(
+        [
+            df["high"] - df["low"],
+            (df["high"] - df["close"].shift()).abs(),
+            (df["low"] - df["close"].shift()).abs(),
+        ],
+        axis=1,
+    ).max(1)
     df["atr_14"] = tr.rolling(14).mean()
     df["atr_21"] = tr.rolling(21).mean()
     df["vol_ratio"] = df["atr_14"] / df["atr_21"].replace(0, np.nan)
@@ -92,7 +102,9 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     df["bb_upper"] = df["bb_mid"] + 2 * bb_std
     df["bb_lower"] = df["bb_mid"] - 2 * bb_std
     df["bb_width"] = (df["bb_upper"] - df["bb_lower"]) / df["bb_mid"].replace(0, np.nan)
-    df["bb_pos"] = (df["close"] - df["bb_lower"]) / (df["bb_upper"] - df["bb_lower"]).replace(0, 0.5)
+    df["bb_pos"] = (df["close"] - df["bb_lower"]) / (
+        df["bb_upper"] - df["bb_lower"]
+    ).replace(0, 0.5)
 
     # Trend
     for p in [20, 50, 200]:
@@ -132,20 +144,25 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     nan_count = df.isna().sum().sum()
     if nan_count > 0:
         import logging
+
         logger = logging.getLogger(__name__)
         logger.debug(f"NaN count before fill: {nan_count}")
     df = df.ffill().bfill().fillna(0)
     return df
 
 
-def compute_microstructure_features(df: pd.DataFrame, tick_data: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+def compute_microstructure_features(
+    df: pd.DataFrame, tick_data: Optional[pd.DataFrame] = None
+) -> pd.DataFrame:
     """Market microstructure features from tick data and OHLCV."""
     df = df.copy()
     if "volume" in df.columns and df["volume"].sum() > 0:
         vol = df["volume"].values
         df["log_volume"] = np.log1p(vol)
         df["volume_ma_ratio"] = vol / (pd.Series(vol).rolling(20).mean().values + 1e-8)
-        df["volume_shock"] = (vol - pd.Series(vol).rolling(5).mean().values) / (pd.Series(vol).rolling(5).std().values + 1e-8)
+        df["volume_shock"] = (vol - pd.Series(vol).rolling(5).mean().values) / (
+            pd.Series(vol).rolling(5).std().values + 1e-8
+        )
         dollar_vol = vol * df["close"].values
         df["dollar_vol_rank"] = pd.Series(dollar_vol).rank(pct=True).values
     if all(c in df.columns for c in ["open", "high", "low", "close"]):
@@ -154,9 +171,15 @@ def compute_microstructure_features(df: pd.DataFrame, tick_data: Optional[pd.Dat
         low_c = np.abs(df["low"].values - df["close"].shift(1).values)
         tr = np.maximum(high_low, np.maximum(high_c, low_c))
         df["tr_scaled"] = tr / df["close"].values
-        df["position_in_bar"] = (df["close"].values - df["low"].values) / (df["high"].values - df["low"].values + 1e-8)
-        df["intraday_volatility"] = (df["high"].values - df["low"].values) / df["open"].values
-        df["gap"] = (df["open"].values - df["close"].shift(1).values) / df["close"].shift(1).values
+        df["position_in_bar"] = (df["close"].values - df["low"].values) / (
+            df["high"].values - df["low"].values + 1e-8
+        )
+        df["intraday_volatility"] = (df["high"].values - df["low"].values) / df[
+            "open"
+        ].values
+        df["gap"] = (df["open"].values - df["close"].shift(1).values) / df[
+            "close"
+        ].shift(1).values
     if tick_data is not None and len(tick_data) > 100:
         df = _add_tick_features(df, tick_data)
     df = df.replace([np.inf, -np.inf], np.nan)
@@ -183,7 +206,13 @@ def _add_tick_features(df: pd.DataFrame, ticks: pd.DataFrame) -> pd.DataFrame:
     if total_vol > 0:
         df["ofi"] = (buy_volume - sell_volume) / total_vol
         df["buy_ratio"] = buy_volume / total_vol
-    cvd = np.cumsum(np.where(price_changes > 0, tick_volumes[1:], np.where(price_changes < 0, -tick_volumes[1:], 0)))
+    cvd = np.cumsum(
+        np.where(
+            price_changes > 0,
+            tick_volumes[1:],
+            np.where(price_changes < 0, -tick_volumes[1:], 0),
+        )
+    )
     if len(cvd) > 0:
         df["cvd"] = cvd[-1]
         if len(cvd) > 20:
@@ -208,7 +237,7 @@ def compute_cross_asset_features(
     df = df.copy()
     if external_data is None and sentiment_scores is None:
         return df
-    
+
     # Cross-asset correlations
     if external_data:
         for name, ext_df in external_data.items():
@@ -228,17 +257,19 @@ def compute_cross_asset_features(
                 np.diff(our_close) / our_close[:-1]
                 - np.diff(their_close) / their_close[:-1]
             )
-            df[f"ret_divergence_{name}"] = np.mean(ret_diff[-10:]) if len(ret_diff) >= 10 else 0.0
+            df[f"ret_divergence_{name}"] = (
+                np.mean(ret_diff[-10:]) if len(ret_diff) >= 10 else 0.0
+            )
             spread = our_close - their_close
             z = (spread[-1] - np.mean(spread)) / (np.std(spread) + 1e-10)
             df[f"zscore_{name}"] = z
-    
+
     # Sentiment features
     if sentiment_scores:
         for currency, score in sentiment_scores.items():
             df[f"sentiment_{currency}"] = score
         df["sentiment_overall"] = np.mean(list(sentiment_scores.values()))
-    
+
     return df
 
 
@@ -321,6 +352,44 @@ class FeaturePipeline:
         for symbol in dfs:
             self.fit(dfs, symbol)
 
+    def save_normalization(self, path: str = "models/feature_norm.npz"):
+        """Persist normalization statistics to disk."""
+        import os
+
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        keys = list(self._means.keys())
+        means = np.array([self._means[k] for k in keys]) if keys else np.array([])
+        stds = np.array([self._stds[k] for k in keys]) if keys else np.array([])
+        np.savez_compressed(
+            path, keys=keys, means=means, stds=stds, feature_cols=self._feature_cols
+        )
+        logger.info(
+            f"Feature normalization saved: {len(keys)} symbol-tf pairs to {path}"
+        )
+
+    def load_normalization(self, path: str = "models/feature_norm.npz") -> bool:
+        """Load normalization statistics from disk. Returns True on success."""
+        try:
+            data = np.load(path, allow_pickle=True)
+            keys = data["keys"].tolist()
+            means = data["means"]
+            stds = data["stds"]
+            self._feature_cols = data.get("feature_cols", [])
+            self._feature_cols = (
+                self._feature_cols.tolist()
+                if hasattr(self._feature_cols, "tolist")
+                else self._feature_cols
+            )
+            for i, key in enumerate(keys):
+                if i < len(means) and i < len(stds):
+                    self._means[key] = means[i]
+                    self._stds[key] = stds[i]
+            logger.info(f"Feature normalization loaded: {len(keys)} symbol-tf pairs")
+            return True
+        except Exception as e:
+            logger.warning(f"Could not load feature normalization: {e}")
+            return False
+
     def transform(
         self,
         dfs: Dict[str, pd.DataFrame],
@@ -343,9 +412,13 @@ class FeaturePipeline:
                     ticks_df = pd.DataFrame(tick_buffer)
                 processed = compute_microstructure_features(processed, ticks_df)
             if self.use_cross_asset and self.cross_asset_data:
-                processed = compute_cross_asset_features(processed, self.cross_asset_data, sentiment_scores)
+                processed = compute_cross_asset_features(
+                    processed, self.cross_asset_data, sentiment_scores
+                )
             elif sentiment_scores:
-                processed = compute_cross_asset_features(processed, None, sentiment_scores)
+                processed = compute_cross_asset_features(
+                    processed, None, sentiment_scores
+                )
             avail_cols = self._get_feature_columns(processed)
             if self._feature_cols:
                 cols = [c for c in self._feature_cols if c in avail_cols]
@@ -365,7 +438,7 @@ class FeaturePipeline:
                     self._means[key] = new_mean
                     self._stds[key] = new_std
                     logger.info(f"Refitted norms for {key}: {vals.shape[1]} features")
-            window = vals[-self.lookback:]
+            window = vals[-self.lookback :]
             if len(window) < self.lookback:
                 return None
             window = np.nan_to_num(window, nan=0.0)
@@ -429,5 +502,6 @@ class FeaturePipeline:
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Fit and transform in one call."""
         self.fit(dfs, symbol)
-        return self.create_sequences(dfs, symbol, tick_buffer, external_signals, flatten=flatten)
-
+        return self.create_sequences(
+            dfs, symbol, tick_buffer, external_signals, flatten=flatten
+        )

@@ -2,28 +2,28 @@
 Market session utilities — handles forex market hours, liquidity checks.
 Forex trades 24/5: Sunday 22:00 GMT to Friday 22:00 GMT.
 """
+
 import pandas as pd
 from typing import Optional, Tuple
 from loguru import logger
 
-
 # Major trading sessions (GMT/UTC)
 SESSION_TIMES = {
-    "sydney": (21, 6),   # 21:00-06:00 GMT
-    "tokyo": (23, 8),     # 23:00-08:00 GMT  
-    "london": (7, 16),    # 07:00-16:00 GMT
-    "new_york": (12, 21), # 12:00-21:00 GMT
+    "sydney": (21, 6),  # 21:00-06:00 GMT
+    "tokyo": (23, 8),  # 23:00-08:00 GMT
+    "london": (7, 16),  # 07:00-16:00 GMT
+    "new_york": (12, 21),  # 12:00-21:00 GMT
 }
 
 # High-liquidity overlap periods
 OVERLAPS = [
-    ("london", "new_york"),   # 12:00-16:00 GMT (best liquidity)
-    ("sydney", "tokyo"),     # 23:00-06:00 GMT
+    ("london", "new_york"),  # 12:00-16:00 GMT (best liquidity)
+    ("sydney", "tokyo"),  # 23:00-06:00 GMT
 ]
 
 LOW_LIQUIDITY_HOURS = [
-    (5, 6),   # Just before London open
-    (20, 21), # Just before Sydney/Tokyo
+    (5, 6),  # Just before London open
+    (20, 21),  # Just before Sydney/Tokyo
 ]
 
 WEEKEND_DAYS = [5, 6]  # Saturday=5, Sunday=6
@@ -35,12 +35,12 @@ class MarketSession:
     @staticmethod
     def current_gmt_hour() -> int:
         """Get current hour in GMT."""
-        return pd.Timestamp.now('GMT').hour
+        return pd.Timestamp.now("GMT").hour
 
     @staticmethod
     def current_day_of_week() -> int:
         """Get current day of week (0=Monday, 6=Sunday)."""
-        return pd.Timestamp.now('GMT').dayofweek
+        return pd.Timestamp.now("GMT").dayofweek
 
     @staticmethod
     def is_weekend() -> bool:
@@ -50,14 +50,14 @@ class MarketSession:
     @staticmethod
     def is_market_open() -> bool:
         """Check if forex market is open (24/5: Sunday 22:00 to Friday 22:00)."""
-        now = pd.Timestamp.now('GMT')
+        now = pd.Timestamp.now("GMT")
         day = now.dayofweek
         hour = now.hour
 
         # Weekend: Friday 22:00 GMT to Sunday 22:00 GMT
-        if day == 5 and hour >= 22:   # Friday 22:00+ = closed
+        if day == 5 and hour >= 22:  # Friday 22:00+ = closed
             return False
-        if day == 6 and hour < 22:    # Sunday before 22:00 = closed
+        if day == 6 and hour < 22:  # Sunday before 22:00 = closed
             return False
         # Sunday 22:00+ and all Monday-Friday before 22:00 = open
         return True
@@ -102,7 +102,7 @@ class MarketSession:
     @staticmethod
     def seconds_since_market_open() -> Optional[float]:
         """Get seconds since market opened (for gap detection)."""
-        now = pd.Timestamp.now('GMT')
+        now = pd.Timestamp.now("GMT")
         day = now.dayofweek
         hour = now.hour
 

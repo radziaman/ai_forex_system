@@ -26,12 +26,14 @@ class ActorNetwork(nn.Module):
         layers = []
         prev_dim = input_dim
         for hidden_dim in hidden_dims:
-            layers.extend([
-                nn.Linear(prev_dim, hidden_dim),
-                nn.LayerNorm(hidden_dim),
-                nn.Tanh(),
-                nn.Dropout(0.1),
-            ])
+            layers.extend(
+                [
+                    nn.Linear(prev_dim, hidden_dim),
+                    nn.LayerNorm(hidden_dim),
+                    nn.Tanh(),
+                    nn.Dropout(0.1),
+                ]
+            )
             prev_dim = hidden_dim
 
         last_dim = hidden_dims[-1] if hidden_dims else 128

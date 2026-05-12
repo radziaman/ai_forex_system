@@ -92,7 +92,9 @@ class SystemReport:
         return all_ok, "\n".join(lines)
 
 
-def collect_report(config: AppConfig, mode: str = "paper", balance: float = 100_000.0) -> SystemReport:
+def collect_report(
+    config: AppConfig, mode: str = "paper", balance: float = 100_000.0
+) -> SystemReport:
     report = SystemReport(
         mode=mode,
         symbols=len(SYMBOLS),
@@ -103,83 +105,128 @@ def collect_report(config: AppConfig, mode: str = "paper", balance: float = 100_
 
     # Config check
     config_errors = config.validate()
-    report.components.append(ComponentStatus(
-        "Configuration", ok=len(config_errors) == 0,
-        detail="validated" if not config_errors else f"errors: {config_errors}",
-    ))
+    report.components.append(
+        ComponentStatus(
+            "Configuration",
+            ok=len(config_errors) == 0,
+            detail="validated" if not config_errors else f"errors: {config_errors}",
+        )
+    )
 
     # Symbols
-    report.components.append(ComponentStatus(
-        "Symbol registry", ok=len(SYMBOLS) > 0,
-        detail=f"{len(SYMBOLS)} symbols loaded",
-    ))
+    report.components.append(
+        ComponentStatus(
+            "Symbol registry",
+            ok=len(SYMBOLS) > 0,
+            detail=f"{len(SYMBOLS)} symbols loaded",
+        )
+    )
 
     # Feature pipeline
-    report.components.append(ComponentStatus(
-        "Feature pipeline", ok=True,
-        detail=f"{len(config.features.timeframes)} timeframes, lookback={config.features.lookback}",
-    ))
+    report.components.append(
+        ComponentStatus(
+            "Feature pipeline",
+            ok=True,
+            detail=f"{len(config.features.timeframes)} timeframes, lookback={config.features.lookback}",
+        )
+    )
 
     # Risk limits
-    report.components.append(ComponentStatus(
-        "Risk limits", ok=True,
-        detail=f"max_risk={config.trading.max_risk_per_trade:.0%}, "
-               f"max_dd={config.trading.max_drawdown:.0%}, "
-               f"Kelly={config.trading.kelly_fraction:.0%}",
-    ))
+    report.components.append(
+        ComponentStatus(
+            "Risk limits",
+            ok=True,
+            detail=f"max_risk={config.trading.max_risk_per_trade:.0%}, "
+            f"max_dd={config.trading.max_drawdown:.0%}, "
+            f"Kelly={config.trading.kelly_fraction:.0%}",
+        )
+    )
 
     # Model files
     model_dir = "models"
     if os.path.isdir(model_dir):
-        pth_files = [os.path.join(model_dir, f) for f in os.listdir(model_dir)
-                     if f.endswith(('.pth', '.pt', '.keras'))]
+        pth_files = [
+            os.path.join(model_dir, f)
+            for f in os.listdir(model_dir)
+            if f.endswith((".pth", ".pt", ".keras"))
+        ]
         report.model_files = pth_files
 
     has_models = len(report.model_files) > 0
-    report.components.append(ComponentStatus(
-        "AI models", ok=has_models,
-        detail=f"{len(report.model_files)} trained models found" if has_models else "no pre-trained models",
-    ))
+    report.components.append(
+        ComponentStatus(
+            "AI models",
+            ok=has_models,
+            detail=(
+                f"{len(report.model_files)} trained models found"
+                if has_models
+                else "no pre-trained models"
+            ),
+        )
+    )
 
     # Alternative data
     alt_dir = "data/alternative_data"
     if os.path.isdir(alt_dir):
         report.alternative_data = sorted(os.listdir(alt_dir))
-        report.components.append(ComponentStatus(
-            "Alternative data", ok=True,
-            detail=f"{len(report.alternative_data)} cached datasets",
-        ))
+        report.components.append(
+            ComponentStatus(
+                "Alternative data",
+                ok=True,
+                detail=f"{len(report.alternative_data)} cached datasets",
+            )
+        )
     else:
-        report.components.append(ComponentStatus(
-            "Alternative data", ok=False, detail="cache directory not found",
-        ))
+        report.components.append(
+            ComponentStatus(
+                "Alternative data",
+                ok=False,
+                detail="cache directory not found",
+            )
+        )
 
     # API credentials check
     from infrastructure.secrets import Secrets
+
     s = Secrets()
     missing = s.validate()
-    report.components.append(ComponentStatus(
-        "cTrader API credentials", ok=len(missing) == 0,
-        detail="configured" if not missing else f"missing: {', '.join(missing)}",
-    ))
+    report.components.append(
+        ComponentStatus(
+            "cTrader API credentials",
+            ok=len(missing) == 0,
+            detail="configured" if not missing else f"missing: {', '.join(missing)}",
+        )
+    )
 
     has_telegram = bool(s.telegram_bot_token and s.telegram_bot_token != "")
-    report.components.append(ComponentStatus(
-        "Telegram notifications", ok=has_telegram,
-        detail="configured" if has_telegram else "not configured",
-    ))
+    report.components.append(
+        ComponentStatus(
+            "Telegram notifications",
+            ok=has_telegram,
+            detail="configured" if has_telegram else "not configured",
+        )
+    )
 
     # Cached data
     cache_dir = "data/dukascopy_cache"
     if os.path.isdir(cache_dir):
-        bi5_count = len([f for f in os.listdir(cache_dir) if f.endswith('.bi5')])
-        report.components.append(ComponentStatus(
-            "Historical tick cache", ok=bi5_count > 0,
-            detail=f"{bi5_count} BI5 files cached" if bi5_count > 0 else "empty cache",
-        ))
+        bi5_count = len([f for f in os.listdir(cache_dir) if f.endswith(".bi5")])
+        report.components.append(
+            ComponentStatus(
+                "Historical tick cache",
+                ok=bi5_count > 0,
+                detail=(
+                    f"{bi5_count} BI5 files cached" if bi5_count > 0 else "empty cache"
+                ),
+            )
+        )
     else:
-        report.components.append(ComponentStatus(
-            "Historical tick cache", ok=False, detail="cache directory not found",
-        ))
+        report.components.append(
+            ComponentStatus(
+                "Historical tick cache",
+                ok=False,
+                detail="cache directory not found",
+            )
+        )
 
     return report

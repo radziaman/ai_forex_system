@@ -1,4 +1,5 @@
 """Tests for typed configuration."""
+
 import pytest
 import os
 import tempfile
@@ -17,7 +18,7 @@ class TestAppConfig:
         assert len(cfg.symbols.all) == 24
 
     def test_from_yaml_with_file(self):
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             yaml.dump({"trading": {"max_positions": 5, "max_risk_per_trade": 0.01}}, f)
             fpath = f.name
         try:
@@ -68,7 +69,9 @@ class TestAppConfig:
         assert "US500" in sym.indices
         assert "XTIUSD" in sym.energy
         assert len(sym.all) == 24
-        assert all(s in sym.all for s in ["EURUSD", "BTCUSD", "XAUUSD", "US500", "XTIUSD"])
+        assert all(
+            s in sym.all for s in ["EURUSD", "BTCUSD", "XAUUSD", "US500", "XTIUSD"]
+        )
 
     def test_env_override_port(self):
         os.environ["DASHBOARD_PORT"] = "9000"

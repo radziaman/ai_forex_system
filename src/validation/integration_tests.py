@@ -2,6 +2,7 @@
 Smart Integration Test Pipeline (Enhancement #15).
 Full trading day simulation, emergency stop tests, P&L reconciliation.
 """
+
 import asyncio
 import numpy as np
 import pandas as pd
@@ -21,6 +22,7 @@ class TestResult(Enum):
 @dataclass
 class IntegrationTest:
     """Single integration test case."""
+
     name: str
     description: str
     test_type: str  # simulation | emergency | pnl_reconciliation | stress
@@ -145,10 +147,14 @@ class SmartIntegrationTestPipeline:
             ],
         }
 
-        logger.info(f"Integration tests complete: {passed}/{total} passed ({summary['pass_rate']:.1%})")
+        logger.info(
+            f"Integration tests complete: {passed}/{total} passed ({summary['pass_rate']:.1%})"
+        )
         return summary
 
-    async def _run_simulation_test(self, test: IntegrationTest) -> Tuple[bool, str, Dict]:
+    async def _run_simulation_test(
+        self, test: IntegrationTest
+    ) -> Tuple[bool, str, Dict]:
         """Run full trading day simulation."""
         if test.name == "full_trading_day_simulation":
             # Simulate 24h of 1h bars
@@ -162,10 +168,14 @@ class SmartIntegrationTestPipeline:
                 await asyncio.sleep(0.01)  # Fast simulation
                 success_count += 1
 
-            return True, f"Simulated {success_count} trading cycles", {
-                "cycles_completed": success_count,
-                "bars_processed": num_bars,
-            }
+            return (
+                True,
+                f"Simulated {success_count} trading cycles",
+                {
+                    "cycles_completed": success_count,
+                    "bars_processed": num_bars,
+                },
+            )
 
         elif test.name == "data_pipeline_failure_test":
             # Simulate data feed failure and recovery
@@ -184,7 +194,9 @@ class SmartIntegrationTestPipeline:
 
         return False, "Test not implemented", {}
 
-    async def _run_emergency_test(self, test: IntegrationTest) -> Tuple[bool, str, Dict]:
+    async def _run_emergency_test(
+        self, test: IntegrationTest
+    ) -> Tuple[bool, str, Dict]:
         """Run emergency stop tests."""
         if test.name == "emergency_stop_test":
             # Simulate emergency stop trigger
@@ -193,7 +205,11 @@ class SmartIntegrationTestPipeline:
                     # Trigger emergency stop
                     await self.bot._emergency_stop("test_trigger")
                     passed = not self.bot.is_running
-                    return passed, "Emergency stop activated" if passed else "Failed to stop", {}
+                    return (
+                        passed,
+                        "Emergency stop activated" if passed else "Failed to stop",
+                        {},
+                    )
                 return True, "Emergency stop test skipped (no bot instance)", {}
             except Exception as e:
                 return False, f"Emergency stop error: {e}", {}
@@ -201,7 +217,10 @@ class SmartIntegrationTestPipeline:
         elif test.name == "circuit_breaker_test":
             # Test circuit breaker
             try:
-                from src.risk.circuit_breaker import CircuitBreaker, MarketStressSnapshot
+                from src.risk.circuit_breaker import (
+                    CircuitBreaker,
+                    MarketStressSnapshot,
+                )
 
                 cb = CircuitBreaker()
                 # Simulate flash crash
@@ -239,12 +258,16 @@ class SmartIntegrationTestPipeline:
 
                 # Verify calculation
                 if abs(expected_pnl - 50.0) < 0.01:  # 50 pips = $50
-                    return True, f"P&L calculation correct: ${expected_pnl:.2f}", {
-                        "expected_pnl": expected_pnl,
-                        "entry": entry,
-                        "exit": exit_price,
-                        "volume": volume,
-                    }
+                    return (
+                        True,
+                        f"P&L calculation correct: ${expected_pnl:.2f}",
+                        {
+                            "expected_pnl": expected_pnl,
+                            "entry": entry,
+                            "exit": exit_price,
+                            "volume": volume,
+                        },
+                    )
                 return False, f"P&L mismatch: expected $50, got ${expected_pnl:.2f}", {}
 
             except Exception as e:
@@ -253,15 +276,19 @@ class SmartIntegrationTestPipeline:
         elif test.name == "position_sizing_test":
             # Test VaR-based position sizing
             try:
-                if self.bot and hasattr(self.bot, 'risk'):
+                if self.bot and hasattr(self.bot, "risk"):
                     risk = self.bot.risk
                     size = risk.calculate_kelly_size(
                         balance=100000, price=1.12, atr=0.005, confidence=0.7
                     )
                     if 0 < size < 100000:
-                        return True, f"Position sizing correct: {size:.2f} units", {
-                            "calculated_size": size,
-                        }
+                        return (
+                            True,
+                            f"Position sizing correct: {size:.2f} units",
+                            {
+                                "calculated_size": size,
+                            },
+                        )
                 return False, "Position sizing test failed", {}
             except Exception as e:
                 return False, f"Position sizing error: {e}", {}
@@ -275,9 +302,13 @@ class SmartIntegrationTestPipeline:
                 # Simulate high volatility market
                 volatility = 0.05  # 5% volatility
                 if volatility > 0.03:  # High vol threshold
-                    return True, f"High volatility handled: {volatility:.1%}", {
-                        "volatility": volatility,
-                    }
+                    return (
+                        True,
+                        f"High volatility handled: {volatility:.1%}",
+                        {
+                            "volatility": volatility,
+                        },
+                    )
                 return False, "Volatility test failed", {}
             except Exception as e:
                 return False, f"Stress test error: {e}", {}
@@ -306,5 +337,7 @@ class SmartIntegrationTestPipeline:
             "failed": total - passed,
             "pass_rate": passed / total if total > 0 else 0,
             "by_type": by_type,
-            "avg_duration": np.mean([t.duration for t in self.results]) if self.results else 0,
+            "avg_duration": (
+                np.mean([t.duration for t in self.results]) if self.results else 0
+            ),
         }

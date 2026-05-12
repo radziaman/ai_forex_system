@@ -2,6 +2,7 @@
 AI-Backed Smart Trading Sessions Filter (Enhancement #16).
 Optimizes trading hours per pair using ML-based session analysis.
 """
+
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional, Tuple
@@ -12,6 +13,7 @@ from loguru import logger
 
 class SessionType(str, Enum):
     """Trading session types."""
+
     LONDON = "london"
     NEW_YORK = "new_york"
     TOKYO = "tokyo"
@@ -23,6 +25,7 @@ class SessionType(str, Enum):
 @dataclass
 class SessionPerformance:
     """Performance metrics for a trading session."""
+
     session: SessionType
     symbol: str
     avg_return: float = 0.0
@@ -36,6 +39,7 @@ class SessionPerformance:
 @dataclass
 class SessionFilterResult:
     """Result from session filtering."""
+
     symbol: str
     current_session: SessionType
     should_trade: bool
@@ -53,8 +57,8 @@ class SmartTradingSessions:
 
     # Session time ranges (UTC)
     SESSION_RANGES = {
-        SessionType.TOKYO: (0, 6),      # 00:00-06:00 UTC
-        SessionType.LONDON: (8, 16),   # 08:00-16:00 UTC
+        SessionType.TOKYO: (0, 6),  # 00:00-06:00 UTC
+        SessionType.LONDON: (8, 16),  # 08:00-16:00 UTC
         SessionType.NEW_YORK: (13, 21),  # 13:00-21:00 UTC
         SessionType.SYDNEY: (22, 24),  # 22:00-24:00 UTC (continues to 06:00)
     }
@@ -91,6 +95,7 @@ class SmartTradingSessions:
     def get_current_session(self) -> SessionType:
         """Get current trading session based on UTC time."""
         import datetime
+
         now_utc = datetime.datetime.utcnow()
         hour = now_utc.hour
 
@@ -115,19 +120,24 @@ class SmartTradingSessions:
             return False, "Outside major trading sessions"
 
         # Optimal sessions have high liquidity
-        optimal = self.DEFAULT_OPTIMAL.get(symbol, [SessionType.LONDON, SessionType.NEW_YORK])
+        optimal = self.DEFAULT_OPTIMAL.get(
+            symbol, [SessionType.LONDON, SessionType.NEW_YORK]
+        )
         if current in optimal:
             return True, f"High liquidity: {current.value} session"
 
         return False, f"Low liquidity: {current.value} session"
 
-    def should_trade_symbol(self, symbol: str, hour: Optional[int] = None) -> SessionFilterResult:
+    def should_trade_symbol(
+        self, symbol: str, hour: Optional[int] = None
+    ) -> SessionFilterResult:
         """
         AI-backed decision on whether to trade a symbol at current time.
         Uses session performance history to make optimal decisions.
         """
         if hour is None:
             import datetime
+
             hour = datetime.datetime.utcnow().hour
 
         current_session = self._get_session_from_hour(hour)
@@ -136,7 +146,9 @@ class SmartTradingSessions:
         session_scores = self._calculate_session_scores(symbol)
 
         # Get optimal sessions (top 2 by score)
-        sorted_sessions = sorted(session_scores.items(), key=lambda x: x[1], reverse=True)
+        sorted_sessions = sorted(
+            session_scores.items(), key=lambda x: x[1], reverse=True
+        )
         optimal_sessions = [SessionType(s[0]) for s in sorted_sessions[:2]]
 
         # Decision logic
@@ -155,10 +167,16 @@ class SmartTradingSessions:
 
         if current_session in optimal_sessions:
             should_trade = confidence > 0.6
-            reason = "Optimal session" if should_trade else "Suboptimal performance in session"
+            reason = (
+                "Optimal session"
+                if should_trade
+                else "Suboptimal performance in session"
+            )
         else:
             should_trade = confidence > 0.8  # Higher threshold for non-optimal
-            reason = "Non-optimal session" if not should_trade else "Trading outside optimal"
+            reason = (
+                "Non-optimal session" if not should_trade else "Trading outside optimal"
+            )
 
         return SessionFilterResult(
             symbol=symbol,
@@ -209,14 +227,15 @@ class SmartTradingSessions:
         return scores
 
     def update_performance(
-        self, symbol: str, session: SessionType,
-        pnl: float, return_pct: float
+        self, symbol: str, session: SessionType, pnl: float, return_pct: float
     ):
         """Update session performance with new trade data (ML training)."""
         if symbol not in self.session_performance:
             self.session_performance[symbol] = {}
             for s in SessionType:
-                self.session_performance[symbol][s] = SessionPerformance(session=s, symbol=symbol)
+                self.session_performance[symbol][s] = SessionPerformance(
+                    session=s, symbol=symbol
+                )
 
         perf = self.session_performance[symbol][session]
         perf.trade_count += 1
@@ -231,7 +250,9 @@ class SmartTradingSessions:
 
         # Update win rate
         if pnl > 0:
-            perf.win_rate = (perf.win_rate * (perf.trade_count - 1) + 1.0) / perf.trade_count
+            perf.win_rate = (
+                perf.win_rate * (perf.trade_count - 1) + 1.0
+            ) / perf.trade_count
         else:
             perf.win_rate = (perf.win_rate * (perf.trade_count - 1)) / perf.trade_count
 

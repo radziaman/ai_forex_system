@@ -2,6 +2,7 @@
 Multi-symbol market data manager: OHLCV, order flow, Level II DOM.
 v2.0 — systematic, efficient, clean data pipeline for all 22 symbols.
 """
+
 import numpy as np
 import pandas as pd
 from dataclasses import dataclass, field
@@ -12,17 +13,35 @@ from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 
-
 # ---------------------------------------------------------------------------
 # Symbol registry (single source of truth)
 # ---------------------------------------------------------------------------
 
 SYMBOLS = [
-    "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD",
-    "EURJPY", "GBPJPY", "EURGBP",
-    "XAUUSD", "XAGUSD", "XTIUSD", "XBRUSD", "XNGUSD",
-    "US500", "US30", "USTEC", "UK100", "DE40",
-    "BTCUSD", "ETHUSD", "LTCUSD", "XRPUSD",
+    "EURUSD",
+    "GBPUSD",
+    "USDJPY",
+    "AUDUSD",
+    "USDCAD",
+    "USDCHF",
+    "NZDUSD",
+    "EURJPY",
+    "GBPJPY",
+    "EURGBP",
+    "XAUUSD",
+    "XAGUSD",
+    "XTIUSD",
+    "XBRUSD",
+    "XNGUSD",
+    "US500",
+    "US30",
+    "USTEC",
+    "UK100",
+    "DE40",
+    "BTCUSD",
+    "ETHUSD",
+    "LTCUSD",
+    "XRPUSD",
 ]
 TIMEFRAMES = ["1m", "5m", "15m", "1h", "4h"]
 
@@ -33,27 +52,54 @@ INDEX_PAIRS = {"US500", "US30", "USTEC", "UK100", "DE40"}
 ENERGY_PAIRS = {"XTIUSD", "XBRUSD", "XNGUSD"}
 
 BASE_PRICES = {
-    "EURUSD": 1.12, "GBPUSD": 1.28, "USDJPY": 150.0, "AUDUSD": 0.67,
-    "USDCAD": 1.35, "USDCHF": 0.88, "NZDUSD": 0.61,
-    "EURJPY": 162.0, "GBPJPY": 190.0, "EURGBP": 0.86,
-    "XAUUSD": 2000.0, "XAGUSD": 24.0,
-    "XTIUSD": 75.0, "XBRUSD": 80.0, "XNGUSD": 3.0,
-    "US500": 4500.0, "US30": 35000.0, "USTEC": 15000.0,
-    "UK100": 7500.0, "DE40": 17000.0,
-    "BTCUSD": 45000.0, "ETHUSD": 2500.0, "LTCUSD": 80.0, "XRPUSD": 0.60,
+    "EURUSD": 1.12,
+    "GBPUSD": 1.28,
+    "USDJPY": 150.0,
+    "AUDUSD": 0.67,
+    "USDCAD": 1.35,
+    "USDCHF": 0.88,
+    "NZDUSD": 0.61,
+    "EURJPY": 162.0,
+    "GBPJPY": 190.0,
+    "EURGBP": 0.86,
+    "XAUUSD": 2000.0,
+    "XAGUSD": 24.0,
+    "XTIUSD": 75.0,
+    "XBRUSD": 80.0,
+    "XNGUSD": 3.0,
+    "US500": 4500.0,
+    "US30": 35000.0,
+    "USTEC": 15000.0,
+    "UK100": 7500.0,
+    "DE40": 17000.0,
+    "BTCUSD": 45000.0,
+    "ETHUSD": 2500.0,
+    "LTCUSD": 80.0,
+    "XRPUSD": 0.60,
 }
 
 # Dukascopy symbols that are actually available
 DUKASCOPE_SYMBOLS = {
-    "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF",
-    "NZDUSD", "EURJPY", "GBPJPY", "EURGBP", "XAUUSD",
+    "EURUSD",
+    "GBPUSD",
+    "USDJPY",
+    "AUDUSD",
+    "USDCAD",
+    "USDCHF",
+    "NZDUSD",
+    "EURJPY",
+    "GBPJPY",
+    "EURGBP",
+    "XAUUSD",
 }
 
 # Per-symbol price sanity windows (fraction of base)
 PRICE_WINDOWS = {
-    sym: (0.5, 2.0) if sym in CRYPTO_PAIRS else
-         (0.7, 1.5) if sym in INDEX_PAIRS else
-         (0.8, 1.2)
+    sym: (
+        (0.5, 2.0)
+        if sym in CRYPTO_PAIRS
+        else (0.7, 1.5) if sym in INDEX_PAIRS else (0.8, 1.2)
+    )
     for sym in SYMBOLS
 }
 
@@ -84,11 +130,14 @@ class MarketDepthData:
 @dataclass
 class DataFreshness:
     """Tracks when and from where each symbol's data was last refreshed."""
+
     last_tick_ts: float = 0.0
     last_ohlcv_ts: float = 0.0
     last_source: str = ""
     tick_count: int = 0
-    bar_count: Dict[str, int] = field(default_factory=lambda: {tf: 0 for tf in TIMEFRAMES})
+    bar_count: Dict[str, int] = field(
+        default_factory=lambda: {tf: 0 for tf in TIMEFRAMES}
+    )
     errors_since_healthy: int = 0
     is_healthy: bool = True
 
@@ -124,8 +173,8 @@ class DataManager:
         self.freshness: Dict[str, DataFreshness] = {}
         self._source_health: Dict[str, Dict] = {
             "dukascopy": {"ok": True, "failures": 0, "last_ok": time.time()},
-            "yfinance":  {"ok": True, "failures": 0, "last_ok": time.time()},
-            "ctrader":   {"ok": True, "failures": 0, "last_ok": time.time()},
+            "yfinance": {"ok": True, "failures": 0, "last_ok": time.time()},
+            "ctrader": {"ok": True, "failures": 0, "last_ok": time.time()},
         }
         self._on_data_update: List[Callable] = []  # callbacks when data changes
 
@@ -158,7 +207,9 @@ class DataManager:
     # Data quality
     # ------------------------------------------------------------------
 
-    def _validate_tick(self, symbol: str, bid: float, ask: float, volume: float) -> bool:
+    def _validate_tick(
+        self, symbol: str, bid: float, ask: float, volume: float
+    ) -> bool:
         if not all(isinstance(v, (int, float)) for v in [bid, ask, volume]):
             return False
         if bid <= 0 or ask <= 0 or bid > ask:
@@ -181,8 +232,14 @@ class DataManager:
     # Tick ingestion (batched)
     # ------------------------------------------------------------------
 
-    def update_tick(self, symbol: str, bid: float, ask: float,
-                    volume: float = 0, ts: Optional[float] = None):
+    def update_tick(
+        self,
+        symbol: str,
+        bid: float,
+        ask: float,
+        volume: float = 0,
+        ts: Optional[float] = None,
+    ):
         if not self.enabled:
             return
         if not self._validate_tick(symbol, bid, ask, volume):
@@ -193,8 +250,14 @@ class DataManager:
         mid = (bid + ask) / 2.0
         self._last_realtime_price[symbol] = mid
 
-        tick = {"ts": ts, "symbol": symbol, "bid": bid, "ask": ask,
-                "mid": mid, "vol": max(volume, 0)}
+        tick = {
+            "ts": ts,
+            "symbol": symbol,
+            "bid": bid,
+            "ask": ask,
+            "mid": mid,
+            "vol": max(volume, 0),
+        }
         self._pending_ticks[symbol].append(tick)
 
         fd = self.freshness[symbol]
@@ -239,11 +302,21 @@ class DataManager:
             df["timestamp"] = pd.to_numeric(df["timestamp"], errors="coerce")
         bar_ts = int(ts // 60) * 60
         if df.empty or float(df.iloc[-1]["timestamp"]) < bar_ts:
-            new = pd.DataFrame([{
-                "timestamp": bar_ts, "open": price, "high": price,
-                "low": price, "close": price, "volume": max(volume, 0),
-            }])
-            self.ohlcv[symbol]["1m"] = new if df.empty else pd.concat([df, new], ignore_index=True)
+            new = pd.DataFrame(
+                [
+                    {
+                        "timestamp": bar_ts,
+                        "open": price,
+                        "high": price,
+                        "low": price,
+                        "close": price,
+                        "volume": max(volume, 0),
+                    }
+                ]
+            )
+            self.ohlcv[symbol]["1m"] = (
+                new if df.empty else pd.concat([df, new], ignore_index=True)
+            )
             self._cap_bars(symbol, "1m")
         else:
             idx = len(df) - 1
@@ -265,14 +338,21 @@ class DataManager:
         for tf, minutes in [("5m", 5), ("15m", 15), ("1h", 60), ("4h", 240)]:
             res = (
                 df_1m.resample(f"{minutes}min")
-                .agg({"open": "first", "high": "max", "low": "min",
-                      "close": "last", "volume": "sum"})
+                .agg(
+                    {
+                        "open": "first",
+                        "high": "max",
+                        "low": "min",
+                        "close": "last",
+                        "volume": "sum",
+                    }
+                )
                 .dropna()
             )
             if res.empty:
                 continue
             res = res.reset_index()
-            res["timestamp"] = res["datetime"].astype(np.int64) // 10 ** 9
+            res["timestamp"] = res["datetime"].astype(np.int64) // 10**9
             new_bars = res[["timestamp", "open", "high", "low", "close", "volume"]]
 
             existing = self.ohlcv[symbol].get(tf)
@@ -341,13 +421,17 @@ class DataManager:
             self.ohlcv[symbol][tf] = pd.read_csv(fp)
             self.freshness[symbol].last_source = "csv"
             self.freshness[symbol].bar_count[tf] = len(self.ohlcv[symbol][tf])
-            logger.info(f"Loaded {symbol} {tf} CSV ({len(self.ohlcv[symbol][tf])} bars)")
+            logger.info(
+                f"Loaded {symbol} {tf} CSV ({len(self.ohlcv[symbol][tf])} bars)"
+            )
         else:
             self._gen_synthetic(symbol, tf, days)
             os.makedirs(os.path.dirname(fp), exist_ok=True)
             self.ohlcv[symbol][tf].to_csv(fp, index=False)
             self.freshness[symbol].last_source = "synthetic"
-            logger.info(f"Generated synthetic {symbol} {tf} ({len(self.ohlcv[symbol][tf])} bars)")
+            logger.info(
+                f"Generated synthetic {symbol} {tf} ({len(self.ohlcv[symbol][tf])} bars)"
+            )
 
     def load_all(self, days: int = 365, timeframes: Optional[List[str]] = None):
         tfs = timeframes or TIMEFRAMES
@@ -355,16 +439,20 @@ class DataManager:
             for tf in tfs:
                 self.load_historical(sym, tf, days)
 
-    def load_from_dukascopy_cache(self, symbols: Optional[List[str]] = None,
-                                   timeframes: Optional[List[str]] = None,
-                                   max_hours: int = 168) -> int:
+    def load_from_dukascopy_cache(
+        self,
+        symbols: Optional[List[str]] = None,
+        timeframes: Optional[List[str]] = None,
+        max_hours: int = 168,
+    ) -> int:
         """Load historical data from cached Dukascopy BI5 files.
 
         Returns number of symbols successfully loaded.
         """
         tfs = timeframes or ["1h"]
-        targets = [s.upper() for s in (symbols or SYMBOLS)
-                   if s.upper() in DUKASCOPE_SYMBOLS]
+        targets = [
+            s.upper() for s in (symbols or SYMBOLS) if s.upper() in DUKASCOPE_SYMBOLS
+        ]
         loaded = 0
         for sym in targets:
             tf = tfs[0]
@@ -380,8 +468,9 @@ class DataManager:
                 logger.debug(f"No BI5 cache for {sym}")
         return loaded
 
-    def _decode_bi5_to_bars(self, symbol: str, tf: str = "1h",
-                            max_hours: int = 168) -> Optional[pd.DataFrame]:
+    def _decode_bi5_to_bars(
+        self, symbol: str, tf: str = "1h", max_hours: int = 168
+    ) -> Optional[pd.DataFrame]:
         """Read cached BI5 files and aggregate into OHLCV bars."""
         tf_seconds = TF_MINUTES.get(tf, 60) * 60
         cache_files = sorted(CACHE_DIR.glob(f"{symbol}_*_*.bi5"))
@@ -399,35 +488,47 @@ class DataManager:
                 continue
             dt_str, hour_str = parts[-2], parts[-1]
             try:
-                base_ts = datetime.strptime(dt_str, "%Y%m%d").timestamp() + int(hour_str) * 3600
+                base_ts = (
+                    datetime.strptime(dt_str, "%Y%m%d").timestamp()
+                    + int(hour_str) * 3600
+                )
             except (ValueError, IndexError):
                 continue
             for i in range(0, len(decompressed), 20):
-                chunk = decompressed[i:i + 20]
+                chunk = decompressed[i : i + 20]
                 if len(chunk) < 20:
                     break
                 ms = struct.unpack(">I", chunk[0:4])[0]
                 bid_raw = struct.unpack(">I", chunk[8:12])[0]
                 ask_raw = struct.unpack(">I", chunk[4:8])[0]
-                ticks.append((base_ts + ms / 1000.0, bid_raw / 100000.0, ask_raw / 100000.0))
+                ticks.append(
+                    (base_ts + ms / 1000.0, bid_raw / 100000.0, ask_raw / 100000.0)
+                )
         if len(ticks) < 10:
             return None
         ticks.sort(key=lambda t: t[0])
         df = pd.DataFrame(ticks, columns=["timestamp", "bid", "ask"])
         df["bar"] = (df["timestamp"] // tf_seconds).astype(int)
-        bars = df.groupby("bar").agg(
-            open=("bid", "first"), high=("bid", "max"),
-            low=("bid", "min"), close=("bid", "last"),
-            volume=("ask", "count"),
-        ).reset_index()
+        bars = (
+            df.groupby("bar")
+            .agg(
+                open=("bid", "first"),
+                high=("bid", "max"),
+                low=("bid", "min"),
+                close=("bid", "last"),
+                volume=("ask", "count"),
+            )
+            .reset_index()
+        )
         bars["timestamp"] = bars["bar"] * tf_seconds
         bars = bars.drop(columns=["bar"])
         bars = bars[["timestamp", "open", "high", "low", "close", "volume"]]
         return bars
 
-    async def load_from_ctrader(self, symbol: str, timeframe: str = "1h",
-                                 days: int = 365, client=None) -> bool:
-        if client is None or not hasattr(client, 'fetch_historical_ohlcv'):
+    async def load_from_ctrader(
+        self, symbol: str, timeframe: str = "1h", days: int = 365, client=None
+    ) -> bool:
+        if client is None or not hasattr(client, "fetch_historical_ohlcv"):
             return False
         try:
             existing = self.ohlcv.get(symbol, {}).get(timeframe)
@@ -436,31 +537,42 @@ class DataManager:
                 age_hours = (time.time() - last_ts) / 3600
                 if age_hours < 6:
                     return True
-                bars = await client.fetch_historical_ohlcv(symbol, timeframe, days_back=min(days, 5))
+                bars = await client.fetch_historical_ohlcv(
+                    symbol, timeframe, days_back=min(days, 5)
+                )
             else:
-                bars = await client.fetch_historical_ohlcv(symbol, timeframe, days_back=days)
+                bars = await client.fetch_historical_ohlcv(
+                    symbol, timeframe, days_back=days
+                )
             if bars and len(bars) > 10:
                 df = pd.DataFrame(bars)
                 if existing is not None and len(existing) > 50:
                     merged = pd.concat([existing, df], ignore_index=True)
-                    merged = merged.drop_duplicates(subset=["timestamp"]).sort_values("timestamp")
+                    merged = merged.drop_duplicates(subset=["timestamp"]).sort_values(
+                        "timestamp"
+                    )
                     self.ohlcv[symbol][timeframe] = merged
-                    logger.info(f"cTrader appended {len(df)} bars to {symbol} (total {len(merged)})")
+                    logger.info(
+                        f"cTrader appended {len(df)} bars to {symbol} (total {len(merged)})"
+                    )
                 else:
                     self.ohlcv[symbol][timeframe] = df
                     logger.info(f"Loaded {symbol} from cTrader: {len(df)} bars")
                 self._source_health["ctrader"]["last_ok"] = time.time()
                 self._source_health["ctrader"]["failures"] = 0
                 self.freshness[symbol].last_source = "ctrader"
-                self.freshness[symbol].bar_count[timeframe] = len(self.ohlcv[symbol][timeframe])
+                self.freshness[symbol].bar_count[timeframe] = len(
+                    self.ohlcv[symbol][timeframe]
+                )
                 return True
         except Exception as e:
             self._source_health["ctrader"]["failures"] += 1
             logger.debug(f"cTrader failed for {symbol}: {e}")
         return False
 
-    async def load_with_fallback(self, symbol: str, timeframe: str = "1h",
-                                  days: int = 365, ctrader_client=None) -> bool:
+    async def load_with_fallback(
+        self, symbol: str, timeframe: str = "1h", days: int = 365, ctrader_client=None
+    ) -> bool:
         """Unified data loader: tries Dukascopy → yFinance → cTrader."""
         # 1. Dukascopy BI5 cache
         loaded = self.load_from_dukascopy_cache(
@@ -480,21 +592,37 @@ class DataManager:
         logger.warning(f"No data source available for {symbol}")
         return False
 
-    def try_alternative_source(self, symbol: str, timeframe: str = "1h",
-                                days: int = 30) -> bool:
+    def try_alternative_source(
+        self, symbol: str, timeframe: str = "1h", days: int = 30
+    ) -> bool:
         try:
             import yfinance as yf
+
             ticker_map = {
-                "EURUSD": "EURUSD=X", "GBPUSD": "GBPUSD=X", "USDJPY": "USDJPY=X",
-                "AUDUSD": "AUDUSD=X", "USDCAD": "USDCAD=X", "USDCHF": "USDCHF=X",
-                "NZDUSD": "NZDUSD=X", "EURJPY": "EURJPY=X", "GBPJPY": "GBPJPY=X",
+                "EURUSD": "EURUSD=X",
+                "GBPUSD": "GBPUSD=X",
+                "USDJPY": "USDJPY=X",
+                "AUDUSD": "AUDUSD=X",
+                "USDCAD": "USDCAD=X",
+                "USDCHF": "USDCHF=X",
+                "NZDUSD": "NZDUSD=X",
+                "EURJPY": "EURJPY=X",
+                "GBPJPY": "GBPJPY=X",
                 "EURGBP": "EURGBP=X",
-                "XAUUSD": "GC=F", "XAGUSD": "SI=F",
-                "XTIUSD": "CL=F", "XBRUSD": "BZ=F", "XNGUSD": "NG=F",
-                "BTCUSD": "BTC-USD", "ETHUSD": "ETH-USD",
-                "LTCUSD": "LTC-USD", "XRPUSD": "XRP-USD",
-                "US500": "^GSPC", "US30": "^DJI", "USTEC": "^IXIC",
-                "UK100": "^FTSE", "DE40": "^GDAXI",
+                "XAUUSD": "GC=F",
+                "XAGUSD": "SI=F",
+                "XTIUSD": "CL=F",
+                "XBRUSD": "BZ=F",
+                "XNGUSD": "NG=F",
+                "BTCUSD": "BTC-USD",
+                "ETHUSD": "ETH-USD",
+                "LTCUSD": "LTC-USD",
+                "XRPUSD": "XRP-USD",
+                "US500": "^GSPC",
+                "US30": "^DJI",
+                "USTEC": "^IXIC",
+                "UK100": "^FTSE",
+                "DE40": "^GDAXI",
             }
             yf_sym = ticker_map.get(symbol, f"{symbol}=X")
             interval = timeframe.replace("m", "m").replace("h", "h")
@@ -505,35 +633,52 @@ class DataManager:
                 if age_hours < 6:
                     return True
                 fetch_days = max(int(age_hours / 24) + 2, 3)
-                data = yf.download(yf_sym, period=f"{fetch_days}d",
-                                   interval=interval, progress=False)
+                data = yf.download(
+                    yf_sym, period=f"{fetch_days}d", interval=interval, progress=False
+                )
             else:
-                data = yf.download(yf_sym, period=f"{max(days, 5)}d",
-                                   interval=interval, progress=False)
+                data = yf.download(
+                    yf_sym, period=f"{max(days, 5)}d", interval=interval, progress=False
+                )
             if data is not None and not data.empty:
                 df = data.reset_index()
                 if isinstance(df.columns, pd.MultiIndex):
-                    df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
-                date_col = next((c for c in df.columns if c.lower() in ('date', 'datetime', 'timestamp')), None)
+                    df.columns = [
+                        c[0] if isinstance(c, tuple) else c for c in df.columns
+                    ]
+                date_col = next(
+                    (
+                        c
+                        for c in df.columns
+                        if c.lower() in ("date", "datetime", "timestamp")
+                    ),
+                    None,
+                )
                 if date_col:
                     df["timestamp"] = pd.to_datetime(df[date_col]).astype(int) // 10**9
-                elif df.columns[0].lower() in ('date', 'datetime'):
+                elif df.columns[0].lower() in ("date", "datetime"):
                     df["timestamp"] = pd.to_datetime(df.iloc[:, 0]).astype(int) // 10**9
                 cols_lower = {c: c.lower() for c in df.columns if isinstance(c, str)}
                 df = df.rename(columns=cols_lower)
                 new_bars = df[["timestamp", "open", "high", "low", "close", "volume"]]
                 if existing is not None and len(existing) > 50:
                     merged = pd.concat([existing, new_bars], ignore_index=True)
-                    merged = merged.drop_duplicates(subset=["timestamp"]).sort_values("timestamp")
+                    merged = merged.drop_duplicates(subset=["timestamp"]).sort_values(
+                        "timestamp"
+                    )
                     self.ohlcv[symbol][timeframe] = merged
-                    logger.info(f"Appended {len(new_bars)} new bars to {symbol} (total {len(merged)})")
+                    logger.info(
+                        f"Appended {len(new_bars)} new bars to {symbol} (total {len(merged)})"
+                    )
                 else:
                     self.ohlcv[symbol][timeframe] = new_bars
                     logger.info(f"Loaded {symbol} from yFinance: {len(new_bars)} bars")
                 self._source_health["yfinance"]["last_ok"] = time.time()
                 self._source_health["yfinance"]["failures"] = 0
                 self.freshness[symbol].last_source = "yfinance"
-                self.freshness[symbol].bar_count[timeframe] = len(self.ohlcv[symbol][timeframe])
+                self.freshness[symbol].bar_count[timeframe] = len(
+                    self.ohlcv[symbol][timeframe]
+                )
                 return True
         except Exception as e:
             self._source_health["yfinance"]["failures"] += 1
@@ -548,20 +693,26 @@ class DataManager:
         base = BASE_PRICES.get(symbol, 1.12)
         prices = base * np.exp(np.cumsum(np.random.normal(0, 0.0001, periods)))
         spread = 0.0001 if "JPY" not in symbol.upper() else 0.01
-        data = [{
-            "timestamp": d.timestamp(),
-            "open": p, "high": p * (1 + spread),
-            "low": p * (1 - spread), "close": p * (1 + np.random.normal(0, spread / 2)),
-            "volume": int(np.random.exponential(50000)),
-        } for d, p in zip(dates, prices)]
+        data = [
+            {
+                "timestamp": d.timestamp(),
+                "open": p,
+                "high": p * (1 + spread),
+                "low": p * (1 - spread),
+                "close": p * (1 + np.random.normal(0, spread / 2)),
+                "volume": int(np.random.exponential(50000)),
+            }
+            for d, p in zip(dates, prices)
+        ]
         self.ohlcv[symbol][tf] = pd.DataFrame(data)
 
     # ------------------------------------------------------------------
     # Data gap detection & healing
     # ------------------------------------------------------------------
 
-    def detect_gaps(self, symbol: str, tf: str = "1h",
-                    max_gap_minutes: int = 90) -> List[Tuple[float, float]]:
+    def detect_gaps(
+        self, symbol: str, tf: str = "1h", max_gap_minutes: int = 90
+    ) -> List[Tuple[float, float]]:
         """Return list of (start, end) gaps longer than max_gap_minutes."""
         df = self.ohlcv.get(symbol, {}).get(tf)
         if df is None or len(df) < 2:
@@ -574,8 +725,7 @@ class DataManager:
                 gaps.append((ts.iloc[i - 1], ts.iloc[i]))
         return gaps
 
-    def heal_gaps(self, symbol: str, tf: str = "1h",
-                  max_gap_minutes: int = 90) -> int:
+    def heal_gaps(self, symbol: str, tf: str = "1h", max_gap_minutes: int = 90) -> int:
         """Attempt to heal gaps by backfilling from alternative sources.
         Returns number of gaps healed."""
         gaps = self.detect_gaps(symbol, tf, max_gap_minutes)
@@ -583,8 +733,9 @@ class DataManager:
             return 0
         healed = 0
         for gap_start, gap_end in gaps:
-            if self.try_alternative_source(symbol, tf, days=min(
-                    int((gap_end - gap_start) / 86400) + 2, 60)):
+            if self.try_alternative_source(
+                symbol, tf, days=min(int((gap_end - gap_start) / 86400) + 2, 60)
+            ):
                 healed += 1
                 logger.info(f"Healed gap {symbol}: {gap_start:.0f}-{gap_end:.0f}")
         return healed
@@ -626,10 +777,14 @@ class DataManager:
         features, cache_key = entry
         df = self.ohlcv.get(symbol, {}).get(timeframe)
         if df is not None and not df.empty:
-            current_key = hash((float(df["timestamp"].iloc[-1]),
-                                float(df["close"].iloc[-1]),
-                                float(df["volume"].iloc[-1]),
-                                len(df)))
+            current_key = hash(
+                (
+                    float(df["timestamp"].iloc[-1]),
+                    float(df["close"].iloc[-1]),
+                    float(df["volume"].iloc[-1]),
+                    len(df),
+                )
+            )
             if cache_key == current_key:
                 return features
         return None
@@ -638,10 +793,14 @@ class DataManager:
         df = self.ohlcv.get(symbol, {}).get(timeframe)
         cache_key = 0
         if df is not None and not df.empty:
-            cache_key = hash((float(df["timestamp"].iloc[-1]),
-                              float(df["close"].iloc[-1]),
-                              float(df["volume"].iloc[-1]),
-                              len(df)))
+            cache_key = hash(
+                (
+                    float(df["timestamp"].iloc[-1]),
+                    float(df["close"].iloc[-1]),
+                    float(df["volume"].iloc[-1]),
+                    len(df),
+                )
+            )
         if symbol not in self._feature_cache:
             self._feature_cache[symbol] = {}
         self._feature_cache[symbol][timeframe] = (features, cache_key)
@@ -663,12 +822,17 @@ class DataManager:
         df = self.get_ohlcv(symbol, tf)
         if df is None or len(df) < period + 1:
             return BASE_PRICES.get(symbol, 1.12) * 0.001
-        tr = pd.concat([
-            df["high"] - df["low"],
-            (df["high"] - df["close"].shift()).abs(),
-            (df["low"] - df["close"].shift()).abs(),
-        ], axis=1).max(1)
-        return float(max(tr.iloc[-period:].mean(), BASE_PRICES.get(symbol, 1.12) * 0.0005))
+        tr = pd.concat(
+            [
+                df["high"] - df["low"],
+                (df["high"] - df["close"].shift()).abs(),
+                (df["low"] - df["close"].shift()).abs(),
+            ],
+            axis=1,
+        ).max(1)
+        return float(
+            max(tr.iloc[-period:].mean(), BASE_PRICES.get(symbol, 1.12) * 0.0005)
+        )
 
     def update_price(self, symbol: str, price: float, timeframe: str = "1h"):
         sym = symbol.upper()
@@ -710,6 +874,7 @@ class DataManager:
         """Accept both CtraderDepth and MarketDepthData (tuple-based) formats."""
         try:
             from api.ctrader_client import MarketDepth as CtraderDepth
+
             if isinstance(depth, CtraderDepth):
                 sym = depth.symbol
                 md = self.market_depth[sym]
@@ -719,8 +884,12 @@ class DataManager:
                 md.spread = depth.spread
                 md.volume = depth.volume
                 md.timestamp = depth.timestamp
-                md.bids = [DepthLevelData(price=b.price, size=b.size) for b in depth.bids]
-                md.asks = [DepthLevelData(price=a.price, size=a.size) for a in depth.asks]
+                md.bids = [
+                    DepthLevelData(price=b.price, size=b.size) for b in depth.bids
+                ]
+                md.asks = [
+                    DepthLevelData(price=a.price, size=a.size) for a in depth.asks
+                ]
                 return
         except ImportError:
             pass
@@ -730,14 +899,18 @@ class DataManager:
             self.market_depth[sym] = depth
             return
 
-        if hasattr(depth, 'symbol') and hasattr(depth, 'bids') and hasattr(depth, 'asks'):
+        if (
+            hasattr(depth, "symbol")
+            and hasattr(depth, "bids")
+            and hasattr(depth, "asks")
+        ):
             sym = depth.symbol
             md = self.market_depth.get(sym)
             if md:
-                md.bid = getattr(depth, 'bid', md.bid)
-                md.ask = getattr(depth, 'ask', md.ask)
+                md.bid = getattr(depth, "bid", md.bid)
+                md.ask = getattr(depth, "ask", md.ask)
                 md.spread = md.ask - md.bid
-                md.timestamp = getattr(depth, 'timestamp', time.time())
+                md.timestamp = getattr(depth, "timestamp", time.time())
                 if depth.bids and isinstance(depth.bids[0], (tuple, list)):
                     md.bids = [DepthLevelData(price=p, size=s) for p, s in depth.bids]
                 if depth.asks and isinstance(depth.asks[0], (tuple, list)):
@@ -774,7 +947,11 @@ class DataManager:
         }
 
     def calculate_gamma_exposure(self, symbol: str) -> Dict:
-        return {"gamma_exposure": 0.0, "gamma_flip_point": 0.0, "dealer_position": "neutral"}
+        return {
+            "gamma_exposure": 0.0,
+            "gamma_flip_point": 0.0,
+            "dealer_position": "neutral",
+        }
 
     # ------------------------------------------------------------------
     # Dashboard snapshot
@@ -783,24 +960,34 @@ class DataManager:
     def get_snapshot(self, symbol: str = "EURUSD", acc=None, positions=None):
         try:
             from src.data.feature_engine import FeatureEngine
+
             fe = FeatureEngine()
             features = fe.compute_features(
-                self.ohlcv.get(symbol, {}), self.order_flow.get(symbol, {}), acc, positions
+                self.ohlcv.get(symbol, {}),
+                self.order_flow.get(symbol, {}),
+                acc,
+                positions,
             )
             fnames = fe.feature_names
         except Exception:
             features = None
             fnames = []
-        snap = type("Snapshot", (), {
-            "symbol": symbol,
-            "timestamp": time.time(),
-            "features": features,
-            "feature_names": fnames,
-            "regime": "ranging",
-            "regime_conf": 0.8,
-            "cvd": self._cvd[symbol][0][-1] if self._cvd[symbol][0] else 0.0,
-            "bid_ask_imbalance": self.order_flow.get(symbol, {}).get("imbalance", 0.0),
-        })()
+        snap = type(
+            "Snapshot",
+            (),
+            {
+                "symbol": symbol,
+                "timestamp": time.time(),
+                "features": features,
+                "feature_names": fnames,
+                "regime": "ranging",
+                "regime_conf": 0.8,
+                "cvd": self._cvd[symbol][0][-1] if self._cvd[symbol][0] else 0.0,
+                "bid_ask_imbalance": self.order_flow.get(symbol, {}).get(
+                    "imbalance", 0.0
+                ),
+            },
+        )()
         self.latest_snapshot[symbol] = snap
         return snap
 
@@ -815,7 +1002,9 @@ class DataManager:
             fd = self.freshness[sym]
             report[sym] = {
                 "tick_count": fd.tick_count,
-                "last_tick_age": time.time() - fd.last_tick_ts if fd.last_tick_ts > 0 else -1,
+                "last_tick_age": (
+                    time.time() - fd.last_tick_ts if fd.last_tick_ts > 0 else -1
+                ),
                 "is_healthy": fd.is_healthy,
                 "source": fd.last_source,
                 "errors": fd.errors_since_healthy,

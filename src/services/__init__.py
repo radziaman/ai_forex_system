@@ -1,4 +1,5 @@
 """Domain types shared across all services."""
+
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional, Dict, Any, List
@@ -21,6 +22,7 @@ class SignalDirection(str, Enum):
 @dataclass
 class Signal:
     """Pure output of SignalEngine — no risk info, no execution details."""
+
     symbol: str
     direction: SignalDirection
     confidence: float
@@ -33,6 +35,7 @@ class Signal:
 @dataclass
 class TradeDecision:
     """Risk-approved decision ready for execution."""
+
     signal: Signal
     volume: float
     sl_price: float
@@ -53,6 +56,7 @@ class ExecutionResult:
 @dataclass
 class FeatureUpdate:
     """Published when new features are ready for a symbol."""
+
     symbol: str
     timeframe: str
     features: Any  # np.ndarray

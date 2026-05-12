@@ -6,6 +6,7 @@ Usage:
   python -m src.training.run_training --sweep --trials 50
   python -m src.training.run_training --regime-train
 """
+
 import argparse
 import json
 import sys
@@ -17,13 +18,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
 import numpy as np
 import pandas as pd
+import tensorflow as tf
 from rts_ai_fx.model import LSTMCNNHybrid, ProfitabilityClassifier
 from rts_ai_fx.features_unified import FeaturePipeline
 from training.regime_trainer import RegimeTrainer
 from training.distributed_trainer import DistributedTrainer, TrialConfig
 
 
-def load_training_data(
+async def load_training_data(
     symbol: str = "EURUSD",
     years: int = 5,
     lookback: int = 30,
@@ -34,20 +36,32 @@ def load_training_data(
     logger.info(f"Loading {years} years of {symbol} data from Dukascopy...")
 
     try:
-        from data.dukascopy_provider import DukascopyProvider
-        provider = DukascopyProvider(cache=True)
+        from datetime import datetime, timezone, timedelta
+        from data.dukascopy_provider import DukascopyDataProvider
+
+        provider = DukascopyDataProvider(cache=True)
         dfs = {}
+        end = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        start = (datetime.now(timezone.utc) - timedelta(days=int(years * 365))).strftime("%Y-%m-%d")
         for tf in timeframes:
             interval_map = {"1h": "1h", "4h": "4h", "1d": "1d"}
             interval = interval_map.get(tf, "1h")
-            days = int(years * 365)
-            ohlcv = provider.fetch_ohlcv(symbol, interval, days=days)
+            ohlcv = await provider.fetch_ohlcv(symbol, interval, start=start, end=end)
             if not ohlcv or len(ohlcv) < 100:
                 raise ValueError(f"Insufficient Dukascopy data for {symbol} {tf}")
-            df = pd.DataFrame([{
-                "timestamp": o.timestamp, "open": o.open, "high": o.high,
-                "low": o.low, "close": o.close, "volume": o.volume,
-            } for o in ohlcv])
+            df = pd.DataFrame(
+                [
+                    {
+                        "timestamp": o.timestamp,
+                        "open": o.open,
+                        "high": o.high,
+                        "low": o.low,
+                        "close": o.close,
+                        "volume": o.volume,
+                    }
+                    for o in ohlcv
+                ]
+            )
             if frac < 1.0:
                 cut = int(len(df) * frac)
                 df = df.iloc[-cut:].reset_index(drop=True)
@@ -73,13 +87,15 @@ def train_model(X_train, y_train, X_val, y_val, config: TrialConfig) -> dict:
     )
     model.build()
     hist = model.model.fit(
-        X_train, y_train,
+        X_train,
+        y_train,
         validation_data=(X_val, y_val),
         epochs=config.epochs,
         batch_size=config.batch_size,
         callbacks=[
             tf.keras.callbacks.EarlyStopping(
-                monitor="val_loss", patience=config.early_stop_patience,
+                monitor="val_loss",
+                patience=config.early_stop_patience,
                 restore_best_weights=True,
             ),
             tf.keras.callbacks.ReduceLROnPlateau(
@@ -96,9 +112,15 @@ def train_model(X_train, y_train, X_val, y_val, config: TrialConfig) -> dict:
     }
 
 
-def main():
-    parser = argparse.ArgumentParser(description="RTS: AI Moneybot System Elite - Training Pipeline")
-    parser.add_argument("--mode", choices=["local", "distributed", "sweep", "regime"], default="local")
+async def main():
+    parser = argparse.ArgumentParser(
+        description="RTS: AI Moneybot System Elite - Training Pipeline"
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["local", "distributed", "sweep", "regime"],
+        default="local",
+    )
     parser.add_argument("--symbol", default="EURUSD")
     parser.add_argument("--years", type=int, default=5)
     parser.add_argument("--num-workers", type=int, default=4)
@@ -108,16 +130,19 @@ def main():
     args = parser.parse_args()
 
     import tensorflow as tf
+
     tf.get_logger().setLevel("ERROR")
 
-    X, y, fp, dfs = load_training_data(args.symbol, args.years)
+    X, y, fp, dfs = await load_training_data(args.symbol, args.years)
     split = int(len(X) * 0.8)
     X_train, X_val = X[:split], X[split:]
     y_train, y_val = y[:split], y[split:]
 
     if args.mode == "regime":
         logger.info("Training regime-dependent models...")
-        trainer = RegimeTrainer(n_regimes=4, model_dir=f"{args.output_dir}/regime_models")
+        trainer = RegimeTrainer(
+            n_regimes=4, model_dir=f"{args.output_dir}/regime_models"
+        )
         results = trainer.train_regime_models(dfs, epochs=args.epochs)
         with open(f"{args.output_dir}/regime_results.json", "w") as f:
             json.dump(results, f, indent=2)
@@ -138,7 +163,12 @@ def main():
             "batch_size": [16, 32, 64],
         }
         results = dt.hyperparameter_sweep(
-            param_grid, train_model, X_train, y_train, X_val, y_val,
+            param_grid,
+            train_model,
+            X_train,
+            y_train,
+            X_val,
+            y_val,
             n_trials=args.trials,
         )
         logger.info(f"Best config: {results[0].config}")
@@ -153,12 +183,16 @@ def main():
         model = LSTMCNNHybrid(lookback=30, n_features=n_features)
         model.build()
         model.model.fit(
-            X_train, y_train,
+            X_train,
+            y_train,
             validation_data=(X_val, y_val),
-            epochs=config.epochs, batch_size=config.batch_size,
+            epochs=config.epochs,
+            batch_size=config.batch_size,
             callbacks=[
                 tf.keras.callbacks.EarlyStopping(
-                    monitor="val_loss", patience=10, restore_best_weights=True,
+                    monitor="val_loss",
+                    patience=10,
+                    restore_best_weights=True,
                 ),
             ],
             verbose=1,
@@ -167,12 +201,14 @@ def main():
 
         classifier = ProfitabilityClassifier(lookback=30, n_features=n_features)
         classifier.build()
-        classifier.train(X_train, y_train, X_val, y_val,
-                         epochs=args.epochs, batch_size=32)
+        classifier.train(
+            X_train, y_train, X_val, y_val, epochs=args.epochs, batch_size=32
+        )
         classifier.save(f"{args.output_dir}/classifier_{args.symbol}.keras")
 
         logger.info(f"Models saved to {args.output_dir}/")
 
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    asyncio.run(main())

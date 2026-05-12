@@ -4,6 +4,7 @@ End-to-end tests for Causal Feature Selection.
 Tests PCMCI discovery, correlation fallback, fit_transform pipeline,
 edge cases, and integration with feature engineering.
 """
+
 import os
 import sys
 import numpy as np
@@ -11,7 +12,7 @@ import pandas as pd
 import pytest
 from unittest.mock import patch, MagicMock
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from rts_ai_fx.causal_features import CausalFeatureSelector, CAUSAL_AVAILABLE
 from rts_ai_fx.features_unified import compute_features
@@ -59,13 +60,15 @@ class TestPCMCIWithSyntheticData:
         w_data = 0.5 * x[:-2] + 0.2 * noise[2:]
         w[2:] = w_data
 
-        features = pd.DataFrame({
-            'feature_x': x,
-            'feature_y': y,
-            'feature_z': z,
-            'feature_w': w,
-        })
-        target = pd.Series(0.6 * x[1:] + 0.4 * w[1:] + 0.2 * noise[1:], name='target')
+        features = pd.DataFrame(
+            {
+                "feature_x": x,
+                "feature_y": y,
+                "feature_z": z,
+                "feature_w": w,
+            }
+        )
+        target = pd.Series(0.6 * x[1:] + 0.4 * w[1:] + 0.2 * noise[1:], name="target")
         features_aligned = features.iloc[2:].reset_index(drop=True)
         target_aligned = target.iloc[1:].reset_index(drop=True)
         return features_aligned, target_aligned
@@ -110,14 +113,17 @@ class TestPCMCIWithSyntheticData:
         selector = CausalFeatureSelector(max_lag=3, alpha=0.05)
         selector.fit(features, target)
         assert selector.causal_graph_ is not None
-        assert 'p_matrix' in selector.causal_graph_
-        assert 'val_matrix' in selector.causal_graph_
+        assert "p_matrix" in selector.causal_graph_
+        assert "val_matrix" in selector.causal_graph_
 
-    @pytest.mark.parametrize("max_lag,alpha", [
-        (2, 0.01),
-        (3, 0.05),
-        (5, 0.1),
-    ])
+    @pytest.mark.parametrize(
+        "max_lag,alpha",
+        [
+            (2, 0.01),
+            (3, 0.05),
+            (5, 0.1),
+        ],
+    )
     def test_different_hyperparameters(self, synthetic_causal_data, max_lag, alpha):
         if not CAUSAL_AVAILABLE:
             pytest.skip("tigramite not available")
@@ -134,15 +140,15 @@ class TestPCMCIWithSyntheticData:
         selector = CausalFeatureSelector(max_lag=3, alpha=0.05)
         selector.fit(features, target)
         summary = selector.get_causal_summary()
-        assert 'n_causal_features' in summary
-        assert 'causal_features' in summary
-        assert 'algorithm' in summary
-        assert 'max_lag' in summary
-        assert 'alpha' in summary
-        assert summary['algorithm'] == 'PCMCI'
-        assert summary['n_causal_features'] == len(selector.causal_features_)
-        assert summary['max_lag'] == 3
-        assert summary['alpha'] == 0.05
+        assert "n_causal_features" in summary
+        assert "causal_features" in summary
+        assert "algorithm" in summary
+        assert "max_lag" in summary
+        assert "alpha" in summary
+        assert summary["algorithm"] == "PCMCI"
+        assert summary["n_causal_features"] == len(selector.causal_features_)
+        assert summary["max_lag"] == 3
+        assert summary["alpha"] == 0.05
 
 
 class TestCorrelationFallback:
@@ -156,36 +162,40 @@ class TestCorrelationFallback:
         y = 0.8 * x + 0.2 * np.random.randn(n)
         z = np.random.randn(n)
         w = 0.6 * x + 0.4 * np.random.randn(n)
-        features = pd.DataFrame({
-            'strong_corr': y,
-            'no_corr': z,
-            'weak_corr': w,
-            'feature_x': x,
-        })
-        target = pd.Series(x, name='target')
+        features = pd.DataFrame(
+            {
+                "strong_corr": y,
+                "no_corr": z,
+                "weak_corr": w,
+                "feature_x": x,
+            }
+        )
+        target = pd.Series(x, name="target")
         return features, target
 
     def test_fallback_selects_correlated_features(self, correlated_data):
         features, target = correlated_data
-        with patch('rts_ai_fx.causal_features.CAUSAL_AVAILABLE', False):
+        with patch("rts_ai_fx.causal_features.CAUSAL_AVAILABLE", False):
             selector = CausalFeatureSelector()
             selected = selector.fit(features, target)
-            assert 'strong_corr' in selected
+            assert "strong_corr" in selected
             assert len(selected) > 0
 
     def test_fallback_excludes_uncorrelated(self, correlated_data):
         features, target = correlated_data
-        with patch('rts_ai_fx.causal_features.CAUSAL_AVAILABLE', False):
+        with patch("rts_ai_fx.causal_features.CAUSAL_AVAILABLE", False):
             selector = CausalFeatureSelector()
             selected = selector.fit(features, target)
-            corrs = features.apply(lambda col: abs(col.corr(target)) if col.std() > 0 else 0.0)
-            assert corrs['strong_corr'] > corrs['no_corr']
-            assert 'strong_corr' in selected
+            corrs = features.apply(
+                lambda col: abs(col.corr(target)) if col.std() > 0 else 0.0
+            )
+            assert corrs["strong_corr"] > corrs["no_corr"]
+            assert "strong_corr" in selected
 
     def test_fallback_with_empty_features(self):
         empty_features = pd.DataFrame()
         target = pd.Series([1, 2, 3])
-        with patch('rts_ai_fx.causal_features.CAUSAL_AVAILABLE', False):
+        with patch("rts_ai_fx.causal_features.CAUSAL_AVAILABLE", False):
             selector = CausalFeatureSelector()
             selected = selector.fit(empty_features, target)
             assert selected == []
@@ -198,18 +208,20 @@ class TestFitTransformPipeline:
     def sample_data(self):
         np.random.seed(42)
         n = 150
-        features = pd.DataFrame({
-            'feat_a': np.random.randn(n),
-            'feat_b': np.random.randn(n),
-            'feat_c': np.random.randn(n),
-            'feat_d': np.random.randn(n),
-            'feat_e': np.random.randn(n),
-        })
+        features = pd.DataFrame(
+            {
+                "feat_a": np.random.randn(n),
+                "feat_b": np.random.randn(n),
+                "feat_c": np.random.randn(n),
+                "feat_d": np.random.randn(n),
+                "feat_e": np.random.randn(n),
+            }
+        )
         target = pd.Series(
-            0.5 * features['feat_a'].values +
-            0.3 * features['feat_b'].values +
-            0.2 * np.random.randn(n),
-            name='target'
+            0.5 * features["feat_a"].values
+            + 0.3 * features["feat_b"].values
+            + 0.2 * np.random.randn(n),
+            name="target",
         )
         return features, target
 
@@ -247,13 +259,15 @@ class TestFitTransformPipeline:
         features, target = sample_data
         selector = CausalFeatureSelector(max_lag=3, alpha=0.05)
         selector.fit(features, target)
-        new_features = pd.DataFrame({
-            'feat_a': np.random.randn(50),
-            'feat_b': np.random.randn(50),
-            'feat_c': np.random.randn(50),
-            'feat_d': np.random.randn(50),
-            'feat_e': np.random.randn(50),
-        })
+        new_features = pd.DataFrame(
+            {
+                "feat_a": np.random.randn(50),
+                "feat_b": np.random.randn(50),
+                "feat_c": np.random.randn(50),
+                "feat_d": np.random.randn(50),
+                "feat_e": np.random.randn(50),
+            }
+        )
         transformed = selector.transform(new_features)
         assert len(transformed) == 50
         assert all(col in features.columns for col in transformed.columns)
@@ -270,10 +284,12 @@ class TestFitTransformPipeline:
         features, target = sample_data
         selector = CausalFeatureSelector(max_lag=3, alpha=0.05)
         selector.fit(features, target)
-        new_features = pd.DataFrame({
-            'feat_a': np.random.randn(50),
-            'feat_b': np.random.randn(50),
-        })
+        new_features = pd.DataFrame(
+            {
+                "feat_a": np.random.randn(50),
+                "feat_b": np.random.randn(50),
+            }
+        )
         transformed = selector.transform(new_features)
         assert all(col in new_features.columns for col in transformed.columns)
 
@@ -290,10 +306,12 @@ class TestEdgeCases:
 
     def test_insufficient_data(self):
         np.random.seed(42)
-        small_features = pd.DataFrame({
-            'a': np.random.randn(10),
-            'b': np.random.randn(10),
-        })
+        small_features = pd.DataFrame(
+            {
+                "a": np.random.randn(10),
+                "b": np.random.randn(10),
+            }
+        )
         small_target = pd.Series(np.random.randn(10))
         selector = CausalFeatureSelector()
         selected = selector.fit(small_features, small_target)
@@ -304,14 +322,16 @@ class TestEdgeCases:
             pytest.skip("tigramite not available")
         np.random.seed(42)
         n = 150
-        features = pd.DataFrame({
-            'a': np.random.randn(n),
-            'b': np.random.randn(n),
-            'c': np.random.randn(n),
-        })
+        features = pd.DataFrame(
+            {
+                "a": np.random.randn(n),
+                "b": np.random.randn(n),
+                "c": np.random.randn(n),
+            }
+        )
         features.iloc[10, 0] = np.nan
         features.iloc[20, 1] = np.nan
-        target = pd.Series(0.5 * features['a'].values + 0.3 * np.random.randn(n))
+        target = pd.Series(0.5 * features["a"].values + 0.3 * np.random.randn(n))
         selector = CausalFeatureSelector(max_lag=3, alpha=0.05)
         try:
             selected = selector.fit(features, target)
@@ -324,11 +344,13 @@ class TestEdgeCases:
             pytest.skip("tigramite not available")
         np.random.seed(42)
         n = 150
-        features = pd.DataFrame({
-            'a': np.random.randn(n),
-            'b': np.random.randn(n),
-        })
-        target = pd.Series(0.5 * features['a'].values + 0.3 * np.random.randn(n))
+        features = pd.DataFrame(
+            {
+                "a": np.random.randn(n),
+                "b": np.random.randn(n),
+            }
+        )
+        target = pd.Series(0.5 * features["a"].values + 0.3 * np.random.randn(n))
         target.iloc[5] = np.nan
         selector = CausalFeatureSelector(max_lag=3, alpha=0.05)
         try:
@@ -342,8 +364,10 @@ class TestEdgeCases:
             pytest.skip("tigramite not available")
         np.random.seed(42)
         n = 150
-        features = pd.DataFrame({'only_feature': np.random.randn(n)})
-        target = pd.Series(0.7 * features['only_feature'].values + 0.3 * np.random.randn(n))
+        features = pd.DataFrame({"only_feature": np.random.randn(n)})
+        target = pd.Series(
+            0.7 * features["only_feature"].values + 0.3 * np.random.randn(n)
+        )
         selector = CausalFeatureSelector(max_lag=3, alpha=0.05)
         selected = selector.fit(features, target)
         assert isinstance(selected, list)
@@ -354,7 +378,7 @@ class TestEdgeCases:
         np.random.seed(42)
         n = 100
         n_features = 15
-        feature_data = {f'feat_{i}': np.random.randn(n) for i in range(n_features)}
+        feature_data = {f"feat_{i}": np.random.randn(n) for i in range(n_features)}
         features = pd.DataFrame(feature_data)
         target = pd.Series(np.random.randn(n))
         selector = CausalFeatureSelector(max_lag=2, alpha=0.05)
@@ -367,27 +391,33 @@ class TestEdgeCases:
             pytest.skip("tigramite not available")
         np.random.seed(42)
         n = 150
-        features = pd.DataFrame({
-            'constant': np.ones(n),
-            'variable': np.random.randn(n),
-        })
+        features = pd.DataFrame(
+            {
+                "constant": np.ones(n),
+                "variable": np.random.randn(n),
+            }
+        )
         target = pd.Series(np.random.randn(n))
         selector = CausalFeatureSelector(max_lag=3, alpha=0.05)
         selected = selector.fit(features, target)
         assert isinstance(selected, list)
-        assert 'variable' in selected
+        assert "variable" in selected
 
     def test_exception_handling_returns_fallback(self):
         np.random.seed(42)
         n = 150
-        features = pd.DataFrame({
-            'a': np.random.randn(n),
-            'b': np.random.randn(n),
-        })
+        features = pd.DataFrame(
+            {
+                "a": np.random.randn(n),
+                "b": np.random.randn(n),
+            }
+        )
         target = pd.Series(np.random.randn(n))
         selector = CausalFeatureSelector()
         if CAUSAL_AVAILABLE:
-            with patch.object(selector, '_to_causal_format', side_effect=Exception("Test error")):
+            with patch.object(
+                selector, "_to_causal_format", side_effect=Exception("Test error")
+            ):
                 selected = selector.fit(features, target)
                 assert isinstance(selected, list)
 
@@ -404,10 +434,17 @@ class TestIntegrationWithFeaturePipeline:
         low = close - np.abs(np.random.randn(n) * 0.0005)
         opn = close + np.random.randn(n) * 0.0003
         volume = np.random.randint(1000, 10000, n).astype(float)
-        dates = pd.date_range('2025-01-01', periods=n, freq='h')
-        df = pd.DataFrame({
-            'open': opn, 'high': high, 'low': low, 'close': close, 'volume': volume,
-        }, index=dates)
+        dates = pd.date_range("2025-01-01", periods=n, freq="h")
+        df = pd.DataFrame(
+            {
+                "open": opn,
+                "high": high,
+                "low": low,
+                "close": close,
+                "volume": volume,
+            },
+            index=dates,
+        )
         return df
 
     def test_causal_on_computed_features(self, ohlcv_data):
@@ -417,12 +454,14 @@ class TestIntegrationWithFeaturePipeline:
         features_df = features_df.dropna()
         assert len(features_df) > 50
         target = pd.Series(
-            features_df['close'].pct_change().shift(-1).values,
+            features_df["close"].pct_change().shift(-1).values,
             index=features_df.index,
-            name='target'
+            name="target",
         )
         target = target.iloc[:-1]
-        features_aligned = features_df.iloc[:-1].drop(columns=['close'], errors='ignore')
+        features_aligned = features_df.iloc[:-1].drop(
+            columns=["close"], errors="ignore"
+        )
         selector = CausalFeatureSelector(max_lag=3, alpha=0.05)
         selected = selector.fit(features_aligned, target)
         assert isinstance(selected, list)
@@ -434,12 +473,14 @@ class TestIntegrationWithFeaturePipeline:
         features_df = compute_features(ohlcv_data)
         features_df = features_df.dropna()
         target = pd.Series(
-            features_df['close'].pct_change().shift(-1).values,
+            features_df["close"].pct_change().shift(-1).values,
             index=features_df.index,
-            name='target'
+            name="target",
         )
         target = target.iloc[:-1]
-        features_aligned = features_df.iloc[:-1].drop(columns=['close'], errors='ignore')
+        features_aligned = features_df.iloc[:-1].drop(
+            columns=["close"], errors="ignore"
+        )
         selector = CausalFeatureSelector(max_lag=3, alpha=0.05)
         reduced_features = selector.fit_transform(features_aligned, target)
         assert isinstance(reduced_features, pd.DataFrame)
@@ -452,18 +493,20 @@ class TestIntegrationWithFeaturePipeline:
         features_df = compute_features(ohlcv_data)
         features_df = features_df.dropna()
         target = pd.Series(
-            features_df['close'].pct_change().shift(-1).values,
+            features_df["close"].pct_change().shift(-1).values,
             index=features_df.index,
-            name='target'
+            name="target",
         )
         target = target.iloc[:-1]
-        features_aligned = features_df.iloc[:-1].drop(columns=['close'], errors='ignore')
+        features_aligned = features_df.iloc[:-1].drop(
+            columns=["close"], errors="ignore"
+        )
         selector = CausalFeatureSelector(max_lag=3, alpha=0.05)
         selector.fit(features_aligned, target)
         summary = selector.get_causal_summary()
-        assert summary['n_causal_features'] > 0
-        assert summary['algorithm'] == 'PCMCI'
-        assert len(summary['causal_features']) > 0
+        assert summary["n_causal_features"] > 0
+        assert summary["algorithm"] == "PCMCI"
+        assert len(summary["causal_features"]) > 0
 
 
 class TestMainSystemIntegration:
@@ -473,15 +516,22 @@ class TestMainSystemIntegration:
     def trading_scenario_data(self):
         np.random.seed(42)
         n = 500
-        dates = pd.date_range('2025-01-01', periods=n, freq='h')
+        dates = pd.date_range("2025-01-01", periods=n, freq="h")
         close = 1.1000 + np.cumsum(np.random.randn(n) * 0.0003)
         high = close + np.abs(np.random.randn(n) * 0.0002)
         low = close - np.abs(np.random.randn(n) * 0.0002)
         opn = close + np.random.randn(n) * 0.0001
         volume = np.random.randint(1000, 10000, n).astype(float)
-        df = pd.DataFrame({
-            'open': opn, 'high': high, 'low': low, 'close': close, 'volume': volume,
-        }, index=dates)
+        df = pd.DataFrame(
+            {
+                "open": opn,
+                "high": high,
+                "low": low,
+                "close": close,
+                "volume": volume,
+            },
+            index=dates,
+        )
         return df
 
     def test_main_py_causal_pattern(self, trading_scenario_data):
@@ -494,7 +544,7 @@ class TestMainSystemIntegration:
                 if len(target) > 50:
                     features_processed = compute_features(df_1h.iloc[:-1].copy())
                     features_processed = features_processed.dropna()
-                    target_aligned = target.iloc[:len(features_processed)]
+                    target_aligned = target.iloc[: len(features_processed)]
                     selector = CausalFeatureSelector(max_lag=5, alpha=0.01)
                     causal_features = selector.fit_transform(
                         features_processed, target_aligned
@@ -504,13 +554,15 @@ class TestMainSystemIntegration:
                     assert len(causal_features) == len(features_processed)
 
     def test_causal_with_small_buffer(self):
-        df_1h = pd.DataFrame({
-            'open': [1.1, 1.11, 1.12],
-            'high': [1.12, 1.13, 1.14],
-            'low': [1.09, 1.10, 1.11],
-            'close': [1.11, 1.12, 1.13],
-            'volume': [1000, 1100, 1200],
-        })
+        df_1h = pd.DataFrame(
+            {
+                "open": [1.1, 1.11, 1.12],
+                "high": [1.12, 1.13, 1.14],
+                "low": [1.09, 1.10, 1.11],
+                "close": [1.11, 1.12, 1.13],
+                "volume": [1000, 1100, 1200],
+            }
+        )
         selector = CausalFeatureSelector()
         if len(df_1h) <= 50:
             assert len(df_1h) < 50
@@ -521,11 +573,13 @@ class TestMainSystemIntegration:
         df = trading_scenario_data
         features_df = compute_features(df).dropna()
         target = pd.Series(
-            features_df['close'].pct_change().shift(-1).values,
+            features_df["close"].pct_change().shift(-1).values,
             index=features_df.index,
         )
         target = target.iloc[:-1]
-        features_aligned = features_df.iloc[:-1].drop(columns=['close'], errors='ignore')
+        features_aligned = features_df.iloc[:-1].drop(
+            columns=["close"], errors="ignore"
+        )
         selector = CausalFeatureSelector(max_lag=3, alpha=0.05)
         result = selector.fit_transform(features_aligned, target)
         assert len(result) == len(features_aligned)
@@ -539,19 +593,23 @@ class TestReproducibility:
             pytest.skip("tigramite not available")
         np.random.seed(123)
         n = 200
-        features1 = pd.DataFrame({
-            'a': np.random.randn(n),
-            'b': np.random.randn(n),
-            'c': np.random.randn(n),
-        })
-        target1 = pd.Series(0.5 * features1['a'].values + 0.3 * np.random.randn(n))
+        features1 = pd.DataFrame(
+            {
+                "a": np.random.randn(n),
+                "b": np.random.randn(n),
+                "c": np.random.randn(n),
+            }
+        )
+        target1 = pd.Series(0.5 * features1["a"].values + 0.3 * np.random.randn(n))
         np.random.seed(123)
-        features2 = pd.DataFrame({
-            'a': np.random.randn(n),
-            'b': np.random.randn(n),
-            'c': np.random.randn(n),
-        })
-        target2 = pd.Series(0.5 * features2['a'].values + 0.3 * np.random.randn(n))
+        features2 = pd.DataFrame(
+            {
+                "a": np.random.randn(n),
+                "b": np.random.randn(n),
+                "c": np.random.randn(n),
+            }
+        )
+        target2 = pd.Series(0.5 * features2["a"].values + 0.3 * np.random.randn(n))
         selector1 = CausalFeatureSelector(max_lag=3, alpha=0.05)
         selector2 = CausalFeatureSelector(max_lag=3, alpha=0.05)
         selected1 = selector1.fit(features1, target1)

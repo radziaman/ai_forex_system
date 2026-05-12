@@ -28,7 +28,9 @@ class AIConfig:
     algorithm: str = "PPO-Regime-Specialist"
     device: str = "auto"
     ensemble_method: str = "moe"
-    experts: List[str] = field(default_factory=lambda: ["ppo_regime", "lstm_cnn", "rule_based"])
+    experts: List[str] = field(
+        default_factory=lambda: ["ppo_regime", "lstm_cnn", "rule_based"]
+    )
     use_elo_rating: bool = True
     use_sharpe_weighting: bool = True
     total_timesteps: int = 1_000_000
@@ -89,14 +91,28 @@ class LoggingConfig:
 
 @dataclass
 class SymbolsConfig:
-    forex: List[str] = field(default_factory=lambda: [
-        "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD",
-        "EURJPY", "GBPJPY", "EURGBP",
-    ])
+    forex: List[str] = field(
+        default_factory=lambda: [
+            "EURUSD",
+            "GBPUSD",
+            "USDJPY",
+            "AUDUSD",
+            "USDCAD",
+            "USDCHF",
+            "NZDUSD",
+            "EURJPY",
+            "GBPJPY",
+            "EURGBP",
+        ]
+    )
     metals: List[str] = field(default_factory=lambda: ["XAUUSD", "XAGUSD"])
     energy: List[str] = field(default_factory=lambda: ["XTIUSD", "XBRUSD", "XNGUSD"])
-    indices: List[str] = field(default_factory=lambda: ["US500", "US30", "USTEC", "UK100", "DE40"])
-    crypto: List[str] = field(default_factory=lambda: ["BTCUSD", "ETHUSD", "LTCUSD", "XRPUSD"])
+    indices: List[str] = field(
+        default_factory=lambda: ["US500", "US30", "USTEC", "UK100", "DE40"]
+    )
+    crypto: List[str] = field(
+        default_factory=lambda: ["BTCUSD", "ETHUSD", "LTCUSD", "XRPUSD"]
+    )
 
     @property
     def all(self) -> List[str]:

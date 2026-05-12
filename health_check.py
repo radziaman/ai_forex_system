@@ -86,10 +86,10 @@ except Exception as e:
 
 # Infrastructure
 try:
-    from infrastructure.config import Config
-    check('infrastructure.config', lambda: True)
+    from infrastructure.config_v2 import AppConfig
+    check('infrastructure.config_v2', lambda: True)
 except Exception as e:
-    check('infrastructure.config', lambda: (_ for _ in ()).throw(e))
+    check('infrastructure.config_v2', lambda: (_ for _ in ()).throw(e))
 
 try:
     from infrastructure.secrets import Secrets

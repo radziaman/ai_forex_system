@@ -2,6 +2,7 @@
 AI-Backed Smart News/Sentiment/Alternative Data Event Avoidance (Enhancement #18).
 Auto-close positions pre-events, resume post-volatility, intelligent filtering.
 """
+
 import asyncio
 import time
 import numpy as np
@@ -14,6 +15,7 @@ from loguru import logger
 
 class EventType(str, Enum):
     """Economic event types."""
+
     NFP = "non_farm_payrols"
     CPI = "cpi_inflation"
     FOMC = "fed_rate_decision"
@@ -29,6 +31,7 @@ class EventType(str, Enum):
 
 class EventAction(str, Enum):
     """Actions to take for events."""
+
     CLOSE_ALL = "close_all"
     CLOSE_SYMBOL = "close_symbol"
     PAUSE_TRADING = "pause_trading"
@@ -41,6 +44,7 @@ class EventAction(str, Enum):
 @dataclass
 class EventData:
     """Economic/News event data."""
+
     event_id: str
     title: str
     event_type: EventType
@@ -57,6 +61,7 @@ class EventData:
 @dataclass
 class EventAvoidanceDecision:
     """Decision from AI event avoidance system."""
+
     should_act: bool = False
     action: EventAction = EventAction.MONITOR
     reason: str = ""
@@ -78,7 +83,14 @@ class SmartEventAvoidance:
 
     # High-impact events that require action
     HIGH_IMPACT_EVENTS = {
-        "NFP", "CPI", "FOMC", "ECB", "BOE", "BREXIT", "ELECTION", "CRISIS"
+        "NFP",
+        "CPI",
+        "FOMC",
+        "ECB",
+        "BOE",
+        "BREXIT",
+        "ELECTION",
+        "CRISIS",
     }
 
     # Symbols affected by currency
@@ -129,7 +141,9 @@ class SmartEventAvoidance:
         if now < self.paused_until:
             decision.should_act = True
             decision.action = EventAction.PAUSE_TRADING
-            decision.reason = f"Paused until {datetime.fromtimestamp(self.paused_until)}"
+            decision.reason = (
+                f"Paused until {datetime.fromtimestamp(self.paused_until)}"
+            )
             decision.pause_duration = int(self.paused_until - now)
             return decision
 
@@ -141,9 +155,15 @@ class SmartEventAvoidance:
                 # High-impact event approaching!
                 if event.impact in ["high", "high_impact"]:
                     decision.should_act = True
-                    decision.action = EventAction.CLOSE_ALL if event.event_type == EventType.CRISIS else EventAction.CLOSE_SYMBOL
+                    decision.action = (
+                        EventAction.CLOSE_ALL
+                        if event.event_type == EventType.CRISIS
+                        else EventAction.CLOSE_SYMBOL
+                    )
                     decision.reason = f"High-impact event in {int(time_to_event/60)}min: {event.title}"
-                    decision.symbols_affected = self._get_affected_symbols(event.currency)
+                    decision.symbols_affected = self._get_affected_symbols(
+                        event.currency
+                    )
                     decision.close_immediately = decision.symbols_affected
                     decision.pause_duration = self.post_event_resume
                     decision.confidence = 0.9
@@ -151,8 +171,7 @@ class SmartEventAvoidance:
 
         # Check if we recently had an event and should wait for volatility to settle
         recent_events = [
-            e for e in self.event_history
-            if now - e.timestamp < self.volatility_settle
+            e for e in self.event_history if now - e.timestamp < self.volatility_settle
         ]
 
         if recent_events:
@@ -173,7 +192,7 @@ class SmartEventAvoidance:
     async def _refresh_events(self, economic_calendar):
         """Refresh upcoming events from economic calendar."""
         try:
-            if hasattr(economic_calendar, 'get_upcoming_events'):
+            if hasattr(economic_calendar, "get_upcoming_events"):
                 raw_events = economic_calendar.get_upcoming_events(hours=48)
                 self.upcoming_events = []
 
@@ -183,13 +202,23 @@ class SmartEventAvoidance:
                         event = EventData(
                             event_id=f"evt_{int(time.time())}",
                             title=evt.get("title", "Unknown"),
-                            event_type=self._classify_event(evt.get("title", )),
+                            event_type=self._classify_event(
+                                evt.get(
+                                    "title",
+                                )
+                            ),
                             impact=impact,
                             timestamp=evt.get("timestamp", time.time()),
-                            currency=self._extract_currency(evt.get("title", )),
+                            currency=self._extract_currency(
+                                evt.get(
+                                    "title",
+                                )
+                            ),
                             volatile_seconds=3600 if impact == "high" else 1800,
                         )
-                        event.affected_symbols = self._get_affected_symbols(event.currency)
+                        event.affected_symbols = self._get_affected_symbols(
+                            event.currency
+                        )
                         self.upcoming_events.append(event)
 
         except Exception as e:
@@ -199,11 +228,19 @@ class SmartEventAvoidance:
         """Classify event type from title."""
         title_lower = title.lower()
 
-        if "nfp" in title_lower or "non-farm" in title_lower or "payroll" in title_lower:
+        if (
+            "nfp" in title_lower
+            or "non-farm" in title_lower
+            or "payroll" in title_lower
+        ):
             return EventType.NFP
         elif "cpi" in title_lower or "inflation" in title_lower:
             return EventType.CPI
-        elif "fomc" in title_lower or "fed" in title_lower or "federal reserve" in title_lower:
+        elif (
+            "fomc" in title_lower
+            or "fed" in title_lower
+            or "federal reserve" in title_lower
+        ):
             return EventType.FOMC
         elif "ecb" in title_lower or "european central" in title_lower:
             return EventType.ECB
@@ -213,7 +250,9 @@ class SmartEventAvoidance:
             return EventType.BREXIT
         elif "election" in title_lower or "vote" in title_lower:
             return EventType.ELECTION
-        elif "crisis" in title_lower or "crash" in title_lower or "panic" in title_lower:
+        elif (
+            "crisis" in title_lower or "crash" in title_lower or "panic" in title_lower
+        ):
             return EventType.CRISIS
         elif "high" in title_lower:
             return EventType.HIGH_IMPACT
@@ -266,20 +305,26 @@ class SmartEventAvoidance:
             await execution_engine.close_all_positions(decision.reason)
             result["trading_paused"] = True
             self.paused_until = time.time() + decision.pause_duration
-            result["pause_until"] = datetime.fromtimestamp(self.paused_until).isoformat()
+            result["pause_until"] = datetime.fromtimestamp(
+                self.paused_until
+            ).isoformat()
 
         elif decision.action == EventAction.CLOSE_SYMBOL:
             # Close positions for affected symbols
             positions = execution_engine.get_open_positions()
             for pos in positions:
                 if pos["symbol"] in decision.close_immediately:
-                    await execution_engine.close_position(pos["position_id"], decision.reason)
+                    await execution_engine.close_position(
+                        pos["position_id"], decision.reason
+                    )
                     result["positions_closed"].append(pos["symbol"])
 
         elif decision.action == EventAction.PAUSE_TRADING:
             self.paused_until = time.time() + decision.pause_duration
             result["trading_paused"] = True
-            result["pause_until"] = datetime.fromtimestamp(self.paused_until).isoformat()
+            result["pause_until"] = datetime.fromtimestamp(
+                self.paused_until
+            ).isoformat()
 
         elif decision.action == EventAction.REDUCE_SIZE:
             self.size_reduction_until = time.time() + 1800  # 30 min
@@ -337,7 +382,11 @@ class SmartEventAvoidance:
             return {"action": "HOLD", "reason": "insufficient_data"}
 
         recent = sentiment_history[-5:]
-        older = sentiment_history[-10:-5] if len(sentiment_history) >= 10 else sentiment_history[:-5]
+        older = (
+            sentiment_history[-10:-5]
+            if len(sentiment_history) >= 10
+            else sentiment_history[:-5]
+        )
 
         if not older:
             return {"action": "HOLD", "reason": "need_more_data"}
@@ -371,9 +420,8 @@ class SmartEventAvoidance:
             "paused": time.time() < self.paused_until,
             "size_reduction_active": time.time() < self.size_reduction_until,
             "size_multiplier": self.get_position_size_multiplier(),
-            "upcoming_high_impact_events": len([
-                e for e in self.upcoming_events
-                if e.impact in ["high", "high_impact"]
-            ]),
+            "upcoming_high_impact_events": len(
+                [e for e in self.upcoming_events if e.impact in ["high", "high_impact"]]
+            ),
             "recent_events_count": len(self.event_history),
         }

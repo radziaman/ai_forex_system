@@ -1,4 +1,5 @@
 """Execution Engine: executes TradeDecision. Makes no decisions."""
+
 import asyncio
 from typing import Optional, Dict, List
 from loguru import logger
@@ -10,19 +11,25 @@ from infrastructure.event_bus import get_event_bus, EventType
 from services import TradeDecision, ExecutionResult
 from execution.engine import ExecutionEngine
 from api.provider_factory import create_execution_provider
-from api.base import PriceTick
 from data.data_manager import SYMBOLS
 
 
 class ExecutionService(TradingService):
     """Dumb executor: receives decisions, sends orders. No deciding."""
 
-    def __init__(self, config: AppConfig, secrets: Secrets, data_pipeline,
-                 initial_balance: float = 100_000.0):
+    def __init__(
+        self,
+        config: AppConfig,
+        secrets: Secrets,
+        data_pipeline,
+        risk_manager=None,
+        initial_balance: float = 100_000.0,
+    ):
         super().__init__("execution_service")
         self.config = config
         self.secrets = secrets
         self.data_pipeline = data_pipeline
+        self._risk_manager = risk_manager
         self.initial_balance = initial_balance
         self.ctrader = None
         self.data_provider = None
@@ -35,7 +42,9 @@ class ExecutionService(TradingService):
         # Determine mode: live broker or paper simulation
         engine_mode = "LIVE" if not self.secrets.is_demo else "PAPER"
         self.engine = ExecutionEngine(
-            self.ctrader, None, self.data_pipeline.data_manager,
+            self.ctrader,
+            self._risk_manager,
+            self.data_pipeline.data_manager,
             initial_balance=self.initial_balance,
             mode=engine_mode,
         )
@@ -45,12 +54,19 @@ class ExecutionService(TradingService):
 
         # Attempt broker connection
         connected = await self.ctrader.start()
-        if connected and hasattr(self.ctrader, 'is_connected') and self.ctrader.is_connected():
-            logger.info(f"ExecutionService: cTrader LIVE — streaming {len(SYMBOLS)} symbols")
+        if (
+            connected
+            and hasattr(self.ctrader, "is_connected")
+            and self.ctrader.is_connected()
+        ):
+            logger.info(
+                f"ExecutionService: cTrader LIVE — streaming {len(SYMBOLS)} symbols"
+            )
             # Subscribe to live market data for all symbols
-            raw = getattr(self.ctrader, 'raw', None) or self.ctrader
-            if hasattr(raw, 'subscribe_depth'):
+            raw = getattr(self.ctrader, "raw", None) or self.ctrader
+            if hasattr(raw, "subscribe_depth"):
                 from api.ctrader_client import SYMBOL_MAP
+
                 subscribed = 0
                 for sym in SYMBOLS:
                     sym_id = SYMBOL_MAP.get(sym)
@@ -58,13 +74,17 @@ class ExecutionService(TradingService):
                         success = await raw.subscribe_depth(sym_id)
                         if success:
                             subscribed += 1
-                logger.info(f"ExecutionService: subscribed to {subscribed}/{len(SYMBOLS)} symbols for live ticks")
+                logger.info(
+                    f"ExecutionService: subscribed to {subscribed}/{len(SYMBOLS)} symbols for live ticks"
+                )
         else:
-            logger.warning("ExecutionService: cTrader not connected (running on historical data)")
+            logger.warning(
+                "ExecutionService: cTrader not connected (running on historical data)"
+            )
         self._running = True
 
     async def stop(self) -> None:
-        if self.ctrader and hasattr(self.ctrader, 'disconnect'):
+        if self.ctrader and hasattr(self.ctrader, "disconnect"):
             await self.ctrader.disconnect()
         self._running = False
 
@@ -85,8 +105,12 @@ class ExecutionService(TradingService):
         if trade:
             await self.event_bus.emit(
                 EventType.POSITION_OPENED,
-                {"symbol": decision.signal.symbol, "volume": decision.volume,
-                 "entry": trade.entry_price, "position_id": trade.position_id},
+                {
+                    "symbol": decision.signal.symbol,
+                    "volume": decision.volume,
+                    "entry": trade.entry_price,
+                    "position_id": trade.position_id,
+                },
                 source="execution_service",
             )
             return ExecutionResult(

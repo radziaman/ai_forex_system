@@ -12,6 +12,7 @@ Usage:
   python -m src.validation.run_validation --regime-train
   python -m src.validation.run_validation --all
 """
+
 import argparse
 import json
 import sys
@@ -30,8 +31,9 @@ from backtest.vectorized_backtester import VectorizedBacktester
 
 def load_test_data(symbol: str = "EURUSD", days: int = 365 * 3) -> dict:
     """Load test data from Dukascopy for validation."""
-    from data.dukascopy_provider import DukascopyProvider
-    provider = DukascopyProvider(cache=True)
+    from data.dukascopy_provider import DukascopyDataProvider
+
+    provider = DukascopyDataProvider(cache=True)
     try:
         ohlcv = provider.fetch_ohlcv(symbol, "1h", days=days)
         if not ohlcv or len(ohlcv) < 100:
@@ -127,18 +129,28 @@ def run_backtest(prices: np.ndarray, atr: np.ndarray):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="RTS: AI Moneybot System Elite - Validation Suite")
-    parser.add_argument("--walk-forward", action="store_true", help="Run walk-forward validation")
+    parser = argparse.ArgumentParser(
+        description="RTS: AI Moneybot System Elite - Validation Suite"
+    )
+    parser.add_argument(
+        "--walk-forward", action="store_true", help="Run walk-forward validation"
+    )
     parser.add_argument("--mc-test", action="store_true", help="Run Monte Carlo test")
-    parser.add_argument("--bt-sensitivity", action="store_true", help="Run backtest sensitivity")
+    parser.add_argument(
+        "--bt-sensitivity", action="store_true", help="Run backtest sensitivity"
+    )
     parser.add_argument("--all", action="store_true", help="Run all validations")
     parser.add_argument("--symbol", default="EURUSD", help="Symbol for test data")
     parser.add_argument("--days", type=int, default=365 * 3, help="Days of test data")
     parser.add_argument("--folds", type=int, default=6, help="Walk-forward folds")
-    parser.add_argument("--output", default="data/validation_results.json", help="Output file")
+    parser.add_argument(
+        "--output", default="data/validation_results.json", help="Output file"
+    )
     args = parser.parse_args()
 
-    should_run_all = args.all or not (args.walk_forward or args.mc_test or args.bt_sensitivity)
+    should_run_all = args.all or not (
+        args.walk_forward or args.mc_test or args.bt_sensitivity
+    )
     data = load_test_data(args.symbol, args.days)
     results = {}
 

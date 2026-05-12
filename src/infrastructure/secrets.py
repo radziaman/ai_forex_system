@@ -1,4 +1,5 @@
 """Secrets management — loads credentials from environment variables, never git-tracked files."""
+
 import os
 from pathlib import Path
 from typing import Optional
@@ -30,7 +31,11 @@ class Secrets:
             # Project root is ../../ (2 levels up)
             module_dir = os.path.dirname(os.path.abspath(__file__))
             project_root = os.path.dirname(os.path.dirname(module_dir))
-            for p in [os.path.join(os.getcwd(), '.env'), os.path.join(project_root, '.env'), '.env']:
+            for p in [
+                os.path.join(os.getcwd(), ".env"),
+                os.path.join(project_root, ".env"),
+                ".env",
+            ]:
                 if os.path.exists(p):
                     env_file = p
                     break
@@ -86,22 +91,6 @@ class Secrets:
     @property
     def provider(self) -> str:
         return os.getenv("TRADING_PROVIDER", "ctrader").lower()
-
-    @property
-    def fix_host(self) -> str:
-        return os.getenv("CTRADER_FIX_HOST", "live-uk-eqx-01.p.c-trader.com")
-
-    @property
-    def fix_sender_comp_id(self) -> str:
-        return os.getenv("CTRADER_FIX_SENDER_COMP_ID", "")
-
-    @property
-    def fix_password(self) -> str:
-        return os.getenv("CTRADER_FIX_PASSWORD", "")
-
-    @property
-    def fix_account_id(self) -> str:
-        return os.getenv("CTRADER_FIX_ACCOUNT_ID", "")
 
     @property
     def twitter_bearer_token(self) -> str:

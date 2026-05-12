@@ -2,6 +2,7 @@
 Regime-Dependent Training Pipeline.
 Trains separate expert models per HMM regime for specialized expertise.
 """
+
 import numpy as np
 import pandas as pd
 import os
@@ -22,9 +23,13 @@ class RegimeModelBundle:
     lstm_cnn: Optional[LSTMCNNHybrid] = None
     classifier: Optional[ProfitabilityClassifier] = None
     feature_pipeline: Optional[FeaturePipeline] = None
-    train_metrics: Dict = field(default_factory=lambda: {
-        "mse": 0.0, "accuracy": 0.0, "n_samples": 0,
-    })
+    train_metrics: Dict = field(
+        default_factory=lambda: {
+            "mse": 0.0,
+            "accuracy": 0.0,
+            "n_samples": 0,
+        }
+    )
     creation_timestamp: float = 0.0
 
 
@@ -48,20 +53,20 @@ class RegimeTrainer:
         for regime in HMMRegimeDetector.REGIME_NAMES[:n_regimes]:
             self.models[regime] = RegimeModelBundle(regime=regime)
 
-    def assign_regime_labels(
-        self, df: pd.DataFrame
-    ) -> Tuple[pd.DataFrame, np.ndarray]:
+    def assign_regime_labels(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, np.ndarray]:
         self.regime_detector.fit(df)
         features = self.regime_detector._extract_features(df)
         if self.regime_detector.model is not None:
             states = self.regime_detector.model.predict(features)
             mean_returns = self.regime_detector.model.means_[:, 0]
             state_order = np.argsort(mean_returns)
-            regime_map = {s: HMMRegimeDetector.REGIME_NAMES[i] for i, s in enumerate(state_order)}
+            regime_map = {
+                s: HMMRegimeDetector.REGIME_NAMES[i] for i, s in enumerate(state_order)
+            }
             regimes = np.array([regime_map.get(s, "ranging") for s in states])
         else:
             regimes = np.array(["ranging"] * len(features))
-        return df.iloc[-len(regimes):].copy(), regimes
+        return df.iloc[-len(regimes) :].copy(), regimes
 
     def train_regime_models(
         self,
@@ -75,11 +80,13 @@ class RegimeTrainer:
         df_labeled, regimes = self.assign_regime_labels(df)
         results = {}
 
-        for regime in HMMRegimeDetector.REGIME_NAMES[:self.n_regimes]:
+        for regime in HMMRegimeDetector.REGIME_NAMES[: self.n_regimes]:
             mask = regimes == regime
             n_found = int(np.sum(mask))
             if n_found < self.min_samples:
-                logger.info(f"Regime '{regime}': only {n_found} samples (need {self.min_samples}), skipping")
+                logger.info(
+                    f"Regime '{regime}': only {n_found} samples (need {self.min_samples}), skipping"
+                )
                 continue
 
             logger.info(f"Training models for regime '{regime}' ({n_found} samples)")
@@ -89,7 +96,10 @@ class RegimeTrainer:
             end_idx = min(len(df_labeled), regime_idx[-1] + 1)
             regime_df = df_labeled.iloc[start_idx:end_idx]
 
-            regime_dfs = {tf: regime_df if tf == primary_tf else dfs.get(tf, pd.DataFrame()) for tf in dfs}
+            regime_dfs = {
+                tf: regime_df if tf == primary_tf else dfs.get(tf, pd.DataFrame())
+                for tf in dfs
+            }
 
             fp = FeaturePipeline(lookback=self.lookback, timeframes=list(dfs.keys()))
             X, y = fp.fit_transform(regime_dfs)
@@ -107,15 +117,25 @@ class RegimeTrainer:
             lstm_cnn = LSTMCNNHybrid(lookback=self.lookback, n_features=n_features)
             lstm_cnn.build()
             hist = lstm_cnn.train(
-                X_train, y_train, X_val, y_val,
-                epochs=epochs, batch_size=batch_size,
+                X_train,
+                y_train,
+                X_val,
+                y_val,
+                epochs=epochs,
+                batch_size=batch_size,
             )
 
-            classifier = ProfitabilityClassifier(lookback=self.lookback, n_features=n_features)
+            classifier = ProfitabilityClassifier(
+                lookback=self.lookback, n_features=n_features
+            )
             classifier.build()
             classifier.train(
-                X_train, prices_train, X_val, prices_val,
-                epochs=epochs, batch_size=batch_size,
+                X_train,
+                prices_train,
+                X_val,
+                prices_val,
+                epochs=epochs,
+                batch_size=batch_size,
             )
 
             bundle = RegimeModelBundle(
@@ -125,9 +145,11 @@ class RegimeTrainer:
                 feature_pipeline=fp,
                 train_metrics={
                     "mse": float(min(hist.history.get("val_loss", [0]))),
-                    "accuracy": float(max(
-                        hist.history.get("val_accuracy", [0])
-                    )) if hist and hist.history.get("val_accuracy") else 0.0,
+                    "accuracy": (
+                        float(max(hist.history.get("val_accuracy", [0])))
+                        if hist and hist.history.get("val_accuracy")
+                        else 0.0
+                    ),
                     "n_samples": n_found,
                 },
                 creation_timestamp=pd.Timestamp.now().timestamp(),
@@ -136,7 +158,9 @@ class RegimeTrainer:
             self._save_regime_models(regime, bundle)
 
             results[regime] = bundle.train_metrics
-            logger.info(f"Regime '{regime}' trained: MSE={bundle.train_metrics['mse']:.6f}")
+            logger.info(
+                f"Regime '{regime}' trained: MSE={bundle.train_metrics['mse']:.6f}"
+            )
 
         return results
 
@@ -150,7 +174,11 @@ class RegimeTrainer:
         if bundle is None or bundle.lstm_cnn is None:
             return 0.0, 0.0
         price_pred = bundle.lstm_cnn.predict(X)
-        direction_prob = bundle.classifier.predict_proba(X) if bundle.classifier else np.array([[0.5]])
+        direction_prob = (
+            bundle.classifier.predict_proba(X)
+            if bundle.classifier
+            else np.array([[0.5]])
+        )
         return float(price_pred[0, 0]), float(direction_prob[0, 0])
 
     def get_regime_ensemble_predictions(
@@ -164,7 +192,11 @@ class RegimeTrainer:
             if bundle.lstm_cnn is None:
                 continue
             price_pred = bundle.lstm_cnn.predict(X)
-            direction_prob = bundle.classifier.predict_proba(X) if bundle.classifier else np.array([[0.5]])
+            direction_prob = (
+                bundle.classifier.predict_proba(X)
+                if bundle.classifier
+                else np.array([[0.5]])
+            )
             results[regime] = (float(price_pred[0, 0]), float(direction_prob[0, 0]))
         return results
 
@@ -180,7 +212,7 @@ class RegimeTrainer:
 
     def load_regime_models(self) -> Dict[str, bool]:
         loaded = {}
-        for regime in HMMRegimeDetector.REGIME_NAMES[:self.n_regimes]:
+        for regime in HMMRegimeDetector.REGIME_NAMES[: self.n_regimes]:
             regime_dir = os.path.join(self.model_dir, regime)
             lstm_path = os.path.join(regime_dir, "lstm_cnn.keras")
             clf_path = os.path.join(regime_dir, "classifier.keras")
@@ -190,7 +222,11 @@ class RegimeTrainer:
                 continue
             try:
                 lstm = LSTMCNNHybrid.load(lstm_path)
-                clf = ProfitabilityClassifier.load(clf_path) if os.path.exists(clf_path) else None
+                clf = (
+                    ProfitabilityClassifier.load(clf_path)
+                    if os.path.exists(clf_path)
+                    else None
+                )
                 metrics = {}
                 if os.path.exists(metrics_path):
                     with open(metrics_path) as f:

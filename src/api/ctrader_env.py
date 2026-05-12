@@ -52,8 +52,8 @@ class cTraderEnvClient:
             with open(env_file) as f:
                 for line in f:
                     line = line.strip()
-                    if line and not line.startswith('#'):
-                        key, value = line.split('=', 1)
+                    if line and not line.startswith("#"):
+                        key, value = line.split("=", 1)
                         os.environ[key.strip()] = value.strip()
 
     def connect(self):
@@ -78,7 +78,7 @@ class cTraderEnvClient:
     def send_message(self, payload_type, message):
         """Send a protobuf message with length prefix."""
         payload = message.SerializeToString()
-        header = len(payload).to_bytes(4, byteorder='big')
+        header = len(payload).to_bytes(4, byteorder="big")
         proto_msg = ProtoMessage(payloadType=payload_type, payload=payload)
         full_msg = header + proto_msg.SerializeToString()
 
@@ -96,7 +96,7 @@ class cTraderEnvClient:
             if not header:
                 return None, None, "Connection closed"
 
-            msg_len = int.from_bytes(header, byteorder='big')
+            msg_len = int.from_bytes(header, byteorder="big")
             data = b""
             while len(data) < msg_len:
                 chunk = self.sock.recv(msg_len - len(data))
@@ -192,4 +192,3 @@ if __name__ == "__main__":
         client.close()
     else:
         print(f"✗ Connection failed: {client.last_error}")
-

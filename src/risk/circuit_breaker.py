@@ -3,10 +3,10 @@ Flash Crash Detection & Circuit Breakers.
 Prevents trading during disorderly market conditions to avoid catastrophic losses.
 Enhanced with API recovery, confidence thresholds, and graceful degradation modes.
 """
+
 import numpy as np
 import time
-import asyncio
-from typing import Dict, List, Tuple, Optional, Callable
+from typing import Dict, List, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
 from loguru import logger
@@ -14,6 +14,7 @@ from loguru import logger
 
 class DegradationMode(Enum):
     """System degradation modes for graceful degradation."""
+
     NORMAL = "normal"
     DEGRADED = "degraded"  # Some features disabled
     MINIMAL = "minimal"  # Only essential features
@@ -71,7 +72,9 @@ class CircuitBreaker:
         self.volatility_history: Dict[str, List[float]] = {}
 
         # API health tracking
-        self.api_health: Dict[str, Dict] = {}  # api_name -> {status, last_success, failures}
+        self.api_health: Dict[str, Dict] = (
+            {}
+        )  # api_name -> {status, last_success, failures}
         self.current_degradation_mode: DegradationMode = DegradationMode.NORMAL
         self._degradation_history: List[Tuple[float, DegradationMode, str]] = []
 
@@ -93,10 +96,10 @@ class CircuitBreaker:
         snapshot.confidence_threshold = self.current_confidence_threshold
         self._last_snapshot = snapshot
 
-        bid = tick.get("bid",0)
-        ask = tick.get("ask",0)
+        bid = tick.get("bid", 0)
+        ask = tick.get("ask", 0)
         price = tick.get("price", (bid + ask) / 2.0)
-        volume = tick.get("volume",0)
+        volume = tick.get("volume", 0)
         spread = ask - bid if ask > bid else 0.0
 
         # Initialize history if needed
@@ -111,12 +114,17 @@ class CircuitBreaker:
         self.spread_history[symbol].append(spread)
         self.volume_history[symbol].append(volume)
 
-        # Trim histories
+        # Trim histories (mutate in-place to avoid memory leak)
         max_len = max(100, self.volatility_lookback * 2)
-        for hist in [self.price_history[symbol], self.spread_history[symbol],
-                     self.volume_history[symbol], self.volatility_history[symbol]]:
+        histories = [
+            self.price_history[symbol],
+            self.spread_history[symbol],
+            self.volume_history[symbol],
+            self.volatility_history[symbol],
+        ]
+        for hist in histories:
             if len(hist) > max_len:
-                hist = hist[-max_len:]
+                hist[:] = hist[-max_len:]
 
         # Update normal levels (rolling average, excluding extremes)
         self._update_normal_levels(symbol)
@@ -184,19 +192,20 @@ class CircuitBreaker:
             if self.api_health[api_name]["failures"] >= self.max_api_retries:
                 self.api_health[api_name]["status"] = "unhealthy"
                 self._update_degradation(
-                    DegradationMode.DEGRADED,
-                    f"api_{api_name}_unhealthy"
+                    DegradationMode.DEGRADED, f"api_{api_name}_unhealthy"
                 )
 
     def _update_degradation(self, mode: DegradationMode, reason: str):
         """Update system degradation mode."""
-        if mode.value == "halted":
+        if mode == DegradationMode.HALTED:
             self.current_degradation_mode = DegradationMode.HALTED
-        elif mode.value == "degraded" and self.current_degradation_mode == DegradationMode.NORMAL:
-            self.current_degradation_mode = DegradationMode.DEGRADED
-            # Increase confidence threshold in degraded mode
-            self.current_confidence_threshold = min(self.base_confidence_threshold * 1.5, 0.95)
-        elif mode.value == "normal":
+        elif mode == DegradationMode.DEGRADED:
+            if self.current_degradation_mode == DegradationMode.NORMAL:
+                self.current_degradation_mode = DegradationMode.DEGRADED
+            self.current_confidence_threshold = min(
+                self.base_confidence_threshold * 1.5, 0.95
+            )
+        elif mode == DegradationMode.NORMAL:
             self.current_degradation_mode = DegradationMode.NORMAL
             self.current_confidence_threshold = self.base_confidence_threshold
 
@@ -207,20 +216,32 @@ class CircuitBreaker:
         logger.warning(f"Degradation mode: {mode.value} - {reason}")
 
     def _attempt_recovery(self):
-        """Attempt to recover from degraded state."""
+        """Attempt to recover from degraded or halted state."""
         all_healthy = all(
-            info["status"] == "healthy"
-            for info in self.api_health.values()
+            info["status"] == "healthy" for info in self.api_health.values()
         )
+        if not all_healthy:
+            return
 
-        if all_healthy and self.current_degradation_mode != DegradationMode.HALTED:
-            # Check if we've been healthy for long enough
-            recent_history = [h for h in self._degradation_history if time.time() - h[0] < 300]
-            if not recent_history or all(h[1] == DegradationMode.NORMAL for h in recent_history):
-                self._update_degradation(DegradationMode.NORMAL, "recovery_success")
-                logger.info("System recovered from degraded state")
+        if self.current_degradation_mode == DegradationMode.HALTED:
+            elapsed = time.time() - max(self.last_halt_time.values(), default=0)
+            if elapsed < self.cooldown_seconds * 2:
+                return
+            self.force_resume(list(self.last_halt_time.keys())[0])
 
-    def _check_price_velocity(self, symbol: str, snapshot: MarketStressSnapshot) -> Tuple[bool, str]:
+        recent_history = [
+            h for h in self._degradation_history if time.time() - h[0] < 300
+        ]
+        if not recent_history or all(
+            h[1] in (DegradationMode.NORMAL, DegradationMode.DEGRADED)
+            for h in recent_history
+        ):
+            self._update_degradation(DegradationMode.NORMAL, "recovery_success")
+            logger.info("System recovered from degraded state")
+
+    def _check_price_velocity(
+        self, symbol: str, snapshot: MarketStressSnapshot
+    ) -> Tuple[bool, str]:
         prices = self.price_history[symbol]
         if len(prices) < 2:
             return False, ""
@@ -236,13 +257,17 @@ class CircuitBreaker:
         if max_return > self.price_velocity_threshold:
             reason = f"flash_crash_velocity_{max_return:.4f}"
             snapshot.stress_level = "extreme"
-            logger.error(f"CIRCUIT BREAKER: {symbol} flash crash detected! Velocity={max_return:.4f}")
+            logger.error(
+                f"CIRCUIT BREAKER: {symbol} flash crash detected! Velocity={max_return:.4f}"
+            )
             self.last_halt_time[symbol] = time.time()
             return True, reason
 
         return False, ""
 
-    def _check_liquidity(self, symbol: str, spread: float, snapshot: MarketStressSnapshot) -> Tuple[bool, str]:
+    def _check_liquidity(
+        self, symbol: str, spread: float, snapshot: MarketStressSnapshot
+    ) -> Tuple[bool, str]:
         normal = self.normal_spreads.get(symbol, spread)
         if normal <= 0:
             normal = spread
@@ -253,13 +278,17 @@ class CircuitBreaker:
         if ratio > self.spread_multiplier_threshold:
             reason = f"liquidity_drought_spread_{ratio:.1f}x_normal"
             snapshot.stress_level = "high" if ratio > 10 else "elevated"
-            logger.warning(f"CIRCUIT BREAKER: {symbol} liquidity drought! Spread {ratio:.1f}x normal")
+            logger.warning(
+                f"CIRCUIT BREAKER: {symbol} liquidity drought! Spread {ratio:.1f}x normal"
+            )
             self.last_halt_time[symbol] = time.time()
             return True, reason
 
         return False, ""
 
-    def _check_volume_anomaly(self, symbol: str, volume: float, snapshot: MarketStressSnapshot) -> Tuple[bool, str]:
+    def _check_volume_anomaly(
+        self, symbol: str, volume: float, snapshot: MarketStressSnapshot
+    ) -> Tuple[bool, str]:
         normal = self.normal_volume.get(symbol, volume)
         if normal <= 0:
             normal = volume
@@ -270,18 +299,22 @@ class CircuitBreaker:
         if ratio > self.volume_spike_multiplier:
             reason = f"volume_anomaly_{ratio:.1f}x_normal"
             snapshot.stress_level = "high"
-            logger.warning(f"CIRCUIT BREAKER: {symbol} volume anomaly! {ratio:.1f}x normal")
+            logger.warning(
+                f"CIRCUIT BREAKER: {symbol} volume anomaly! {ratio:.1f}x normal"
+            )
             self.last_halt_time[symbol] = time.time()
             return True, reason
 
         return False, ""
 
-    def _check_volatility_spike(self, symbol: str, snapshot: MarketStressSnapshot) -> Tuple[bool, str]:
+    def _check_volatility_spike(
+        self, symbol: str, snapshot: MarketStressSnapshot
+    ) -> Tuple[bool, str]:
         prices = self.price_history[symbol]
         if len(prices) < self.volatility_lookback + 1:
             return False, ""
 
-        recent = prices[-self.volatility_lookback:]
+        recent = prices[-self.volatility_lookback :]
         returns = np.diff(recent) / recent[:-1]
         current_vol = np.std(returns)
 
@@ -300,7 +333,9 @@ class CircuitBreaker:
         if vol_ratio > 5.0:
             reason = f"volatility_spike_{vol_ratio:.1f}x_normal"
             snapshot.stress_level = "extreme"
-            logger.error(f"CIRCUIT BREAKER: {symbol} volatility spike! {vol_ratio:.1f}x normal")
+            logger.error(
+                f"CIRCUIT BREAKER: {symbol} volatility spike! {vol_ratio:.1f}x normal"
+            )
             self.last_halt_time[symbol] = time.time()
             return True, reason
 
@@ -316,11 +351,21 @@ class CircuitBreaker:
         if len(volumes) > 20:
             self.normal_volume[symbol] = np.median(volumes[-50:])
 
-    def force_resume(self, symbol: str):
-        """Manually resume trading after halt."""
-        if symbol in self.last_halt_time:
-            del self.last_halt_time[symbol]
-        logger.info(f"CIRCUIT BREAKER: {symbol} manually resumed")
+    def force_resume(self, symbol: str = ""):
+        """Manually resume trading after halt. If symbol empty, resumes all."""
+        if symbol:
+            if symbol in self.last_halt_time:
+                del self.last_halt_time[symbol]
+            logger.info(f"CIRCUIT BREAKER: {symbol} manually resumed")
+        else:
+            self.last_halt_time.clear()
+            logger.info("CIRCUIT BREAKER: all symbols resumed")
+        if self.current_degradation_mode in (
+            DegradationMode.HALTED,
+            DegradationMode.DEGRADED,
+        ):
+            self.current_degradation_mode = DegradationMode.NORMAL
+            self.current_confidence_threshold = self.base_confidence_threshold
 
     def get_stress_summary(self) -> Dict:
         """Get summary of market stress across all symbols."""
@@ -336,4 +381,4 @@ class CircuitBreaker:
 
     def get_snapshot(self):
         """Return last market health snapshot for dashboard."""
-        return getattr(self, '_last_snapshot', MarketStressSnapshot())
+        return getattr(self, "_last_snapshot", MarketStressSnapshot())

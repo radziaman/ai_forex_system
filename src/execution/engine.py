@@ -24,8 +24,14 @@ class TradeRecord:
 
 
 class ExecutionEngine:
-    def __init__(self, ctrader_client, risk_manager, data_manager,
-                 initial_balance: float = 100000.0, mode: str = "PAPER"):
+    def __init__(
+        self,
+        ctrader_client,
+        risk_manager,
+        data_manager,
+        initial_balance: float = 100000.0,
+        mode: str = "PAPER",
+    ):
         self.client = ctrader_client
         self.risk = risk_manager
         self.data = data_manager
@@ -73,7 +79,9 @@ class ExecutionEngine:
         except Exception:
             return 0.0
 
-    def _pnl_usd(self, entry: float, exit: float, direction: str, volume: float, symbol: str) -> float:
+    def _pnl_usd(
+        self, entry: float, exit: float, direction: str, volume: float, symbol: str
+    ) -> float:
         if exit == entry or exit == 0 or entry == 0:
             return 0.0
         mult = 1 if direction == "BUY" else -1
@@ -93,7 +101,9 @@ class ExecutionEngine:
             return round(diff * gbpusd, 2)
         return round(diff, 2)
 
-    async def open_position(self, symbol, direction, volume, sl, tp, reason="AI signal"):
+    async def open_position(
+        self, symbol, direction, volume, sl, tp, reason="AI signal"
+    ):
         if self.risk and self.risk.kill_switch_triggered:
             return None
         if self.risk and self.risk.mode == "PAPER":
@@ -102,24 +112,36 @@ class ExecutionEngine:
         if price <= 0:
             price = self._get_default_price(symbol)
         order = TradeOrder(
-            symbol=symbol, symbol_id=self._get_symbol_id(symbol),
+            symbol=symbol,
+            symbol_id=self._get_symbol_id(symbol),
             side="BUY" if direction == "BUY" else "SELL",
-            order_type="MARKET", volume=max(int(volume), 1),
-            price=price, sl=sl, tp=tp,
+            order_type="MARKET",
+            volume=max(int(volume), 1),
+            price=price,
+            sl=sl,
+            tp=tp,
         )
         try:
             result = await self.client.place_order(order)
             if result and result.status == "FILLED":
                 self._position_counter += 1
                 trade = TradeRecord(
-                    timestamp=time.time(), symbol=symbol, direction=direction,
-                    volume=volume, entry_price=result.filled_price or price,
-                    sl=sl, tp=tp, status="OPEN", reason=reason,
+                    timestamp=time.time(),
+                    symbol=symbol,
+                    direction=direction,
+                    volume=volume,
+                    entry_price=result.filled_price or price,
+                    sl=sl,
+                    tp=tp,
+                    status="OPEN",
+                    reason=reason,
                     position_id=self._position_counter,
                 )
                 self.open_positions[trade.position_id] = trade
                 self.total_trades += 1
-                logger.success(f"OPENED: {direction} {volume:.0f} {symbol} @ {trade.entry_price:.5f}")
+                logger.success(
+                    f"OPENED: {direction} {volume:.0f} {symbol} @ {trade.entry_price:.5f}"
+                )
                 return trade
         except Exception as e:
             logger.error(f"Order error: {e}")
@@ -129,35 +151,55 @@ class ExecutionEngine:
         price = self._live_price(symbol) or self._get_default_price(symbol)
         self._position_counter += 1
         trade = TradeRecord(
-            timestamp=time.time(), symbol=symbol, direction=direction,
-            volume=volume, entry_price=price, sl=sl, tp=tp,
-            status="OPEN", reason=reason, position_id=self._position_counter,
+            timestamp=time.time(),
+            symbol=symbol,
+            direction=direction,
+            volume=volume,
+            entry_price=price,
+            sl=sl,
+            tp=tp,
+            status="OPEN",
+            reason=reason,
+            position_id=self._position_counter,
         )
         self.open_positions[trade.position_id] = trade
         self.total_trades += 1
         logger.info(f"[PAPER] OPENED: {direction} {volume:.0f} {symbol} @ {price:.5f}")
         return trade
 
-    async def close_position(self, position_id, reason="AI close", exit_price: float = None):
+    async def close_position(
+        self, position_id, reason="AI close", exit_price: float = None
+    ):
         if position_id not in self.open_positions:
             return False
         trade = self.open_positions[position_id]
         if exit_price is None or exit_price <= 0:
             exit_price = self._live_price(trade.symbol) or trade.entry_price
-        pnl = self._pnl_usd(trade.entry_price, exit_price, trade.direction, trade.volume, trade.symbol)
+        pnl = self._pnl_usd(
+            trade.entry_price, exit_price, trade.direction, trade.volume, trade.symbol
+        )
         if self.risk and self.risk.mode == "PAPER":
             return self._simulate_close(trade, reason, exit_price, pnl)
         close_side = "SELL" if trade.direction == "BUY" else "BUY"
         order = TradeOrder(
-            symbol=trade.symbol, symbol_id=self._get_symbol_id(trade.symbol),
-            side=close_side, order_type="MARKET",
-            volume=int(trade.volume), position_id=position_id,
+            symbol=trade.symbol,
+            symbol_id=self._get_symbol_id(trade.symbol),
+            side=close_side,
+            order_type="MARKET",
+            volume=int(trade.volume),
+            position_id=position_id,
         )
         try:
             result = await self.client.place_order(order)
             if result and result.status == "FILLED":
                 exit_price = result.filled_price or exit_price
-                pnl = self._pnl_usd(trade.entry_price, exit_price, trade.direction, trade.volume, trade.symbol)
+                pnl = self._pnl_usd(
+                    trade.entry_price,
+                    exit_price,
+                    trade.direction,
+                    trade.volume,
+                    trade.symbol,
+                )
                 self._finalize_close(trade, exit_price, pnl, reason)
                 return True
         except Exception as e:
@@ -189,8 +231,11 @@ class ExecutionEngine:
         if self.data is not None:
             try:
                 self.data.update_tick(
-                    depth.symbol, depth.bid, depth.ask,
-                    getattr(depth, 'volume', 0), getattr(depth, 'timestamp', 0),
+                    depth.symbol,
+                    depth.bid,
+                    depth.ask,
+                    getattr(depth, "volume", 0),
+                    getattr(depth, "timestamp", 0),
                 )
             except Exception:
                 pass
@@ -221,15 +266,21 @@ class ExecutionEngine:
     async def get_account_info(self):
         if self.mode == "LIVE" and self.client is not None:
             try:
-                if hasattr(self.client, 'get_account_info') and callable(self.client.get_account_info):
-                    acc = await self.client.get_account_info() if asyncio.iscoroutinefunction(self.client.get_account_info) else self.client.get_account_info()
+                if hasattr(self.client, "get_account_info") and callable(
+                    self.client.get_account_info
+                ):
+                    acc = (
+                        await self.client.get_account_info()
+                        if asyncio.iscoroutinefunction(self.client.get_account_info)
+                        else self.client.get_account_info()
+                    )
                     if acc:
                         return {
-                            "balance": getattr(acc, 'balance', self._balance),
-                            "equity": getattr(acc, 'equity', self._balance),
-                            "margin": getattr(acc, 'margin', 0),
-                            "free_margin": getattr(acc, 'free_margin', self._balance),
-                            "currency": getattr(acc, 'currency', 'USD'),
+                            "balance": getattr(acc, "balance", self._balance),
+                            "equity": getattr(acc, "equity", self._balance),
+                            "margin": getattr(acc, "margin", 0),
+                            "free_margin": getattr(acc, "free_margin", self._balance),
+                            "currency": getattr(acc, "currency", "USD"),
                         }
             except Exception as e:
                 logger.warning(f"Broker get_account_info failed: {e}")
@@ -237,7 +288,13 @@ class ExecutionEngine:
         for trade in self.open_positions.values():
             price = self._live_price(trade.symbol)
             if price > 0:
-                unrealized += self._pnl_usd(trade.entry_price, price, trade.direction, trade.volume, trade.symbol)
+                unrealized += self._pnl_usd(
+                    trade.entry_price,
+                    price,
+                    trade.direction,
+                    trade.volume,
+                    trade.symbol,
+                )
         equity = self._balance + unrealized
         if equity > self._peak_balance:
             self._peak_balance = equity
@@ -251,27 +308,43 @@ class ExecutionEngine:
         }
 
     def get_open_positions(self):
-        return [{
-            "position_id": t.position_id, "symbol": t.symbol,
-            "direction": t.direction, "volume": t.volume,
-            "entry_price": t.entry_price, "sl": t.sl, "tp": t.tp,
-            "unrealized_pnl": self._pnl_usd(t.entry_price, self._live_price(t.symbol),
-                                            t.direction, t.volume, t.symbol),
-        } for t in self.open_positions.values()]
+        return [
+            {
+                "position_id": t.position_id,
+                "symbol": t.symbol,
+                "direction": t.direction,
+                "volume": t.volume,
+                "entry_price": t.entry_price,
+                "sl": t.sl,
+                "tp": t.tp,
+                "unrealized_pnl": self._pnl_usd(
+                    t.entry_price,
+                    self._live_price(t.symbol),
+                    t.direction,
+                    t.volume,
+                    t.symbol,
+                ),
+            }
+            for t in self.open_positions.values()
+        ]
 
     def get_trade_history(self, limit=100):
-        return [{
-            "timestamp": t.timestamp, "symbol": t.symbol,
-            "direction": t.direction, "volume": t.volume,
-            "entry": t.entry_price, "exit": t.exit_price,
-            "pnl": t.pnl, "status": t.status, "reason": t.reason,
-        } for t in self.trade_history[-limit:]]
+        return [
+            {
+                "timestamp": t.timestamp,
+                "symbol": t.symbol,
+                "direction": t.direction,
+                "volume": t.volume,
+                "entry": t.entry_price,
+                "exit": t.exit_price,
+                "pnl": t.pnl,
+                "status": t.status,
+                "reason": t.reason,
+            }
+            for t in self.trade_history[-limit:]
+        ]
 
     def _get_symbol_id(self, symbol):
-        return {
-            "EURUSD": 1, "GBPUSD": 2, "EURJPY": 3, "USDJPY": 4, "AUDUSD": 5,
-            "USDCHF": 6, "GBPJPY": 7, "USDCAD": 8, "EURGBP": 9, "NZDUSD": 12,
-            "XAUUSD": 41, "XAGUSD": 42, "XTIUSD": 99, "XBRUSD": 100, "XNGUSD": 121,
-            "US500": 115, "US30": 125, "USTEC": 108, "UK100": 116, "DE40": 139,
-            "BTCUSD": 114, "ETHUSD": 105, "LTCUSD": 112, "XRPUSD": 215,
-        }.get(symbol.upper(), 1)
+        from api.symbol_map import get_symbol_id
+
+        return get_symbol_id(symbol)

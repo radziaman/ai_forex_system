@@ -2,6 +2,7 @@
 Smart Stress Testing Suite (Enhancement #13).
 Pre-built crisis scenarios, correlated failure tests, slippage stress testing.
 """
+
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Tuple, Optional
@@ -12,6 +13,7 @@ from loguru import logger
 @dataclass
 class CrisisScenario:
     """Pre-built crisis scenario for stress testing."""
+
     name: str
     description: str
     returns: List[float]  # Simulated returns during crisis
@@ -23,6 +25,7 @@ class CrisisScenario:
 @dataclass
 class StressTestResult:
     """Results from stress testing."""
+
     scenario: str
     max_loss: float
     max_loss_pct: float
@@ -44,8 +47,23 @@ CRISIS_SCENARIOS = {
     "covid_crash_2020": CrisisScenario(
         name="COVID-19 Crash 2020",
         description="Pandemic market crash",
-        returns=[-0.04, -0.05, -0.06, -0.03, -0.02, 0.01, -0.01, -0.03, 0.02, -0.01,
-                 -0.02, 0.03, 0.01, -0.01, 0.02],
+        returns=[
+            -0.04,
+            -0.05,
+            -0.06,
+            -0.03,
+            -0.02,
+            0.01,
+            -0.01,
+            -0.03,
+            0.02,
+            -0.01,
+            -0.02,
+            0.03,
+            0.01,
+            -0.01,
+            0.02,
+        ],
         start_date="2020-02-20",
         end_date="2020-04-30",
         market="forex",
@@ -89,15 +107,17 @@ class SmartStressTester:
         self.results: List[StressTestResult] = []
 
     def run_scenario(
-        self, scenario_name: str, position_size: float = 1.0,
-        symbol: str = "EURUSD"
+        self, scenario_name: str, position_size: float = 1.0, symbol: str = "EURUSD"
     ) -> StressTestResult:
         """Run a specific crisis scenario."""
         if scenario_name not in self.scenarios:
             return StressTestResult(
                 scenario=scenario_name,
-                max_loss=0, max_loss_pct=0, impact=0, passed=False,
-                details={"error": "Scenario not found"}
+                max_loss=0,
+                max_loss_pct=0,
+                impact=0,
+                passed=False,
+                details={"error": "Scenario not found"},
             )
 
         scenario = self.scenarios[scenario_name]
@@ -137,19 +157,25 @@ class SmartStressTester:
                 "peak": peak,
                 "num_periods": len(returns),
                 "market": scenario.market,
-            }
+            },
         )
 
         self.results.append(result)
 
         if passed:
-            logger.info(f"Stress test PASSED: {scenario_name} (loss={max_loss_pct:.1%})")
+            logger.info(
+                f"Stress test PASSED: {scenario_name} (loss={max_loss_pct:.1%})"
+            )
         else:
-            logger.warning(f"Stress test FAILED: {scenario_name} (loss={max_loss_pct:.1%})")
+            logger.warning(
+                f"Stress test FAILED: {scenario_name} (loss={max_loss_pct:.1%})"
+            )
 
         return result
 
-    def run_all_scenarios(self, position_size: float = 1.0) -> Dict[str, StressTestResult]:
+    def run_all_scenarios(
+        self, position_size: float = 1.0
+    ) -> Dict[str, StressTestResult]:
         """Run all pre-built crisis scenarios."""
         results = {}
         for name in self.scenarios.keys():
@@ -182,7 +208,7 @@ class SmartStressTester:
                 "symbols": symbols,
                 "correlation": correlation,
                 "num_positions": num_positions,
-            }
+            },
         )
 
     def test_slippage_stress(
@@ -219,7 +245,7 @@ class SmartStressTester:
                 "stressed_spread": stressed_spread,
                 "num_trades": num_trades,
                 "total_slippage": total_slippage,
-            }
+            },
         )
 
     def get_summary(self) -> Dict:
@@ -235,6 +261,10 @@ class SmartStressTester:
             "passed": passed,
             "failed": total - passed,
             "pass_rate": passed / total if total > 0 else 0,
-            "worst_scenario": max(self.results, key=lambda r: r.max_loss_pct).scenario if self.results else None,
+            "worst_scenario": (
+                max(self.results, key=lambda r: r.max_loss_pct).scenario
+                if self.results
+                else None
+            ),
             "worst_loss_pct": max((r.max_loss_pct for r in self.results), default=0),
         }

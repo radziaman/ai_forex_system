@@ -1,9 +1,17 @@
 """
-pytest configuration to filter out known system warnings.
+pytest configuration — path setup + warning filters.
 """
+
+import sys
+import os
 import warnings
 import urllib3
 import pytest
+
+# Add src/ to path so all package imports resolve
+_src = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
+if _src not in sys.path:
+    sys.path.insert(0, _src)
 
 
 def pytest_configure(config):

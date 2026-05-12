@@ -3,6 +3,7 @@ Telegram notification integration.
 Sends trade alerts, daily summaries, and risk warnings to a Telegram chat.
 Uses threading to avoid blocking the async trading loop.
 """
+
 import asyncio
 import threading
 import time
@@ -14,6 +15,7 @@ from loguru import logger
 
 try:
     import requests
+
     REQUESTS_AVAILABLE = True
 except ImportError:
     REQUESTS_AVAILABLE = False
@@ -113,13 +115,17 @@ class TelegramNotifier:
                     self._last_send = time.time()
                     return
                 if resp.status_code == 429:
-                    retry_after = resp.json().get("parameters", {}).get("retry_after", 5)
+                    retry_after = (
+                        resp.json().get("parameters", {}).get("retry_after", 5)
+                    )
                     logger.warning(f"Telegram rate-limited, waiting {retry_after}s")
                     time.sleep(retry_after)
                     self._min_interval = max(self._min_interval, 1.1)
                     last_error = "rate_limited"
                     continue
-                logger.warning(f"Telegram API error (attempt {attempt+1}): {resp.status_code} {resp.text[:100]}")
+                logger.warning(
+                    f"Telegram API error (attempt {attempt+1}): {resp.status_code} {resp.text[:100]}"
+                )
                 last_error = f"HTTP {resp.status_code}"
                 time.sleep(2)
             except Exception as e:
@@ -134,9 +140,17 @@ class TelegramNotifier:
             return
         self._queue.append(Notification(message=message, level=level, html=html))
 
-    def trade_opened(self, symbol: str, direction: str, volume: float, price: float,
-                     regime: str, confidence: float, atr: float = 0.0):
-        badge = "\U0001F7E2 BUY" if direction == "BUY" else "\U0001F534 SELL"
+    def trade_opened(
+        self,
+        symbol: str,
+        direction: str,
+        volume: float,
+        price: float,
+        regime: str,
+        confidence: float,
+        atr: float = 0.0,
+    ):
+        badge = "\U0001f7e2 BUY" if direction == "BUY" else "\U0001f534 SELL"
         html = (
             f"<b>| TRADE OPENED |</b>\n"
             f"{'─' * 30}\n"
@@ -151,11 +165,19 @@ class TelegramNotifier:
         )
         self.send(message=f"OPEN {direction} {symbol}", level="success", html=html)
 
-    def trade_closed(self, symbol: str, direction: str, entry: float, exit: float,
-                     pnl: float, reason: str, hold_time: float = 0.0):
+    def trade_closed(
+        self,
+        symbol: str,
+        direction: str,
+        entry: float,
+        exit: float,
+        pnl: float,
+        reason: str,
+        hold_time: float = 0.0,
+    ):
         pct = ((exit - entry) / entry) * (1 if direction == "BUY" else -1) * 100
         minutes = int(hold_time / 60)
-        badge = "\U0001F7E2" if pnl > 0 else "\U0001F534"
+        badge = "\U0001f7e2" if pnl > 0 else "\U0001f534"
         html = (
             f"<b>| TRADE CLOSED |</b>\n"
             f"{'─' * 30}\n"
@@ -167,7 +189,11 @@ class TelegramNotifier:
             f"Held:    <code>{minutes}m</code>\n"
             f"{'─' * 30}"
         )
-        self.send(message=f"CLOSE {symbol} {_fmt_pnl(pnl)}", level="success" if pnl > 0 else "warning", html=html)
+        self.send(
+            message=f"CLOSE {symbol} {_fmt_pnl(pnl)}",
+            level="success" if pnl > 0 else "warning",
+            html=html,
+        )
 
     def risk_warning(self, message: str, details: Optional[Dict] = None):
         detail_str = ""
@@ -183,8 +209,16 @@ class TelegramNotifier:
         )
         self.send(message=f"RISK: {message}", level="warning", html=html)
 
-    def daily_summary(self, trades_today: int, wins: int, losses: int, pnl: float,
-                      balance: float, open_positions: int, regime_summary: str = ""):
+    def daily_summary(
+        self,
+        trades_today: int,
+        wins: int,
+        losses: int,
+        pnl: float,
+        balance: float,
+        open_positions: int,
+        regime_summary: str = "",
+    ):
         win_rate = wins / max(wins + losses, 1)
         html = (
             f"<b>| DAILY SUMMARY |</b>\n"

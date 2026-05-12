@@ -2,6 +2,7 @@
 Speed-optimized training pipeline with M1 GPU, transfer learning, and progressive training.
 Trains all 7 pairs 3-5x faster than the standard approach.
 """
+
 import os
 import time
 import warnings
@@ -9,20 +10,25 @@ from typing import Optional, Dict, List
 from datetime import datetime, timezone
 from loguru import logger
 
-warnings.filterwarnings('ignore')
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+warnings.filterwarnings("ignore")
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 import numpy as np
 import pandas as pd
 import tensorflow as tf
 from tensorflow.keras import Model, Input
 from tensorflow.keras.layers import (
-    LSTM, Dense, Dropout, Concatenate, GlobalMaxPooling1D,
-    Conv1D, BatchNormalization,
+    LSTM,
+    Dense,
+    Dropout,
+    Concatenate,
+    GlobalMaxPooling1D,
+    Conv1D,
+    BatchNormalization,
 )
 from tensorflow.keras.optimizers import Adam
 
-tf.get_logger().setLevel('ERROR')
+tf.get_logger().setLevel("ERROR")
 
 from rts_ai_fx.features_unified import FeaturePipeline
 
@@ -32,28 +38,28 @@ def _setup_gpu():
     for d in devices:
         logger.info(f"  Device: {d.device_type} {d.name}")
 
-    gpus = tf.config.list_physical_devices('GPU')
+    gpus = tf.config.list_physical_devices("GPU")
     if gpus:
         try:
             for gpu in gpus:
                 tf.config.experimental.set_memory_growth(gpu, True)
             logger.info(f"  GPU acceleration: {len(gpus)} device(s) active")
-            return 'GPU'
+            return "GPU"
         except Exception as e:
             logger.warning(f"  GPU config failed: {e}")
 
     try:
         # Check for Apple MPS (Metal on M1/M2 Macs)
-        mps = tf.config.experimental.list_physical_devices('MPS')
+        mps = tf.config.experimental.list_physical_devices("MPS")
         if mps:
-            tf.config.experimental.set_visible_devices(mps, 'MPS')
+            tf.config.experimental.set_visible_devices(mps, "MPS")
             logger.info("  MPS (Metal GPU) acceleration active!")
-            return 'MPS'
+            return "MPS"
     except Exception:
         pass
 
     logger.info("  Training on CPU")
-    return 'CPU'
+    return "CPU"
 
 
 def build_transfer_model(
@@ -66,10 +72,12 @@ def build_transfer_model(
     inputs = Input(shape=(lookback, n_features), name="input")
 
     # Feature extractor (will be frozen during fine-tuning)
-    lstm_branch = LSTM(lstm_units, dropout=0.2, return_sequences=False,
-                       name="lstm_feature_extractor")(inputs)
-    cnn_branch = Conv1D(cnn_filters, 3, activation="relu", padding="same",
-                        name="cnn_feature_extractor")(inputs)
+    lstm_branch = LSTM(
+        lstm_units, dropout=0.2, return_sequences=False, name="lstm_feature_extractor"
+    )(inputs)
+    cnn_branch = Conv1D(
+        cnn_filters, 3, activation="relu", padding="same", name="cnn_feature_extractor"
+    )(inputs)
     cnn_branch = GlobalMaxPooling1D(name="cnn_pool")(cnn_branch)
 
     # Fusion layer
@@ -91,44 +99,68 @@ class FastTrainer:
         self.base_model: Optional[Model] = None
         self.base_pair: Optional[str] = None
 
-    async def fetch_data(self, symbol: str, period: str = "2y") -> Optional[pd.DataFrame]:
+    async def fetch_data(
+        self, symbol: str, period: str = "2y"
+    ) -> Optional[pd.DataFrame]:
         """Fetch historical data via Dukascopy (primary source)."""
         try:
             from data.dukascopy_realtime import DukascopyProvider
+
             provider = DukascopyProvider(cache=True)
             years = 2 if period == "2y" else 1
             end = datetime.now(timezone.utc)
             start = end.replace(year=end.year - years)
-            ohlcv = await provider.fetch_ohlcv(symbol, "1h",
+            ohlcv = await provider.fetch_ohlcv(
+                symbol,
+                "1h",
                 start=start.strftime("%Y-%m-%d"),
-                end=end.strftime("%Y-%m-%d"))
+                end=end.strftime("%Y-%m-%d"),
+            )
             if not ohlcv or len(ohlcv) < 100:
-                logger.warning(f"Insufficient Dukascopy data for {symbol}: {len(ohlcv) if ohlcv else 0} bars")
+                logger.warning(
+                    f"Insufficient Dukascopy data for {symbol}: {len(ohlcv) if ohlcv else 0} bars"
+                )
                 return None
-            df = pd.DataFrame([{
-                "timestamp": o.timestamp, "open": o.open, "high": o.high,
-                "low": o.low, "close": o.close, "volume": o.volume,
-            } for o in ohlcv])
+            df = pd.DataFrame(
+                [
+                    {
+                        "timestamp": o.timestamp,
+                        "open": o.open,
+                        "high": o.high,
+                        "low": o.low,
+                        "close": o.close,
+                        "volume": o.volume,
+                    }
+                    for o in ohlcv
+                ]
+            )
             return df
         except Exception as e:
             logger.error(f"Dukascopy fetch failed for {symbol}: {e}")
             return None
 
     def prepare_sequences(
-        self, pair: str, df: pd.DataFrame,
+        self,
+        pair: str,
+        df: pd.DataFrame,
     ) -> tuple:
         fp = FeaturePipeline(
-            lookback=self.lookback, timeframes=self.timeframes,
+            lookback=self.lookback,
+            timeframes=self.timeframes,
             use_microstructure=False,
         )
         X, y = fp.fit_transform(
             {pair: {tf: df for tf in self.timeframes}},
-            symbol=pair, flatten=False,
+            symbol=pair,
+            flatten=False,
         )
         return X, y, fp
 
     def train_base_model(
-        self, pair: str = "EURUSD", epochs: int = 40, batch_size: int = 32,
+        self,
+        pair: str = "EURUSD",
+        epochs: int = 40,
+        batch_size: int = 32,
     ) -> Model:
         logger.info(f"Training BASE model on {pair} ({epochs} epochs)...")
         yf_sym = f"{pair}=X"
@@ -147,17 +179,26 @@ class FastTrainer:
 
         cb = [
             tf.keras.callbacks.EarlyStopping(
-                monitor="val_loss", patience=8, restore_best_weights=True,
+                monitor="val_loss",
+                patience=8,
+                restore_best_weights=True,
             ),
             tf.keras.callbacks.ReduceLROnPlateau(
-                monitor="val_loss", factor=0.5, patience=4, min_lr=1e-6,
+                monitor="val_loss",
+                factor=0.5,
+                patience=4,
+                min_lr=1e-6,
             ),
         ]
         t0 = time.time()
         h = model.fit(
-            X_tr, y_tr, validation_data=(X_v, y_v),
-            epochs=epochs, batch_size=batch_size,
-            callbacks=cb, verbose=1,
+            X_tr,
+            y_tr,
+            validation_data=(X_v, y_v),
+            epochs=epochs,
+            batch_size=batch_size,
+            callbacks=cb,
+            verbose=1,
         )
         elapsed = time.time() - t0
         vl = min(h.history["val_loss"])
@@ -224,11 +265,18 @@ class FastTrainer:
             logger.info(f"  {pair}: Phase 1 — training head ({freeze_epochs} epochs)")
             t0 = time.time()
             model.fit(
-                X_tr, y_tr, validation_data=(X_v, y_v),
-                epochs=freeze_epochs, batch_size=batch_size,
-                callbacks=[tf.keras.callbacks.EarlyStopping(
-                    monitor="val_loss", patience=5, restore_best_weights=True,
-                )],
+                X_tr,
+                y_tr,
+                validation_data=(X_v, y_v),
+                epochs=freeze_epochs,
+                batch_size=batch_size,
+                callbacks=[
+                    tf.keras.callbacks.EarlyStopping(
+                        monitor="val_loss",
+                        patience=5,
+                        restore_best_weights=True,
+                    )
+                ],
                 verbose=1,
             )
             t1 = time.time()
@@ -239,11 +287,18 @@ class FastTrainer:
             model.compile(optimizer=Adam(0.0001), loss="mse", metrics=["mae"])
             logger.info(f"  {pair}: Phase 2 — full fine-tune ({full_epochs} epochs)")
             h = model.fit(
-                X_tr, y_tr, validation_data=(X_v, y_v),
-                epochs=full_epochs, batch_size=batch_size,
-                callbacks=[tf.keras.callbacks.EarlyStopping(
-                    monitor="val_loss", patience=4, restore_best_weights=True,
-                )],
+                X_tr,
+                y_tr,
+                validation_data=(X_v, y_v),
+                epochs=full_epochs,
+                batch_size=batch_size,
+                callbacks=[
+                    tf.keras.callbacks.EarlyStopping(
+                        monitor="val_loss",
+                        patience=4,
+                        restore_best_weights=True,
+                    )
+                ],
                 verbose=1,
             )
             t2 = time.time()
@@ -251,11 +306,18 @@ class FastTrainer:
             # Train from scratch
             model.compile(optimizer=Adam(0.001), loss="mse", metrics=["mae"])
             h = model.fit(
-                X_tr, y_tr, validation_data=(X_v, y_v),
-                epochs=freeze_epochs + full_epochs, batch_size=batch_size,
-                callbacks=[tf.keras.callbacks.EarlyStopping(
-                    monitor="val_loss", patience=8, restore_best_weights=True,
-                )],
+                X_tr,
+                y_tr,
+                validation_data=(X_v, y_v),
+                epochs=freeze_epochs + full_epochs,
+                batch_size=batch_size,
+                callbacks=[
+                    tf.keras.callbacks.EarlyStopping(
+                        monitor="val_loss",
+                        patience=8,
+                        restore_best_weights=True,
+                    )
+                ],
                 verbose=1,
             )
             t1 = t2 = time.time()
@@ -263,7 +325,9 @@ class FastTrainer:
         vl = min(h.history["val_loss"])
         vm = min(h.history["val_mae"])
         total_time = time.time() - t0 if base_model is not None else 0
-        logger.info(f"  {pair}: val_loss={vl:.6f}, val_mae={vm:.6f}, time={total_time:.0f}s")
+        logger.info(
+            f"  {pair}: val_loss={vl:.6f}, val_mae={vm:.6f}, time={total_time:.0f}s"
+        )
 
         model.save(f"models/{pair}_lstm_cnn.keras")
         return model
@@ -276,7 +340,15 @@ class FastTrainer:
         full_epochs: int = 8,
     ):
         if pairs is None:
-            pairs = ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD', 'USDCHF', 'NZDUSD']
+            pairs = [
+                "EURUSD",
+                "GBPUSD",
+                "USDJPY",
+                "AUDUSD",
+                "USDCAD",
+                "USDCHF",
+                "NZDUSD",
+            ]
 
         logger.info(f"\n{'='*60}")
         logger.info(f"  FAST TRAINING — {len(pairs)} pairs")
@@ -295,7 +367,9 @@ class FastTrainer:
             logger.info(f"\n--- Fine-tuning {pair} ---")
             try:
                 self.fine_tune_pair(
-                    pair, freeze_epochs=freeze_epochs, full_epochs=full_epochs,
+                    pair,
+                    freeze_epochs=freeze_epochs,
+                    full_epochs=full_epochs,
                 )
             except Exception as e:
                 logger.error(f"  {pair} failed: {e}")
@@ -311,10 +385,15 @@ class FastTrainer:
 
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-epochs", type=int, default=40, help="Base model epochs")
-    parser.add_argument("--freeze-epochs", type=int, default=8, help="Fine-tune frozen epochs")
-    parser.add_argument("--full-epochs", type=int, default=8, help="Fine-tune full epochs")
+    parser.add_argument(
+        "--freeze-epochs", type=int, default=8, help="Fine-tune frozen epochs"
+    )
+    parser.add_argument(
+        "--full-epochs", type=int, default=8, help="Fine-tune full epochs"
+    )
     parser.add_argument("--pairs", nargs="+", default=None, help="Pairs to train")
     args = parser.parse_args()
 

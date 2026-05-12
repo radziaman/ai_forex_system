@@ -2,13 +2,14 @@
 """
 Tests for Execution Engine - order execution and position management.
 """
+
 import os
 import sys
 import time
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from execution.engine import ExecutionEngine, TradeRecord
 import asyncio
@@ -112,7 +113,7 @@ class TestExecutionEngine:
             volume=0.1,
             sl=1.1150,
             tp=1.1300,
-            reason="Test signal"
+            reason="Test signal",
         )
         assert trade is not None
         assert trade.symbol == "EURUSD"
@@ -146,31 +147,25 @@ class TestExecutionEngine:
         )
         assert trade is None
 
-    def test_calculate_pnl_buy(self, engine):
-        trade = TradeRecord(
-            timestamp=time.time(),
-            symbol="EURUSD", direction="BUY", entry_price=1.1200,
-            volume=100_000
+    def test_pnl_usd_buy(self, engine):
+        pnl = engine._pnl_usd(
+            entry=1.1200, exit=1.1250, direction="BUY",
+            volume=100_000, symbol="EURUSD",
         )
-        pnl = engine._calculate_pnl(trade, exit_price=1.1250)
         assert pnl > 0
 
-    def test_calculate_pnl_sell(self, engine):
-        trade = TradeRecord(
-            timestamp=time.time(),
-            symbol="EURUSD", direction="SELL", entry_price=1.1200,
-            volume=100_000
+    def test_pnl_usd_sell(self, engine):
+        pnl = engine._pnl_usd(
+            entry=1.1200, exit=1.1150, direction="SELL",
+            volume=100_000, symbol="EURUSD",
         )
-        pnl = engine._calculate_pnl(trade, exit_price=1.1150)
         assert pnl > 0
 
-    def test_calculate_pnl_no_change(self, engine):
-        trade = TradeRecord(
-            timestamp=time.time(),
-            symbol="EURUSD", direction="BUY", entry_price=1.1200,
-            volume=100_000
+    def test_pnl_usd_no_change(self, engine):
+        pnl = engine._pnl_usd(
+            entry=1.1200, exit=1.1200, direction="BUY",
+            volume=100_000, symbol="EURUSD",
         )
-        pnl = engine._calculate_pnl(trade, exit_price=1.1200)
         assert pnl == 0.0
 
     def test_get_symbol_id(self, engine):
@@ -181,11 +176,11 @@ class TestExecutionEngine:
         assert engine._get_symbol_id("AUDUSD") == 5
         assert engine._get_symbol_id("UNKNOWN") == 1
 
-    def test_get_open_positions(self, engine):
+    @pytest.mark.asyncio
+    async def test_get_open_positions(self, engine):
         engine.risk.mode = "PAPER"
-        import asyncio
-        trade = asyncio.get_event_loop().run_until_complete(
-            engine.open_position("EURUSD", "BUY", 0.1, 1.1150, 1.1300)
+        trade = await engine.open_position(
+            "EURUSD", "BUY", 0.1, 1.1150, 1.1300
         )
         positions = engine.get_open_positions()
         assert len(positions) == 1
@@ -205,25 +200,29 @@ class TestExecutionEngine:
         assert len(engine.open_positions) == 0
         assert len(engine.trade_history) == 2
 
-    def test_on_market_data_sl_trigger(self, engine):
+    @pytest.mark.asyncio
+    async def test_on_market_data_sl_trigger(self, engine):
         engine.risk.mode = "PAPER"
-        import asyncio
-        trade = asyncio.get_event_loop().run_until_complete(
-            engine.open_position("EURUSD", "BUY", 0.1, 1.1150, 1.1300)
+        trade = await engine.open_position(
+            "EURUSD", "BUY", 0.1, 1.1150, 1.1300
         )
+        # Override timestamp to bypass 60-second minimum age gate
+        trade.timestamp = time.time() - 120
         mock_depth = MagicMock()
         mock_depth.symbol = "EURUSD"
-        mock_depth.bid = 1.1140
+        mock_depth.bid = 1.1140  # Below SL of 1.1150
         mock_depth.ask = 1.1142
-        with patch.object(engine, 'close_position', new_callable=AsyncMock) as mock_close:
-            asyncio.get_event_loop().run_until_complete(engine._on_market_data(mock_depth))
+        with patch.object(
+            engine, "close_position", new_callable=AsyncMock
+        ) as mock_close:
+            await engine._on_market_data(mock_depth)
             mock_close.assert_called_once()
 
     def test_on_order_update_filled(self, engine):
         result = MagicMock()
         result.status = "FILLED"
         result.order_id = 123
-        with patch('loguru.logger.debug') as mock_log:
+        with patch("loguru.logger.debug") as mock_log:
             engine._on_order_update(result)
             mock_log.assert_called_once()
 
@@ -231,7 +230,7 @@ class TestExecutionEngine:
         result = MagicMock()
         result.status = "REJECTED"
         result.error = "Insufficient margin"
-        with patch('loguru.logger.error') as mock_log:
+        with patch("loguru.logger.error") as mock_log:
             engine._on_order_update(result)
             mock_log.assert_called_once()
 

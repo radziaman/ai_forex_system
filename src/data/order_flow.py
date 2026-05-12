@@ -7,6 +7,7 @@ Features:
 - Gamma exposure estimation (placeholder for options data)
 - Dark pool detection (if data available)
 """
+
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional, Tuple
@@ -17,6 +18,7 @@ from loguru import logger
 @dataclass
 class FootprintBar:
     """Footprint chart bar showing volume at each price level."""
+
     timestamp: float
     symbol: str
     open: float
@@ -31,6 +33,7 @@ class FootprintBar:
 @dataclass
 class GammaLevel:
     """Gamma exposure at a specific price level."""
+
     price: float
     gamma: float  # positive = dealers long gamma, negative = short gamma
     oi: float = 0.0  # open interest
@@ -46,7 +49,9 @@ class OrderFlowAnalyzer:
         self._cvd_history: Dict[str, List[float]] = {}
         self._price_volume_map: Dict[str, Dict[float, Dict[str, float]]] = {}
 
-    def update_tick(self, symbol: str, bid: float, ask: float, volume: float, timestamp: float):
+    def update_tick(
+        self, symbol: str, bid: float, ask: float, volume: float, timestamp: float
+    ):
         """Update order flow with new tick data."""
         mid = (bid + ask) / 2.0
         price_key = round(mid, 5)  # Round to 5 decimal places
@@ -54,7 +59,11 @@ class OrderFlowAnalyzer:
         if symbol not in self._price_volume_map:
             self._price_volume_map[symbol] = {}
         if price_key not in self._price_volume_map[symbol]:
-            self._price_volume_map[symbol][price_key] = {"bid": 0.0, "ask": 0.0, "total": 0.0}
+            self._price_volume_map[symbol][price_key] = {
+                "bid": 0.0,
+                "ask": 0.0,
+                "total": 0.0,
+            }
 
         # Classify as buying or selling volume based on whether it's closer to bid or ask
         if mid >= ask:
@@ -105,7 +114,9 @@ class OrderFlowAnalyzer:
         total = bid_vol + ask_vol
         return (bid_vol - ask_vol) / total if total > 0 else 0.0
 
-    def build_footprint_bar(self, symbol: str, tf: str = "1m") -> Optional[FootprintBar]:
+    def build_footprint_bar(
+        self, symbol: str, tf: str = "1m"
+    ) -> Optional[FootprintBar]:
         """Build a footprint chart bar from aggregated tick data."""
         pvm = self._price_volume_map.get(symbol, {})
         if not pvm:
@@ -155,11 +166,20 @@ class GammaExposureMapper:
         """Update spot price for gamma calculations."""
         self.spot_price[symbol] = price
 
-    def add_gamma_level(self, symbol: str, price: float, gamma: float, oi: float = 0.0, is_call: bool = True):
+    def add_gamma_level(
+        self,
+        symbol: str,
+        price: float,
+        gamma: float,
+        oi: float = 0.0,
+        is_call: bool = True,
+    ):
         """Add gamma exposure at a specific price level."""
         if symbol not in self.gamma_levels:
             self.gamma_levels[symbol] = []
-        self.gamma_levels[symbol].append(GammaLevel(price=price, gamma=gamma, oi=oi, is_call=is_call))
+        self.gamma_levels[symbol].append(
+            GammaLevel(price=price, gamma=gamma, oi=oi, is_call=is_call)
+        )
         self._recalculate_flip_point(symbol)
 
     def _recalculate_flip_point(self, symbol: str):
@@ -174,7 +194,9 @@ class GammaExposureMapper:
             if cumulative_gamma > 0:
                 self._gamma_flip_points[symbol] = level.price
                 return
-        self._gamma_flip_points[symbol] = sorted_levels[-1].price if sorted_levels else 0.0
+        self._gamma_flip_points[symbol] = (
+            sorted_levels[-1].price if sorted_levels else 0.0
+        )
 
     def get_gamma_exposure(self, symbol: str) -> Dict:
         """Get gamma exposure metrics."""
@@ -225,7 +247,9 @@ class DarkPoolDetector:
     def update_volume(self, symbol: str, lit_volume: float, dark_volume: float = 0.0):
         """Update volume data (dark pool data from alternative source)."""
         self.total_volume[symbol] = self.total_volume.get(symbol, 0.0) + lit_volume
-        self.dark_pool_volume[symbol] = self.dark_pool_volume.get(symbol, 0.0) + dark_volume
+        self.dark_pool_volume[symbol] = (
+            self.dark_pool_volume.get(symbol, 0.0) + dark_volume
+        )
 
     def get_dark_pool_ratio(self, symbol: str) -> float:
         """Get ratio of dark pool to total volume."""
@@ -243,5 +267,6 @@ class DarkPoolDetector:
             "dark_pool_ratio": self.get_dark_pool_ratio(symbol),
             "dark_pool_active": self.is_dark_pool_active(symbol),
             "total_dark_volume": self.dark_pool_volume.get(symbol, 0.0),
-            "total_lit_volume": self.total_volume.get(symbol, 0.0) - self.dark_pool_volume.get(symbol, 0.0),
+            "total_lit_volume": self.total_volume.get(symbol, 0.0)
+            - self.dark_pool_volume.get(symbol, 0.0),
         }

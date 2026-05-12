@@ -3,6 +3,7 @@ Smart Walk-Forward Optimization (Enhancement #14).
 Implements Combinatorial Purged Cross-Validation (CPCV), out-of-sample condition testing,
 and degradation tracking for robust model validation.
 """
+
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional, Tuple, Callable
@@ -13,6 +14,7 @@ from loguru import logger
 @dataclass
 class WalkForwardResult:
     """Results from a single walk-forward fold."""
+
     fold_id: int
     train_start: int
     train_end: int
@@ -30,6 +32,7 @@ class WalkForwardResult:
 @dataclass
 class OptimizationResult:
     """Overall optimization results."""
+
     total_folds: int
     avg_train_sharpe: float = 0.0
     avg_test_sharpe: float = 0.0
@@ -74,7 +77,9 @@ class SmartWalkForward:
         """
         n = len(prices)
         if n < self.min_train_window + self.test_window:
-            logger.warning(f"Insufficient data: {n} bars (need {self.min_train_window + self.test_window})")
+            logger.warning(
+                f"Insufficient data: {n} bars (need {self.min_train_window + self.test_window})"
+            )
             return OptimizationResult(total_folds=0)
 
         fold_results = []
@@ -125,8 +130,15 @@ class SmartWalkForward:
                 continue
 
             result = self._evaluate_fold(
-                fold_id, prices, features_fn, features, regimes,
-                train_start, train_end, test_start, test_end
+                fold_id,
+                prices,
+                features_fn,
+                features,
+                regimes,
+                train_start,
+                train_end,
+                test_start,
+                test_end,
             )
             fold_results.append(result)
             fold_id += 1
@@ -160,8 +172,15 @@ class SmartWalkForward:
             test_end = min(split + self.test_window, n)
 
             result = self._evaluate_fold(
-                fold_id, prices, features_fn, features, regimes,
-                train_start, train_end, test_start, test_end
+                fold_id,
+                prices,
+                features_fn,
+                features,
+                regimes,
+                train_start,
+                train_end,
+                test_start,
+                test_end,
             )
             fold_results.append(result)
             fold_id += 1
@@ -169,13 +188,23 @@ class SmartWalkForward:
         return fold_results
 
     def _evaluate_fold(
-        self, fold_id, prices, features_fn, features, regimes,
-        train_start, train_end, test_start, test_end
+        self,
+        fold_id,
+        prices,
+        features_fn,
+        features,
+        regimes,
+        train_start,
+        train_end,
+        test_start,
+        test_end,
     ) -> WalkForwardResult:
         """Evaluate a single fold."""
         # Training period
         train_prices = prices[train_start:train_end]
-        train_features = features[train_start:train_end] if features is not None else None
+        train_features = (
+            features[train_start:train_end] if features is not None else None
+        )
         train_regimes = regimes[train_start:train_end] if regimes is not None else None
 
         # Test period
@@ -184,8 +213,16 @@ class SmartWalkForward:
         test_regimes = regimes[test_start:test_end] if regimes is not None else None
 
         # Get returns from model predictions
-        train_returns = features_fn(train_prices, train_features, train_regimes) if callable(features_fn) else []
-        test_returns = features_fn(test_prices, test_features, test_regimes) if callable(features_fn) else []
+        train_returns = (
+            features_fn(train_prices, train_features, train_regimes)
+            if callable(features_fn)
+            else []
+        )
+        test_returns = (
+            features_fn(test_prices, test_features, test_regimes)
+            if callable(features_fn)
+            else []
+        )
 
         # Calculate Sharpe ratios
         train_sharpe = self._calculate_sharpe(train_returns)
@@ -274,7 +311,7 @@ class SmartWalkForward:
         # Detect significant degradation (3 consecutive negative degradations)
         alert = False
         for i in range(len(degradations) - 2):
-            if all(d < -0.2 for d in degradations[i:i+3]):
+            if all(d < -0.2 for d in degradations[i : i + 3]):
                 alert = True
                 break
 

@@ -3,10 +3,16 @@ Mixture-of-Experts Ensemble with HMM regime gating.
 Each expert specializes in a market regime; gating network weights predictions.
 Enhanced with Sharpe-based dynamic weighting and MAML meta-learning (Enhancement #9).
 """
+
 import numpy as np
 from typing import Dict, List, Optional, Callable, Tuple
 from dataclasses import dataclass, field
 from collections import defaultdict
+
+try:
+    import torch
+except ImportError:
+    torch = None
 
 
 @dataclass
@@ -28,6 +34,7 @@ class EnsemblePrediction:
 
 class MoEEnsemble:
     """Mixture-of-Experts ensemble with HMM regime gating."""
+
     enabled: bool = True
 
     def __init__(self):
@@ -35,16 +42,33 @@ class MoEEnsemble:
         self.elo_ratings: Dict[str, float] = {}
         self.sharpe_ratios: Dict[str, float] = defaultdict(float)
         self.expert_returns: Dict[str, List[float]] = defaultdict(list)
-        self.expert_win_rates: Dict[str, Dict] = defaultdict(lambda: {"wins": 0, "total": 0})
+        self.expert_win_rates: Dict[str, Dict] = defaultdict(
+            lambda: {"wins": 0, "total": 0}
+        )
         self.maml_agent = None  # MAML for meta-learning
         self.use_sharpe_weighting: bool = True
         self.use_maml_adaptation: bool = True
 
-    def add_expert(self, name: str, predict_fn: Callable, confidence_fn: Callable, regime: str = "ranging"):
-        self.experts.append(Expert(name=name, predict=predict_fn, confidence=confidence_fn, regime=regime))
+    def add_expert(
+        self,
+        name: str,
+        predict_fn: Callable,
+        confidence_fn: Callable,
+        regime: str = "ranging",
+    ):
+        self.experts.append(
+            Expert(
+                name=name, predict=predict_fn, confidence=confidence_fn, regime=regime
+            )
+        )
         self.elo_ratings.setdefault(name, 1200.0)
 
-    def predict(self, X: np.ndarray, regime: str = "ranging", regime_posteriors: Optional[np.ndarray] = None) -> EnsemblePrediction:
+    def predict(
+        self,
+        X: np.ndarray,
+        regime: str = "ranging",
+        regime_posteriors: Optional[np.ndarray] = None,
+    ) -> EnsemblePrediction:
         if not self.enabled or not self.experts:
             return EnsemblePrediction()
 
@@ -63,18 +87,22 @@ class MoEEnsemble:
             try:
                 pred = float(np.array(expert.predict(X_adapted)).flatten()[0])
                 conf = float(np.array(expert.confidence(X_adapted)).flatten()[0])
-            except Exception as e:
+            except Exception:
                 continue
 
             # Dynamic regime-based weighting
-            regime_weight = self._calculate_regime_weight(expert, regime, regime_posteriors)
+            regime_weight = self._calculate_regime_weight(
+                expert, regime, regime_posteriors
+            )
 
             # Elo rating weight (performance-based)
             elo_weight = self.elo_ratings.get(expert.name, 1200.0) / 1200.0
 
             # Sharpe ratio weight (Enhancement #9)
             if self.use_sharpe_weighting:
-                sharpe_weight = max(0.1, min(2.0, self.sharpe_ratios.get(expert.name, 1.0)))
+                sharpe_weight = max(
+                    0.1, min(2.0, self.sharpe_ratios.get(expert.name, 1.0))
+                )
             else:
                 sharpe_weight = 1.0
 
@@ -86,7 +114,11 @@ class MoEEnsemble:
             predictions.append(pred)
             confidences.append(conf)
             weights.append(weight)
-            expert_outputs[expert.name] = {"prediction": pred, "confidence": conf, "weight": weight}
+            expert_outputs[expert.name] = {
+                "prediction": pred,
+                "confidence": conf,
+                "weight": weight,
+            }
 
         if not predictions:
             return EnsemblePrediction()
@@ -111,11 +143,18 @@ class MoEEnsemble:
         )
 
     def _maml_adapt(self, X: np.ndarray, regime: str) -> np.ndarray:
-        """Adapt features using MAML for few-shot learning."""
+        """Adapt features using MAML for few-shot learning.
+        Uses frozen base model features for feature transformation."""
         try:
-            if self.maml_agent and hasattr(self.maml_agent, 'adapt'):
-                adapted = self.maml_agent.adapt(X, regime=regime)
-                return adapted if adapted is not None else X
+            if self.maml_agent and hasattr(self.maml_agent, "base_model"):
+                X_tensor = (
+                    torch.FloatTensor(X)
+                    if X.ndim > 1
+                    else torch.FloatTensor(X).unsqueeze(0)
+                )
+                with torch.no_grad():
+                    adapted = self.maml_agent.base_model(X_tensor)
+                return adapted.cpu().numpy()
         except Exception:
             pass
         return X
@@ -132,7 +171,9 @@ class MoEEnsemble:
             self.expert_returns[expert_name].extend(returns)
             # Keep only last 100 returns
             if len(self.expert_returns[expert_name]) > 100:
-                self.expert_returns[expert_name] = self.expert_returns[expert_name][-100:]
+                self.expert_returns[expert_name] = self.expert_returns[expert_name][
+                    -100:
+                ]
 
     def update_expert_result(self, expert_name: str, pnl: float):
         """Track expert performance for win rate calculation."""
@@ -144,31 +185,44 @@ class MoEEnsemble:
             if expert_name in self.expert_returns:
                 self.update_sharpe(expert_name, self.expert_returns[expert_name][-20:])
 
-    def should_trade(self, pred: EnsemblePrediction, current_price: float, min_confidence: float = 0.65) -> Tuple[bool, str, float]:
+    def should_trade(
+        self,
+        pred: EnsemblePrediction,
+        current_price: float,
+        min_confidence: float = 0.65,
+    ) -> Tuple[bool, str, float]:
         """
         Determine if we should trade based on ensemble agreement and confidence.
-        Uses weighted majority voting instead of requiring unanimity.
+        Uses weighted majority voting on return-based signals (instrument-agnostic).
         """
         if not pred.expert_outputs:
             return False, "HOLD", 0.0
         buy_weight = 0.0
         sell_weight = 0.0
         total_weight = 0.0
-        threshold = current_price * 0.0005
+        threshold = 0.0003
         for name, output in pred.expert_outputs.items():
             w = output["weight"]
             total_weight += w
-            if output["prediction"] > current_price + threshold:
+            if output["prediction"] > threshold:
                 buy_weight += w
-            elif output["prediction"] < current_price - threshold:
+            elif output["prediction"] < -threshold:
                 sell_weight += w
         if total_weight == 0:
             return False, "HOLD", 0.0
         buy_ratio = buy_weight / total_weight
         sell_ratio = sell_weight / total_weight
-        if buy_ratio > 0.6 and buy_ratio > sell_ratio and pred.confidence >= min_confidence:
+        if (
+            buy_ratio > 0.6
+            and buy_ratio > sell_ratio
+            and pred.confidence >= min_confidence
+        ):
             return True, "BUY", buy_ratio
-        elif sell_ratio > 0.6 and sell_ratio > buy_ratio and pred.confidence >= min_confidence:
+        elif (
+            sell_ratio > 0.6
+            and sell_ratio > buy_ratio
+            and pred.confidence >= min_confidence
+        ):
             return True, "SELL", sell_ratio
         return False, "HOLD", 0.0
 
@@ -181,29 +235,38 @@ class MoEEnsemble:
             base_weight = 2.0
         elif expert.regime != "ranging":  # Non-rangng experts get penalty
             base_weight = 0.5
-        
+
         if regime_posteriors is not None:
             regime_idx = 0
             try:
                 regime_names = ["trending", "ranging", "volatile", "crisis"]
-                regime_idx = regime_names.index(expert.regime) if expert.regime in regime_names else 1
+                regime_idx = (
+                    regime_names.index(expert.regime)
+                    if expert.regime in regime_names
+                    else 1
+                )
                 if regime_idx < len(regime_posteriors):
                     base_weight = regime_posteriors[regime_idx] * 2 + 0.5
             except (ValueError, IndexError):
                 pass
-        
+
         return base_weight
 
     def _determine_direction(
         self, ensemble_price: float, confidences: list, weights: np.ndarray
     ) -> str:
-        """Determine trading direction based on whether mean of predictions is above/below 1.0.
-        Only used as fallback — should_trade() computes direction independently from expert outputs."""
-        avg_conf = np.average(confidences, weights=weights) if weights.sum() > 0 else 0.0
+        """Determine direction based on whether prediction is above/below input.
+        Only used as fallback — should_trade() computes direction independently from expert outputs.
+        """
+        avg_conf = (
+            np.average(confidences, weights=weights) if weights.sum() > 0 else 0.0
+        )
         if avg_conf > 0.5:
-            return "BUY" if ensemble_price > 1.0 else "SELL"
+            return "BUY" if ensemble_price > 0 else "SELL"
         return "HOLD"
 
     def update_elo(self, name: str, was_correct: bool, k: float = 32.0):
-        self.elo_ratings[name] = self.elo_ratings.get(name, 1200.0) + (k if was_correct else -k)
+        self.elo_ratings[name] = self.elo_ratings.get(name, 1200.0) + (
+            k if was_correct else -k
+        )
         self.elo_ratings[name] = max(100, min(3000, self.elo_ratings[name]))

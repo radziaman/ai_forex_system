@@ -2,6 +2,7 @@
 Monte Carlo Significance Tests for trading strategies.
 Permutation testing to determine if strategy edge is statistically significant.
 """
+
 import numpy as np
 from typing import List, Dict, Optional, Callable
 from dataclasses import dataclass
@@ -53,7 +54,9 @@ class MonteCarloSigTest:
         shuffled_returns = np.zeros(self.n_permutations)
 
         for i in range(self.n_permutations):
-            shuffled = np.random.permutation(pnls) * np.random.choice([1, -1], size=len(pnls))
+            shuffled = np.random.permutation(pnls) * np.random.choice(
+                [1, -1], size=len(pnls)
+            )
             shuffled_sharpes[i] = self._sharpe(shuffled)
             shuffled_returns[i] = float(np.sum(shuffled))
 
@@ -105,11 +108,9 @@ class MonteCarloSigTest:
         """Sharpe ratio adjusted for multiple testing / selection bias."""
         if n_trades < 2:
             return 0.0
-        e_max = (
-            np.sqrt(2 * np.log(n_permutations))
-            - (np.log(np.log(n_permutations)) + np.log(4 * np.pi))
-            / (2 * np.sqrt(2 * np.log(n_permutations)))
-        )
+        e_max = np.sqrt(2 * np.log(n_permutations)) - (
+            np.log(np.log(n_permutations)) + np.log(4 * np.pi)
+        ) / (2 * np.sqrt(2 * np.log(n_permutations)))
         return (sharpe - e_max) / np.sqrt(1 / n_trades)
 
     def run_battery(

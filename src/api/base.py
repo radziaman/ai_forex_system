@@ -2,6 +2,7 @@
 Abstract base classes for execution providers and data providers.
 All broker integrations implement these interfaces.
 """
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Optional, List, Callable
@@ -25,6 +26,7 @@ class AccountInfo:
 @dataclass
 class OrderRequest:
     """Standardized order request."""
+
     symbol: str = ""
     side: str = "BUY"  # BUY or SELL
     order_type: str = "MARKET"  # MARKET, LIMIT, STOP
@@ -89,32 +91,25 @@ class ExecutionProvider(ABC):
     """Abstract interface for broker execution."""
 
     @abstractmethod
-    async def start(self) -> bool:
-        ...
+    async def start(self) -> bool: ...
 
     @abstractmethod
-    async def stop(self):
-        ...
+    async def stop(self): ...
 
     @abstractmethod
-    async def get_account_info(self) -> Optional[AccountInfo]:
-        ...
+    async def get_account_info(self) -> Optional[AccountInfo]: ...
 
     @abstractmethod
-    async def place_order(self, order: OrderRequest) -> Optional[OrderResult]:
-        ...
+    async def place_order(self, order: OrderRequest) -> Optional[OrderResult]: ...
 
     @abstractmethod
-    async def close_position(self, position_id: str) -> Optional[OrderResult]:
-        ...
+    async def close_position(self, position_id: str) -> Optional[OrderResult]: ...
 
     @abstractmethod
-    async def get_positions(self) -> List[Position]:
-        ...
+    async def get_positions(self) -> List[Position]: ...
 
     @abstractmethod
-    def is_connected(self) -> bool:
-        ...
+    def is_connected(self) -> bool: ...
 
     # Optional callbacks
     on_price: Optional[Callable] = None
@@ -126,16 +121,19 @@ class DataProvider(ABC):
 
     @abstractmethod
     async def fetch_ohlcv(
-        self, symbol: str, timeframe: str,
-        start: str, end: str,
-    ) -> List[OHLCV]:
-        ...
+        self,
+        symbol: str,
+        timeframe: str,
+        start: str,
+        end: str,
+    ) -> List[OHLCV]: ...
 
     async def fetch_ticks(
-        self, symbol: str, date: str,
+        self,
+        symbol: str,
+        date: str,
     ) -> List[PriceTick]:
         raise NotImplementedError(f"{type(self).__name__} does not support tick data")
 
     @abstractmethod
-    async def stream_prices(self, symbols: List[str], callback: Callable):
-        ...
+    async def stream_prices(self, symbols: List[str], callback: Callable): ...

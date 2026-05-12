@@ -3,6 +3,7 @@ Smart Order Execution Algorithms: Iceberg, TWAP, VWAP, Implementation Shortfall.
 Reduces market impact and slippage for large orders.
 Enhanced with smart order routing and volume profile-based execution (Enhancement #8).
 """
+
 import asyncio
 import numpy as np
 import time
@@ -16,6 +17,7 @@ from .engine import TradeOrder, TradeRecord
 
 class RoutingStrategy(Enum):
     """Smart order routing strategies."""
+
     BEST_PRICE = "best_price"
     LOWEST_IMPACT = "lowest_impact"
     VOLUME_PROFILE = "volume_profile"
@@ -25,6 +27,7 @@ class RoutingStrategy(Enum):
 @dataclass
 class ExecutionAlgoConfig:
     """Configuration for execution algorithms."""
+
     display_size: int = 1000  # Visible order size
     slice_interval: float = 300.0  # 5 minutes between slices
     max_participation_rate: float = 0.1  # Max % of volume to participate
@@ -113,12 +116,18 @@ class AlgoExecutor:
         results = []
         order_id = f"twap_{symbol}_{int(time.time())}"
 
-        logger.info(f"TWAP: {side} {volume} {symbol} over {duration_minutes}min ({chunks} chunks)")
+        logger.info(
+            f"TWAP: {side} {volume} {symbol} over {duration_minutes}min ({chunks} chunks)"
+        )
 
         self.active_orders[order_id] = []
 
         # Get volatility for adaptive sizing
-        atr = self.data.get_atr(symbol, "1h", 14) if hasattr(self.data, 'get_atr') else 0.0
+        atr = (
+            self.data.get_atr(symbol, "1h", 14)
+            if hasattr(self.data, "get_atr")
+            else 0.0
+        )
         current_price = self.data.get_price(symbol, "1h") or 1.12
 
         for i in range(chunks):
@@ -146,8 +155,14 @@ class AlgoExecutor:
             if i < chunks - 1:
                 await asyncio.sleep(300)  # 5 minutes
 
-        avg_price = np.mean([r.filled_price for r in results if r.filled_price > 0]) if results else 0.0
-        logger.success(f"TWAP COMPLETE: {len(results)} chunks, avg price={avg_price:.5f}")
+        avg_price = (
+            np.mean([r.filled_price for r in results if r.filled_price > 0])
+            if results
+            else 0.0
+        )
+        logger.success(
+            f"TWAP COMPLETE: {len(results)} chunks, avg price={avg_price:.5f}"
+        )
         return results
 
     async def vwap_execution(
@@ -174,7 +189,9 @@ class AlgoExecutor:
 
         for i in range(chunks):
             # Slice size proportional to volume profile
-            profile_weight = volume_profile[i] if i < len(volume_profile) else 1.0 / chunks
+            profile_weight = (
+                volume_profile[i] if i < len(volume_profile) else 1.0 / chunks
+            )
             chunk_size = volume * profile_weight
 
             order = TradeOrder(
@@ -192,8 +209,14 @@ class AlgoExecutor:
             if i < chunks - 1:
                 await asyncio.sleep(300)
 
-        avg_price = np.mean([r.filled_price for r in results if r.filled_price > 0]) if results else 0.0
-        logger.success(f"VWAP COMPLETE: {len(results)} chunks, avg price={avg_price:.5f}")
+        avg_price = (
+            np.mean([r.filled_price for r in results if r.filled_price > 0])
+            if results
+            else 0.0
+        )
+        logger.success(
+            f"VWAP COMPLETE: {len(results)} chunks, avg price={avg_price:.5f}"
+        )
         return results
 
     def _get_volume_profile(self, symbol: str, duration_minutes: int) -> List[float]:
@@ -243,24 +266,36 @@ class AlgoExecutor:
         else:  # ADAPTIVE
             return await self._route_adaptive(symbol, side, volume)
 
-    async def _route_best_price(self, symbol: str, side: str, volume: float) -> List[TradeRecord]:
+    async def _route_best_price(
+        self, symbol: str, side: str, volume: float
+    ) -> List[TradeRecord]:
         """Route to venue with best price."""
         # Simplified - just use market order
-        order = TradeOrder(symbol=symbol, side=side, order_type="MARKET", volume=int(volume))
+        order = TradeOrder(
+            symbol=symbol, side=side, order_type="MARKET", volume=int(volume)
+        )
         result = await self.client.place_order(order)
         return [result] if result else []
 
-    async def _route_adaptive(self, symbol: str, side: str, volume: float) -> List[TradeRecord]:
+    async def _route_adaptive(
+        self, symbol: str, side: str, volume: float
+    ) -> List[TradeRecord]:
         """Adaptive routing based on market conditions."""
         # Check volatility to decide strategy
-        atr = self.data.get_atr(symbol, "1h", 14) if hasattr(self.data, 'get_atr') else 0.0
+        atr = (
+            self.data.get_atr(symbol, "1h", 14)
+            if hasattr(self.data, "get_atr")
+            else 0.0
+        )
         current_price = self.data.get_price(symbol, "1h") or 1.12
 
         if atr > 0 and current_price > 0:
             vol_pct = atr / current_price
             if vol_pct > 0.02:  # High volatility
                 logger.info(f"High volatility detected ({vol_pct:.2%}), using TWAP")
-                return await self.twap_execution(symbol, side, volume, duration_minutes=60)
+                return await self.twap_execution(
+                    symbol, side, volume, duration_minutes=60
+                )
             else:
                 logger.info(f"Normal volatility ({vol_pct:.2%}), using VWAP")
                 return await self.vwap_execution(symbol, side, volume)
@@ -288,7 +323,9 @@ class AlgoExecutor:
         urgency_rates = {"low": 0.05, "normal": 0.1, "high": 0.2, "immediate": 1.0}
         participation_rate = urgency_rates.get(urgency, 0.1)
 
-        logger.info(f"IS: {side} {volume} {symbol} @ target={target_price:.5f}, urgency={urgency}")
+        logger.info(
+            f"IS: {side} {volume} {symbol} @ target={target_price:.5f}, urgency={urgency}"
+        )
 
         self.active_orders[order_id] = []
 
@@ -325,7 +362,11 @@ class AlgoExecutor:
 
             await asyncio.sleep(1.0)
 
-        avg_price = np.mean([r.filled_price for r in results if r.filled_price > 0]) if results else 0.0
+        avg_price = (
+            np.mean([r.filled_price for r in results if r.filled_price > 0])
+            if results
+            else 0.0
+        )
         logger.success(f"IS COMPLETE: {len(results)} orders, avg price={avg_price:.5f}")
         return results
 

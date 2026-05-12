@@ -1,4 +1,5 @@
 """Monitoring: dashboard updates + Telegram notifications."""
+
 import asyncio
 import time
 from typing import Optional, Dict
@@ -37,15 +38,23 @@ class MonitoringService(TradingService):
 
     def on_signal(self, signal: Signal) -> None:
         if signal.confidence > 0.7:
-            logger.info(f"[SIGNAL] {signal.direction.value} {signal.symbol} "
-                        f"conf={signal.confidence:.2f} regime={signal.regime.value}")
+            logger.info(
+                f"[SIGNAL] {signal.direction.value} {signal.symbol} "
+                f"conf={signal.confidence:.2f} regime={signal.regime.value}"
+            )
 
-    def on_execution(self, result: ExecutionResult, signal: Signal) -> None:
+    def on_execution(self, result: ExecutionResult, signal: Signal,
+                     volume: float = 0.0, atr: float = 0.0) -> None:
         if result.success:
+            vol = result.filled_volume or volume
             self.notifier.trade_opened(
-                symbol=signal.symbol, direction=signal.direction.value,
-                volume=0, price=signal.price, regime=signal.regime.value,
-                confidence=signal.confidence, atr=0,
+                symbol=signal.symbol,
+                direction=signal.direction.value,
+                volume=vol,
+                price=result.filled_price or signal.price,
+                regime=signal.regime.value,
+                confidence=signal.confidence,
+                atr=atr,
             )
         else:
             self.notifier.send(

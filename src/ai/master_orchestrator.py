@@ -14,6 +14,7 @@ V2 Improvements over V1:
   - Cosine annealing LR scheduler with warmup
   - Proper state-transition healing (re-enables enhancements on RECOVERING)
 """
+
 import asyncio
 import numpy as np
 import time
@@ -34,16 +35,18 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-
 # ---------------------------------------------------------------------------
 # Prioritized experience replay
 # ---------------------------------------------------------------------------
+
 
 class PrioritizedReplayBuffer:
     """Prioritized experience replay with importance-sampling weights.
     Uses simple circular list (no heapq, sample never pops)."""
 
-    def __init__(self, capacity: int = 2000, alpha: float = 0.6, beta_start: float = 0.4):
+    def __init__(
+        self, capacity: int = 2000, alpha: float = 0.6, beta_start: float = 0.4
+    ):
         self.capacity = capacity
         self.alpha = alpha
         self.beta = beta_start
@@ -52,8 +55,14 @@ class PrioritizedReplayBuffer:
         self._idx = 0
         self._max_priority = 1.0
 
-    def push(self, state: np.ndarray, action: int, reward: float,
-             next_state: np.ndarray, done: bool):
+    def push(
+        self,
+        state: np.ndarray,
+        action: int,
+        reward: float,
+        next_state: np.ndarray,
+        done: bool,
+    ):
         priority = self._max_priority
         exp = (state, action, reward, next_state, done)
         if len(self._buffer) < self.capacity:
@@ -67,8 +76,8 @@ class PrioritizedReplayBuffer:
         if n < batch_size:
             return None
         self.beta = min(1.0, self.beta + self.beta_increment)
-        total = sum(p ** self.alpha for p, _, _ in self._buffer)
-        probs = [(p ** self.alpha) / total for p, _, _ in self._buffer]
+        total = sum(p**self.alpha for p, _, _ in self._buffer)
+        probs = [(p**self.alpha) / total for p, _, _ in self._buffer]
         indices = np.random.choice(n, size=batch_size, p=probs, replace=False)
         batch = [self._buffer[i] for i in indices]
         states = np.array([e[2][0] for e in batch], dtype=np.float32)
@@ -76,10 +85,10 @@ class PrioritizedReplayBuffer:
         rewards = np.array([e[2][2] for e in batch], dtype=np.float32)
         next_states = np.array([e[2][3] for e in batch], dtype=np.float32)
         dones = np.array([e[2][4] for e in batch], dtype=np.float32)
-        weights = np.array([
-            (1.0 / (n * probs[i])) ** (1.0 - self.beta)
-            for i in indices
-        ], dtype=np.float32)
+        weights = np.array(
+            [(1.0 / (n * probs[i])) ** (1.0 - self.beta) for i in indices],
+            dtype=np.float32,
+        )
         weights /= weights.sum()
         return states, actions, rewards, next_states, dones, weights, indices
 
@@ -100,15 +109,21 @@ class PrioritizedReplayBuffer:
 # Improved meta-learner network
 # ---------------------------------------------------------------------------
 
+
 class MetaLearnerV2(nn.Module):
     """
     Improved neural network for meta-action Q-value prediction.
     V2: deeper, LayerNorm, Dropout, LeakyReLU → more stable training,
     better generalization, less prone to dead neurons.
     """
-    def __init__(self, state_dim: int = 16, n_actions: int = 5,
-                 hidden_dims: Tuple[int, ...] = (128, 64, 32),
-                 dropout: float = 0.15):
+
+    def __init__(
+        self,
+        state_dim: int = 16,
+        n_actions: int = 5,
+        hidden_dims: Tuple[int, ...] = (128, 64, 32),
+        dropout: float = 0.15,
+    ):
         super().__init__()
         layers = []
         prev = state_dim
@@ -145,7 +160,7 @@ class MetaLearnerV2(nn.Module):
         torch.save(self.state_dict(), path)
 
     def load(self, path: str):
-        self.load_state_dict(torch.load(path, map_location='cpu'))
+        self.load_state_dict(torch.load(path, map_location="cpu"))
 
 
 # ---------------------------------------------------------------------------
@@ -156,11 +171,30 @@ try:
     from data.data_manager import SYMBOLS
 except ImportError:
     SYMBOLS = [
-        "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD",
-        "EURJPY", "GBPJPY", "EURGBP",
-        "XAUUSD", "XAGUSD", "XTIUSD", "XBRUSD", "XNGUSD",
-        "US500", "US30", "USTEC", "UK100", "DE40",
-        "BTCUSD", "ETHUSD", "LTCUSD", "XRPUSD",
+        "EURUSD",
+        "GBPUSD",
+        "USDJPY",
+        "AUDUSD",
+        "USDCAD",
+        "USDCHF",
+        "NZDUSD",
+        "EURJPY",
+        "GBPJPY",
+        "EURGBP",
+        "XAUUSD",
+        "XAGUSD",
+        "XTIUSD",
+        "XBRUSD",
+        "XNGUSD",
+        "US500",
+        "US30",
+        "USTEC",
+        "UK100",
+        "DE40",
+        "BTCUSD",
+        "ETHUSD",
+        "LTCUSD",
+        "XRPUSD",
     ]
 
 
@@ -209,6 +243,7 @@ class SystemDecision:
 # V2 Master AI Orchestrator
 # ---------------------------------------------------------------------------
 
+
 class MasterAIOrchestrator:
     """
     V2 Central AI Engine — fixes all V1 weaknesses:
@@ -229,24 +264,84 @@ class MasterAIOrchestrator:
     SAFETY_CRITICAL = {"circuit_breaker", "var_sizing", "error_recovery"}
 
     ENHANCEMENTS = {
-        "ppo_integration":          {"name": "PPO Integration",          "priority": 1, "dependencies": []},
-        "live_trading_loop":        {"name": "Live Trading Loop",        "priority": 1, "dependencies": ["ppo_integration"]},
-        "model_versioning":         {"name": "Model Versioning",         "priority": 1, "dependencies": ["ppo_integration"]},
-        "circuit_breaker":          {"name": "Circuit Breaker",          "priority": 2, "dependencies": ["live_trading_loop"]},
-        "data_pipeline":            {"name": "Data Pipeline",            "priority": 2, "dependencies": []},
-        "error_recovery":           {"name": "Error Recovery",           "priority": 2, "dependencies": ["live_trading_loop"]},
-        "feature_optimization":     {"name": "Feature Optimization",     "priority": 2, "dependencies": ["data_pipeline"]},
-        "algo_execution":           {"name": "Algo Execution",           "priority": 2, "dependencies": ["live_trading_loop"]},
-        "ensemble_weighting":       {"name": "Ensemble Weighting",       "priority": 2, "dependencies": ["ppo_integration"]},
-        "var_sizing":               {"name": "VaR-based Sizing",         "priority": 2, "dependencies": []},
-        "sentiment_alpha":          {"name": "Sentiment Alpha",          "priority": 2, "dependencies": []},
-        "regime_transition":        {"name": "Regime Transition Trading","priority": 2, "dependencies": ["ppo_integration"]},
-        "stress_testing":           {"name": "Stress Testing",           "priority": 3, "dependencies": []},
-        "walk_forward":             {"name": "Walk-Forward Optimization","priority": 3, "dependencies": []},
-        "integration_tests":        {"name": "Integration Tests",        "priority": 3, "dependencies": []},
-        "trading_sessions":         {"name": "Smart Trading Sessions",   "priority": 3, "dependencies": []},
-        "enhanced_dashboard":       {"name": "Enhanced Dashboard",       "priority": 3, "dependencies": []},
-        "event_avoidance":          {"name": "Event Avoidance",          "priority": 3, "dependencies": ["sentiment_alpha"]},
+        "ppo_integration": {
+            "name": "PPO Integration",
+            "priority": 1,
+            "dependencies": [],
+        },
+        "live_trading_loop": {
+            "name": "Live Trading Loop",
+            "priority": 1,
+            "dependencies": ["ppo_integration"],
+        },
+        "model_versioning": {
+            "name": "Model Versioning",
+            "priority": 1,
+            "dependencies": ["ppo_integration"],
+        },
+        "circuit_breaker": {
+            "name": "Circuit Breaker",
+            "priority": 2,
+            "dependencies": ["live_trading_loop"],
+        },
+        "data_pipeline": {"name": "Data Pipeline", "priority": 2, "dependencies": []},
+        "error_recovery": {
+            "name": "Error Recovery",
+            "priority": 2,
+            "dependencies": ["live_trading_loop"],
+        },
+        "feature_optimization": {
+            "name": "Feature Optimization",
+            "priority": 2,
+            "dependencies": ["data_pipeline"],
+        },
+        "algo_execution": {
+            "name": "Algo Execution",
+            "priority": 2,
+            "dependencies": ["live_trading_loop"],
+        },
+        "ensemble_weighting": {
+            "name": "Ensemble Weighting",
+            "priority": 2,
+            "dependencies": ["ppo_integration"],
+        },
+        "var_sizing": {"name": "VaR-based Sizing", "priority": 2, "dependencies": []},
+        "sentiment_alpha": {
+            "name": "Sentiment Alpha",
+            "priority": 2,
+            "dependencies": [],
+        },
+        "regime_transition": {
+            "name": "Regime Transition Trading",
+            "priority": 2,
+            "dependencies": ["ppo_integration"],
+        },
+        "stress_testing": {"name": "Stress Testing", "priority": 3, "dependencies": []},
+        "walk_forward": {
+            "name": "Walk-Forward Optimization",
+            "priority": 3,
+            "dependencies": [],
+        },
+        "integration_tests": {
+            "name": "Integration Tests",
+            "priority": 3,
+            "dependencies": [],
+        },
+        "trading_sessions": {
+            "name": "Smart Trading Sessions",
+            "priority": 3,
+            "dependencies": [],
+        },
+        "enhanced_dashboard": {
+            "name": "Enhanced Dashboard",
+            "priority": 3,
+            "dependencies": [],
+        },
+        "event_avoidance": {
+            "name": "Event Avoidance",
+            "priority": 3,
+            "dependencies": ["sentiment_alpha"],
+        },
     }
 
     STATE_DIM = 16
@@ -311,7 +406,9 @@ class MasterAIOrchestrator:
         self._sync_target(tau=1.0)  # hard copy at init
 
         self.meta_optimizer = optim.AdamW(
-            self.meta_learner.parameters(), lr=learning_rate, weight_decay=1e-5,
+            self.meta_learner.parameters(),
+            lr=learning_rate,
+            weight_decay=1e-5,
         )
 
         # Cosine annealing LR scheduler with linear warmup
@@ -323,7 +420,8 @@ class MasterAIOrchestrator:
             return 0.5 * (1.0 + math.cos(math.pi * progress))
 
         self.lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
-            self.meta_optimizer, lr_lambda,
+            self.meta_optimizer,
+            lr_lambda,
         )
 
         # Prioritized replay
@@ -355,10 +453,18 @@ class MasterAIOrchestrator:
         logger.info("=" * 60)
         logger.info("[MasterAI v2.0] Central AI Engine initialized")
         logger.info(f"[MasterAI] Managing {len(self.ENHANCEMENTS)} enhancements")
-        logger.info(f"[MasterAI] Network: {self.STATE_DIM}->128->64->32->{self.N_ACTIONS}")
-        logger.info(f"[MasterAI] TD-learning with target network (tau={self.TARGET_UPDATE_TAU})")
-        logger.info(f"[MasterAI] Prioritized replay (cap={self.replay_buffer.capacity})")
-        logger.info(f"[MasterAI] Cold-start: first {self.COLD_START_TRADES} trades use heuristics")
+        logger.info(
+            f"[MasterAI] Network: {self.STATE_DIM}->128->64->32->{self.N_ACTIONS}"
+        )
+        logger.info(
+            f"[MasterAI] TD-learning with target network (tau={self.TARGET_UPDATE_TAU})"
+        )
+        logger.info(
+            f"[MasterAI] Prioritized replay (cap={self.replay_buffer.capacity})"
+        )
+        logger.info(
+            f"[MasterAI] Cold-start: first {self.COLD_START_TRADES} trades use heuristics"
+        )
         logger.info(f"[MasterAI] Eval timeout: {self.EVAL_TIMEOUT_SEC}s")
         logger.info("=" * 60)
 
@@ -371,7 +477,11 @@ class MasterAIOrchestrator:
             is_active = config["priority"] == 1 or key in self.SAFETY_CRITICAL
             self.enhancements[key] = EnhancementMetrics(
                 name=config["name"],
-                status=EnhancementStatus.ACTIVE if is_active else EnhancementStatus.LEARNING,
+                status=(
+                    EnhancementStatus.ACTIVE
+                    if is_active
+                    else EnhancementStatus.LEARNING
+                ),
             )
 
     def _sync_target(self, tau: Optional[float] = None):
@@ -384,7 +494,9 @@ class MasterAIOrchestrator:
 
     def wire_system_components(self, components: Dict[str, Any]):
         self.system_components = components
-        logger.info(f"[MasterAI] Wired {len(components)} system components under direct control")
+        logger.info(
+            f"[MasterAI] Wired {len(components)} system components under direct control"
+        )
 
     def is_enabled(self, enhancement_name: str) -> bool:
         if enhancement_name not in self.enhancements:
@@ -410,11 +522,11 @@ class MasterAIOrchestrator:
             cb = comp.get("circuit_breakers")
             if cb:
                 for cb_inst in cb.values():
-                    if hasattr(cb_inst, 'enable'):
+                    if hasattr(cb_inst, "enable"):
                         cb_inst.enable()
         elif enh == "algo_execution":
             ae = comp.get("algo_executor")
-            if ae and hasattr(ae, 'enable'):
+            if ae and hasattr(ae, "enable"):
                 ae.enable()
         elif enh == "sentiment_alpha":
             ba = comp.get("behavioral_ai")
@@ -462,11 +574,11 @@ class MasterAIOrchestrator:
             cb = comp.get("circuit_breakers")
             if cb:
                 for cb_inst in cb.values():
-                    if hasattr(cb_inst, 'disable'):
+                    if hasattr(cb_inst, "disable"):
                         cb_inst.disable()
         elif enh == "algo_execution":
             ae = comp.get("algo_executor")
-            if ae and hasattr(ae, 'disable'):
+            if ae and hasattr(ae, "disable"):
                 ae.disable()
         elif enh == "sentiment_alpha":
             ba = comp.get("behavioral_ai")
@@ -509,12 +621,16 @@ class MasterAIOrchestrator:
             if mr:
                 mr.enabled = False
 
-    def _apply_parameter_adjustments(self, adjustments: Dict[str, Any], comp: Dict[str, Any]):
+    def _apply_parameter_adjustments(
+        self, adjustments: Dict[str, Any], comp: Dict[str, Any]
+    ):
         risk = comp.get("risk")
         if risk:
-            if "position_multiplier" in adjustments and hasattr(risk, 'kelly_fraction'):
-                risk.kelly_fraction = risk.kelly_fraction * adjustments["position_multiplier"]
-            if "max_positions" in adjustments and hasattr(risk, 'max_positions'):
+            if "position_multiplier" in adjustments and hasattr(risk, "kelly_fraction"):
+                risk.kelly_fraction = (
+                    risk.kelly_fraction * adjustments["position_multiplier"]
+                )
+            if "max_positions" in adjustments and hasattr(risk, "max_positions"):
                 risk.max_positions = adjustments["max_positions"]
 
     # ------------------------------------------------------------------
@@ -523,7 +639,9 @@ class MasterAIOrchestrator:
 
     def _build_state_vector(self, bot_instance, market_data: Dict) -> np.ndarray:
         health_scores = self._check_enhancement_health()
-        avg_health = float(np.mean(list(health_scores.values()))) if health_scores else 0.5
+        avg_health = (
+            float(np.mean(list(health_scores.values()))) if health_scores else 0.5
+        )
         perf = self._calculate_system_performance()
         vol = self._assess_market_conditions(market_data)
         vol_map = {"calm": 0.0, "normal": 0.5, "volatile": 1.0, "unknown": 0.5}
@@ -543,7 +661,8 @@ class MasterAIOrchestrator:
         self.system_sharpe = sharpe
         sharpe_norm = float(np.clip((sharpe + 2.0) / 4.0, 0.0, 1.0))
         active_count = sum(
-            1 for e in self.enhancements.values()
+            1
+            for e in self.enhancements.values()
             if e.status == EnhancementStatus.ACTIVE
         )
         active_ratio = active_count / max(len(self.enhancements), 1)
@@ -551,13 +670,24 @@ class MasterAIOrchestrator:
         # Fixed-order confidence features: each slot always maps to the same enhancement
         fixed_keys = sorted(self.ENHANCEMENTS.keys())
         n_conf_slots = self.STATE_DIM - 8
-        confs_fixed = [self.enhancements[k].confidence for k in fixed_keys[:n_conf_slots]]
+        confs_fixed = [
+            self.enhancements[k].confidence for k in fixed_keys[:n_conf_slots]
+        ]
         confs_padded = (confs_fixed + [0.5] * n_conf_slots)[:n_conf_slots]
-        return np.array([
-            avg_health, perf, vol_map.get(vol, 0.5), sharpe_norm,
-            win_rate, pnl_norm, active_ratio, exp_level,
-            *confs_padded,
-        ], dtype=np.float32)
+        return np.array(
+            [
+                avg_health,
+                perf,
+                vol_map.get(vol, 0.5),
+                sharpe_norm,
+                win_rate,
+                pnl_norm,
+                active_ratio,
+                exp_level,
+                *confs_padded,
+            ],
+            dtype=np.float32,
+        )
 
     # ------------------------------------------------------------------
     # TD learning
@@ -579,7 +709,9 @@ class MasterAIOrchestrator:
         wr_r = float(np.clip(wr_delta * 2.0, -0.5, 0.5))
         dd = self._estimate_drawdown()
         dd_p = -float(np.clip(dd * 2.0, -1.0, 0.0))
-        return float(np.clip(pnl_r * 0.5 + sharpe_r * 0.2 + wr_r * 0.2 + dd_p * 0.1, -2.0, 2.0))
+        return float(
+            np.clip(pnl_r * 0.5 + sharpe_r * 0.2 + wr_r * 0.2 + dd_p * 0.1, -2.0, 2.0)
+        )
 
     def _estimate_drawdown(self) -> float:
         if len(self.trade_history) < 5:
@@ -665,8 +797,9 @@ class MasterAIOrchestrator:
         q_values = self.meta_learner.predict_q(state)
         return int(np.argmax(q_values))
 
-    def _heuristic_action(self, state: np.ndarray, perf: float, market_state: str,
-                          avg_health: float) -> SystemDecision:
+    def _heuristic_action(
+        self, state: np.ndarray, perf: float, market_state: str, avg_health: float
+    ) -> SystemDecision:
         decision = SystemDecision()
         if avg_health < 0.3:
             decision.action = "halt"
@@ -687,9 +820,21 @@ class MasterAIOrchestrator:
             decision.action = "reconfigure"
             decision.reason = "[HEURISTIC] Volatile market"
             decision.confidence = 0.7
-            decision.enhancements_to_disable = ["regime_transition", "sentiment_alpha", "algo_execution"]
-            decision.enhancements_to_enable = ["circuit_breaker", "var_sizing", "event_avoidance"]
-            decision.adjustments = {"position_multiplier": 0.5, "confidence_threshold": 0.8, "max_positions": 3}
+            decision.enhancements_to_disable = [
+                "regime_transition",
+                "sentiment_alpha",
+                "algo_execution",
+            ]
+            decision.enhancements_to_enable = [
+                "circuit_breaker",
+                "var_sizing",
+                "event_avoidance",
+            ]
+            decision.adjustments = {
+                "position_multiplier": 0.5,
+                "confidence_threshold": 0.8,
+                "max_positions": 3,
+            }
         else:
             decision.action = "continue"
             decision.reason = "[HEURISTIC] System optimal"
@@ -699,7 +844,9 @@ class MasterAIOrchestrator:
             ]
         return decision
 
-    def _meta_action_to_decision(self, action: int, market_state: str) -> SystemDecision:
+    def _meta_action_to_decision(
+        self, action: int, market_state: str
+    ) -> SystemDecision:
         decision = SystemDecision()
         decision.confidence = 0.85
         if action == 0:
@@ -708,20 +855,38 @@ class MasterAIOrchestrator:
         elif action == 1:
             decision.action = "reconfigure"
             decision.reason = f"[LEARNED] Conservative mode (action={action})"
-            decision.enhancements_to_disable = ["sentiment_alpha", "algo_execution", "regime_transition"]
-            decision.enhancements_to_enable = ["circuit_breaker", "var_sizing", "event_avoidance"]
-            decision.adjustments = {"position_multiplier": 0.5, "confidence_threshold": 0.75}
+            decision.enhancements_to_disable = [
+                "sentiment_alpha",
+                "algo_execution",
+                "regime_transition",
+            ]
+            decision.enhancements_to_enable = [
+                "circuit_breaker",
+                "var_sizing",
+                "event_avoidance",
+            ]
+            decision.adjustments = {
+                "position_multiplier": 0.5,
+                "confidence_threshold": 0.75,
+            }
         elif action == 2:
             decision.action = "reconfigure"
             decision.reason = f"[LEARNED] Aggressive mode (action={action})"
             decision.enhancements_to_enable = list(self.ENHANCEMENTS.keys())
-            decision.adjustments = {"position_multiplier": 1.2, "confidence_threshold": 0.6}
+            decision.adjustments = {
+                "position_multiplier": 1.2,
+                "confidence_threshold": 0.6,
+            }
         elif action == 3:
             decision.action = "reconfigure"
             decision.reason = f"[LEARNED] Reduced risk (action={action})"
             decision.enhancements_to_disable = ["algo_execution", "sentiment_alpha"]
             decision.enhancements_to_enable = ["circuit_breaker", "var_sizing"]
-            decision.adjustments = {"position_multiplier": 0.3, "confidence_threshold": 0.85, "max_positions": 2}
+            decision.adjustments = {
+                "position_multiplier": 0.3,
+                "confidence_threshold": 0.85,
+                "max_positions": 2,
+            }
         elif action == 4:
             decision.action = "halt"
             decision.reason = f"[LEARNED] Emergency halt (action={action})"
@@ -739,7 +904,7 @@ class MasterAIOrchestrator:
         market_data: Dict,
         account_info: Dict,
     ) -> SystemDecision:
-        if getattr(self, '_evaluating', False):
+        if getattr(self, "_evaluating", False):
             logger.debug("[MasterAI] Re-entrant evaluate_system_state skipped")
             return SystemDecision(action="continue", reason="re-entrant_guard")
         self._evaluating = True
@@ -772,21 +937,29 @@ class MasterAIOrchestrator:
             self._evaluating = False
 
     def _fallback_decision(self, reason: str) -> SystemDecision:
-        avg_health = float(np.mean(list(
-            self._check_enhancement_health().values()
-        ))) if self.enhancements else 0.5
+        avg_health = (
+            float(np.mean(list(self._check_enhancement_health().values())))
+            if self.enhancements
+            else 0.5
+        )
         perf = self._calculate_system_performance()
         return self._heuristic_action(
             np.zeros(self.STATE_DIM, dtype=np.float32),
-            perf, "unknown", avg_health,
+            perf,
+            "unknown",
+            avg_health,
         )
 
-    async def _evaluate_impl(self, bot_instance, market_data, account_info) -> SystemDecision:
+    async def _evaluate_impl(
+        self, bot_instance, market_data, account_info
+    ) -> SystemDecision:
         if bot_instance:
             self._update_all_enhancement_metrics(bot_instance)
         current_state = self._build_state_vector(bot_instance, market_data)
         health_scores = self._check_enhancement_health()
-        avg_health = float(np.mean(list(health_scores.values()))) if health_scores else 0.5
+        avg_health = (
+            float(np.mean(list(health_scores.values()))) if health_scores else 0.5
+        )
         market_state = self._assess_market_conditions(market_data)
 
         # --- TD transition: store (prev_state, prev_action, reward, current_state) ---
@@ -794,8 +967,11 @@ class MasterAIOrchestrator:
             td_reward = self._compute_td_reward()
             done = self._prev_action == 4  # HALT action
             self.replay_buffer.push(
-                self._prev_state, self._prev_action, td_reward,
-                current_state, done,
+                self._prev_state,
+                self._prev_action,
+                td_reward,
+                current_state,
+                done,
             )
             self._train_step()
 
@@ -805,7 +981,8 @@ class MasterAIOrchestrator:
             decision = self._heuristic_action(
                 current_state,
                 self._calculate_system_performance(),
-                market_state, avg_health,
+                market_state,
+                avg_health,
             )
         else:
             decision = self._meta_action_to_decision(meta_action, market_state)
@@ -813,31 +990,34 @@ class MasterAIOrchestrator:
                 decision.action = "halt"
                 decision.reason = f"[SAFETY OVERRIDE] Health critical: {avg_health:.1%}"
                 decision.enhancements_to_disable = list(self.ENHANCEMENTS.keys())
-            logger.info(f"[MasterAI] Learned: action={meta_action} -> {decision.action}")
+            logger.info(
+                f"[MasterAI] Learned: action={meta_action} -> {decision.action}"
+            )
 
         # --- Store state/action for next TD transition ---
         self._prev_state = current_state.copy()
         self._prev_action = meta_action if meta_action != -1 else None
-        self._pnl_at_last_eval = sum(
-            t.get("pnl", 0) for t in self.trade_history[-50:]
-        )
+        self._pnl_at_last_eval = sum(t.get("pnl", 0) for t in self.trade_history[-50:])
         self._sharpe_at_last_eval = self.system_sharpe
-        self._winrate_at_last_eval = (
-            sum(1 for t in self.trade_history[-50:] if t.get("pnl", 0) > 0)
-            / max(len(self.trade_history[-50:]), 1)
-        )
+        self._winrate_at_last_eval = sum(
+            1 for t in self.trade_history[-50:] if t.get("pnl", 0) > 0
+        ) / max(len(self.trade_history[-50:]), 1)
         self._last_eval_time = time.time()
 
         # Run diagnostics + self-heal every 10 evaluations
         if self.training_step % 10 == 0 and bot_instance:
             diag = self.run_diagnostics(bot_instance)
             if diag["issues"]:
-                logger.warning(f"[MasterAI] Diagnostics: {len(diag['issues'])} issues found")
+                logger.warning(
+                    f"[MasterAI] Diagnostics: {len(diag['issues'])} issues found"
+                )
                 for issue in diag["issues"]:
                     logger.warning(f"[MasterAI]   ISSUE: {issue}")
                 fixes = await self.self_heal(bot_instance)
                 if fixes:
-                    logger.success(f"[MasterAI] Self-healed {len(fixes)} issues: {fixes}")
+                    logger.success(
+                        f"[MasterAI] Self-healed {len(fixes)} issues: {fixes}"
+                    )
                 else:
                     logger.warning("[MasterAI] Could not auto-fix all issues")
             elif diag["warnings"]:
@@ -868,7 +1048,7 @@ class MasterAIOrchestrator:
     # ------------------------------------------------------------------
 
     def on_trade_result(self, trade: Dict):
-        if getattr(self, '_processing_trade', False):
+        if getattr(self, "_processing_trade", False):
             self._pending_trades.append(trade)
             return
         self._processing_trade = True
@@ -915,17 +1095,20 @@ class MasterAIOrchestrator:
         try:
             path = Path(self.model_path)
             path.parent.mkdir(parents=True, exist_ok=True)
-            torch.save({
-                "model_state_dict": self.meta_learner.state_dict(),
-                "target_state_dict": self.target_network.state_dict(),
-                "optimizer_state_dict": self.meta_optimizer.state_dict(),
-                "scheduler_state_dict": self.lr_scheduler.state_dict(),
-                "training_step": self.training_step,
-                "epsilon": self.epsilon,
-                "system_sharpe": self.system_sharpe,
-                "system_pnl": self.system_pnl,
-                "timestamp": time.time(),
-            }, str(path))
+            torch.save(
+                {
+                    "model_state_dict": self.meta_learner.state_dict(),
+                    "target_state_dict": self.target_network.state_dict(),
+                    "optimizer_state_dict": self.meta_optimizer.state_dict(),
+                    "scheduler_state_dict": self.lr_scheduler.state_dict(),
+                    "training_step": self.training_step,
+                    "epsilon": self.epsilon,
+                    "system_sharpe": self.system_sharpe,
+                    "system_pnl": self.system_pnl,
+                    "timestamp": time.time(),
+                },
+                str(path),
+            )
             logger.info(f"[MasterAI] Model saved to {self.model_path}")
         except Exception as e:
             logger.warning(f"[MasterAI] Save failed: {e}")
@@ -939,19 +1122,24 @@ class MasterAIOrchestrator:
             try:
                 path = Path(self.best_model_path)
                 path.parent.mkdir(parents=True, exist_ok=True)
-                torch.save({
-                    "model_state_dict": self.meta_learner.state_dict(),
-                    "target_state_dict": self.target_network.state_dict(),
-                    "optimizer_state_dict": self.meta_optimizer.state_dict(),
-                    "training_step": self.training_step,
-                    "epsilon": self.epsilon,
-                    "system_sharpe": self.system_sharpe,
-                    "system_pnl": self.system_pnl,
-                    "best_sharpe": self.best_sharpe,
-                    "best_performance": self.best_performance,
-                    "timestamp": time.time(),
-                }, str(path))
-                logger.info(f"[MasterAI] Best model saved (sharpe={self.best_sharpe:.3f})")
+                torch.save(
+                    {
+                        "model_state_dict": self.meta_learner.state_dict(),
+                        "target_state_dict": self.target_network.state_dict(),
+                        "optimizer_state_dict": self.meta_optimizer.state_dict(),
+                        "training_step": self.training_step,
+                        "epsilon": self.epsilon,
+                        "system_sharpe": self.system_sharpe,
+                        "system_pnl": self.system_pnl,
+                        "best_sharpe": self.best_sharpe,
+                        "best_performance": self.best_performance,
+                        "timestamp": time.time(),
+                    },
+                    str(path),
+                )
+                logger.info(
+                    f"[MasterAI] Best model saved (sharpe={self.best_sharpe:.3f})"
+                )
             except Exception as e:
                 logger.warning(f"[MasterAI] Best-model save failed: {e}")
 
@@ -959,11 +1147,14 @@ class MasterAIOrchestrator:
         try:
             path = Path(self.model_path)
             if path.exists():
-                ckpt = torch.load(str(path), map_location='cpu')
+                ckpt = torch.load(str(path), map_location="cpu")
                 self.meta_learner.load_state_dict(ckpt["model_state_dict"])
-                self.target_network.load_state_dict(ckpt.get(
-                    "target_state_dict", ckpt["model_state_dict"],
-                ))
+                self.target_network.load_state_dict(
+                    ckpt.get(
+                        "target_state_dict",
+                        ckpt["model_state_dict"],
+                    )
+                )
                 if "optimizer_state_dict" in ckpt:
                     self.meta_optimizer.load_state_dict(ckpt["optimizer_state_dict"])
                 if "scheduler_state_dict" in ckpt:
@@ -975,7 +1166,8 @@ class MasterAIOrchestrator:
                 else:
                     self.epsilon = max(
                         self.EPSILON_MIN,
-                        self.EPSILON_INIT * (1.0 - self.training_step / max(self.EPSILON_DECAY_STEPS, 1)),
+                        self.EPSILON_INIT
+                        * (1.0 - self.training_step / max(self.EPSILON_DECAY_STEPS, 1)),
                     )
                 self.system_sharpe = ckpt.get("system_sharpe", 0.0)
                 self.system_pnl = ckpt.get("system_pnl", 0.0)
@@ -996,11 +1188,17 @@ class MasterAIOrchestrator:
 
     async def auto_reconfigure(self, bot_instance) -> Dict:
         if time.time() - self.last_reconfiguration < self.reconfiguration_cooldown:
-            return {"action": "cooldown", "reason": "Too soon since last reconfiguration"}
-        current_active = sorted([
-            k for k, v in self.enhancements.items()
-            if v.status == EnhancementStatus.ACTIVE
-        ])
+            return {
+                "action": "cooldown",
+                "reason": "Too soon since last reconfiguration",
+            }
+        current_active = sorted(
+            [
+                k
+                for k, v in self.enhancements.items()
+                if v.status == EnhancementStatus.ACTIVE
+            ]
+        )
         current_sig = "|".join(current_active)
         current_perf = self.enhancement_combinations.get(current_sig, 0.0)
         candidates = self._generate_candidates(current_active)
@@ -1043,8 +1241,10 @@ class MasterAIOrchestrator:
             worst = min(current_active, key=self._normalized_pnl)
             candidates.append([e for e in current_active if e != worst])
         disabled = [
-            k for k, v in self.enhancements.items()
-            if v.status == EnhancementStatus.DISABLED and self.ENHANCEMENTS[k]["priority"] <= 2
+            k
+            for k, v in self.enhancements.items()
+            if v.status == EnhancementStatus.DISABLED
+            and self.ENHANCEMENTS[k]["priority"] <= 2
         ]
         if disabled:
             best_d = max(disabled, key=self._normalized_pnl)
@@ -1062,42 +1262,43 @@ class MasterAIOrchestrator:
     # ------------------------------------------------------------------
 
     def _update_all_enhancement_metrics(self, bot_instance):
-        rs = getattr(bot_instance, 'regime_system', None)
+        rs = getattr(bot_instance, "regime_system", None)
         if rs:
             m = self.enhancements.get("ppo_integration")
             if m and rs.agents:
                 active = sum(1 for a in rs.agents.values() if a is not None)
                 m.confidence = active / max(len(rs.agents), 1)
-        cb = getattr(bot_instance, 'circuit_breakers', {})
+        cb = getattr(bot_instance, "circuit_breakers", {})
         m = self.enhancements.get("circuit_breaker")
         if m:
             any_halted = any(
                 cb_inst.get_snapshot().should_halt
                 for cb_inst in cb.values()
-                if hasattr(cb_inst, 'get_snapshot')
+                if hasattr(cb_inst, "get_snapshot")
             )
             m.confidence = 0.3 if any_halted else 1.0
-        dm = getattr(bot_instance, 'data_manager', None)
+        dm = getattr(bot_instance, "data_manager", None)
         m = self.enhancements.get("data_pipeline")
         if m and dm:
             with_data = sum(
-                1 for sym in SYMBOLS
+                1
+                for sym in SYMBOLS
                 if dm.get_ohlcv(sym, "1h") is not None
                 and len(dm.get_ohlcv(sym, "1h")) > 50
             )
             m.confidence = with_data / max(len(SYMBOLS), 1)
-        ensemble = getattr(bot_instance, 'ensemble', None)
+        ensemble = getattr(bot_instance, "ensemble", None)
         m = self.enhancements.get("ensemble_weighting")
-        if m and hasattr(ensemble, 'experts') and ensemble.experts:
+        if m and hasattr(ensemble, "experts") and ensemble.experts:
             m.confidence = len(ensemble.experts) / 3.0
         m = self.enhancements.get("var_sizing")
-        risk = getattr(bot_instance, 'risk', None)
-        if m and risk and hasattr(risk, 'calculate_kelly_size'):
+        risk = getattr(bot_instance, "risk", None)
+        if m and risk and hasattr(risk, "calculate_kelly_size"):
             m.confidence = 0.8
-        st = getattr(bot_instance, 'stress_tester', None)
+        st = getattr(bot_instance, "stress_tester", None)
         m = self.enhancements.get("stress_testing")
-        if m and st and hasattr(st, 'results') and st.results:
-            passed = sum(1 for r in st.results if getattr(r, 'passed', False))
+        if m and st and hasattr(st, "results") and st.results:
+            passed = sum(1 for r in st.results if getattr(r, "passed", False))
             total = len(st.results)
             m.confidence = passed / total if total > 0 else 0.5
         m = self.enhancements.get("enhanced_dashboard")
@@ -1193,7 +1394,10 @@ class MasterAIOrchestrator:
             if enh in self.enhancements:
                 self.enhancements[enh].status = EnhancementStatus.DISABLED
         # Healing: on transition RECOVERING -> OPTIMAL, re-enable priority-1 modules
-        if prev_state == SystemState.RECOVERING and self.system_state == SystemState.OPTIMAL:
+        if (
+            prev_state == SystemState.RECOVERING
+            and self.system_state == SystemState.OPTIMAL
+        ):
             self._heal_enhancements()
 
     def _heal_enhancements(self):
@@ -1207,7 +1411,10 @@ class MasterAIOrchestrator:
         comp = self.system_components
         for key in self.ENHANCEMENTS:
             if self.ENHANCEMENTS[key]["priority"] == 1 or key in self.SAFETY_CRITICAL:
-                if self.enhancements.get(key, EnhancementMetrics("")).status == EnhancementStatus.ACTIVE:
+                if (
+                    self.enhancements.get(key, EnhancementMetrics("")).status
+                    == EnhancementStatus.ACTIVE
+                ):
                     self._physically_enable_enhancement(key, comp)
 
     # ------------------------------------------------------------------
@@ -1233,10 +1440,13 @@ class MasterAIOrchestrator:
             metrics.confidence *= 0.95
         metrics.pnl_contribution += pnl
         metrics.trades_influenced += trades_count
-        active = sorted([
-            k for k, v in self.enhancements.items()
-            if v.status == EnhancementStatus.ACTIVE
-        ])
+        active = sorted(
+            [
+                k
+                for k, v in self.enhancements.items()
+                if v.status == EnhancementStatus.ACTIVE
+            ]
+        )
         sig = "|".join(active)
         if sig not in self.enhancement_combinations:
             self.enhancement_combinations[sig] = 0.0
@@ -1251,45 +1461,59 @@ class MasterAIOrchestrator:
             return fixes
 
         diag = self.run_diagnostics(bot_instance)
-        dm = getattr(bot_instance, 'data_manager', None)
-        fp = getattr(bot_instance, 'feature_pipeline', None)
-        risk = getattr(bot_instance, 'risk', None)
+        dm = getattr(bot_instance, "data_manager", None)
+        fp = getattr(bot_instance, "feature_pipeline", None)
+        risk = getattr(bot_instance, "risk", None)
 
         from data.data_manager import SYMBOLS as ALL_SYMBOLS
+
         if dm and len(self.trade_history) > 10:
             missing = [
-                s for s in ALL_SYMBOLS
+                s
+                for s in ALL_SYMBOLS
                 if dm.get_ohlcv(s, "1h") is None or len(dm.get_ohlcv(s, "1h")) < 50
             ]
             if missing and len(missing) < len(ALL_SYMBOLS):
                 for sym in missing[:3]:
-                    base = getattr(dm, 'BASE_PRICES', {}).get(sym, 1.12)
+                    base = getattr(dm, "BASE_PRICES", {}).get(sym, 1.12)
                     import pandas as pd
                     import numpy as np
+
                     now_ts = int(time.time())
                     ts = list(range(now_ts - 720 * 3600, now_ts, 3600))
-                    df = pd.DataFrame({
-                        "timestamp": ts, "open": base, "high": base * 1.001,
-                        "low": base * 0.999, "close": base, "volume": 1000,
-                    })
+                    df = pd.DataFrame(
+                        {
+                            "timestamp": ts,
+                            "open": base,
+                            "high": base * 1.001,
+                            "low": base * 0.999,
+                            "close": base,
+                            "volume": 1000,
+                        }
+                    )
                     dm.ohlcv[sym]["1h"] = df
                 fixes.append(f"Generated synthetic data for {len(missing)} symbols")
 
         # Fix feature pipeline norms
         if fp:
-            means = getattr(fp, '_means', {})
-            stds = getattr(fp, '_stds', {})
+            means = getattr(fp, "_means", {})
+            stds = getattr(fp, "_stds", {})
             for key in list(means.keys()):
                 if key in stds and len(means[key]) != len(stds[key]):
                     max_len = max(len(means[key]), len(stds[key]))
-                    means[key] = np.pad(means[key], (0, max_len - len(means[key])), constant_values=0)
-                    stds[key] = np.pad(stds[key], (0, max_len - len(stds[key])), constant_values=1)
+                    means[key] = np.pad(
+                        means[key], (0, max_len - len(means[key])), constant_values=0
+                    )
+                    stds[key] = np.pad(
+                        stds[key], (0, max_len - len(stds[key])), constant_values=1
+                    )
                     fp._means[key] = means[key]
                     fp._stds[key] = stds[key]
                     logger.info(f"[MasterAI] HEAL: Resized norm dims for {key}")
                     fixes.append(f"Fixed norm dims for {key}")
             if not means and dm:
                 from rts_ai_fx.features_unified import FeaturePipeline
+
                 fp._means = {}
                 fp._stds = {}
                 fp.fit_all(dm.ohlcv)
@@ -1297,29 +1521,32 @@ class MasterAIOrchestrator:
                 fixes.append("Refitted feature pipeline")
 
         # Fix kill switch
-        if risk and getattr(risk, 'kill_switch_triggered', False):
+        if risk and getattr(risk, "kill_switch_triggered", False):
             risk.kill_switch_triggered = False
             logger.info("[MasterAI] HEAL: Reset kill switch")
             fixes.append("Reset kill switch")
 
         # Fix stale PPO agents with dim mismatch
-        rs = getattr(bot_instance, 'regime_system', None)
-        if rs and hasattr(bot_instance, '_reinit_regime_agents'):
-            agents = getattr(rs, 'agents', {})
+        rs = getattr(bot_instance, "regime_system", None)
+        if rs and hasattr(bot_instance, "_reinit_regime_agents"):
+            agents = getattr(rs, "agents", {})
             for name, agent in agents.items():
-                if agent is None or not hasattr(agent, 'actor'):
-                    actual_dim = getattr(bot_instance, '_get_actual_state_dim', lambda: 2850)()
+                if agent is None or not hasattr(agent, "actor"):
+                    actual_dim = getattr(
+                        bot_instance, "_get_actual_state_dim", lambda: 2850
+                    )()
                     bot_instance._reinit_regime_agents(actual_dim)
                     fixes.append(f"Re-initialized {name} agent")
                     break
 
         # Reconnect execution if needed
-        exec_eng = getattr(bot_instance, 'execution', None)
-        if exec_eng and hasattr(exec_eng, 'client'):
+        exec_eng = getattr(bot_instance, "execution", None)
+        if exec_eng and hasattr(exec_eng, "client"):
             client = exec_eng.client
-            if hasattr(client, 'is_connected') and not client.is_connected():
+            if hasattr(client, "is_connected") and not client.is_connected():
                 try:
                     import asyncio
+
                     await client.start()
                     logger.info("[MasterAI] HEAL: Reconnected cTrader client")
                     fixes.append("Reconnected cTrader")
@@ -1342,45 +1569,52 @@ class MasterAIOrchestrator:
             return {"status": "unknown", "issues": []}
 
         from data.data_manager import SYMBOLS as ALL_SYMBOLS
-        dm = getattr(bot_instance, 'data_manager', None)
+
+        dm = getattr(bot_instance, "data_manager", None)
         if dm:
             symbols_with_data = sum(
-                1 for sym in ALL_SYMBOLS
-                if dm.get_ohlcv(sym, "1h") is not None and len(dm.get_ohlcv(sym, "1h")) > 50
+                1
+                for sym in ALL_SYMBOLS
+                if dm.get_ohlcv(sym, "1h") is not None
+                and len(dm.get_ohlcv(sym, "1h")) > 50
             )
             total_symbols = len(ALL_SYMBOLS)
             if total_symbols > 0 and symbols_with_data < total_symbols:
-                issues.append(f"Data: only {symbols_with_data}/{total_symbols} symbols have OHLCV")
+                issues.append(
+                    f"Data: only {symbols_with_data}/{total_symbols} symbols have OHLCV"
+                )
             elif symbols_with_data == 0:
                 issues.append("Data: NO symbols have OHLCV data")
 
         # Feature pipeline health
-        fp = getattr(bot_instance, 'feature_pipeline', None)
+        fp = getattr(bot_instance, "feature_pipeline", None)
         if fp:
-            if not getattr(fp, '_feature_cols', None):
+            if not getattr(fp, "_feature_cols", None):
                 warnings_list.append("Feature pipeline: _feature_cols not set")
-            means = getattr(fp, '_means', {})
-            stds = getattr(fp, '_stds', {})
+            means = getattr(fp, "_means", {})
+            stds = getattr(fp, "_stds", {})
             if not means:
                 issues.append("Feature pipeline: no normalization means fitted")
-            mismatched = sum(1 for k in means if k in stds and len(means[k]) != len(stds[k]))
+            mismatched = sum(
+                1 for k in means if k in stds and len(means[k]) != len(stds[k])
+            )
             if mismatched > 0:
                 issues.append(f"Feature pipeline: {mismatched} norm dim mismatches")
 
         # Model health
-        ensemble = getattr(bot_instance, 'ensemble', None)
+        ensemble = getattr(bot_instance, "ensemble", None)
         if ensemble:
-            n_experts = len(getattr(ensemble, 'experts', []))
+            n_experts = len(getattr(ensemble, "experts", []))
             if n_experts < 2:
                 issues.append(f"Ensemble: only {n_experts} experts loaded")
-            elo = getattr(ensemble, 'elo_ratings', {})
+            elo = getattr(ensemble, "elo_ratings", {})
             low_elo = [k for k, v in elo.items() if v < 1000]
             if low_elo:
                 warnings_list.append(f"Ensemble: low ELO experts: {low_elo}")
 
-        rs = getattr(bot_instance, 'regime_system', None)
+        rs = getattr(bot_instance, "regime_system", None)
         if rs:
-            agents = getattr(rs, 'agents', {})
+            agents = getattr(rs, "agents", {})
             if not agents:
                 warnings_list.append("PPO: no regime agents loaded")
             for name, agent in agents.items():
@@ -1388,25 +1622,25 @@ class MasterAIOrchestrator:
                     warnings_list.append(f"PPO: {name} agent is None")
 
         # Risk manager health
-        risk = getattr(bot_instance, 'risk', None)
+        risk = getattr(bot_instance, "risk", None)
         if risk:
-            if getattr(risk, 'kill_switch_triggered', False):
+            if getattr(risk, "kill_switch_triggered", False):
                 issues.append("Risk: KILL SWITCH ACTIVE")
-            consec = getattr(risk, 'consecutive_losses', 0)
+            consec = getattr(risk, "consecutive_losses", 0)
             if consec > 3:
                 warnings_list.append(f"Risk: {consec} consecutive losses")
 
         # Execution health
-        exec_eng = getattr(bot_instance, 'execution', None)
+        exec_eng = getattr(bot_instance, "execution", None)
         if exec_eng:
-            bal = getattr(exec_eng, '_balance', 0)
-            init = getattr(bot_instance, 'initial_balance', 100000)
+            bal = getattr(exec_eng, "_balance", 0)
+            init = getattr(bot_instance, "initial_balance", 100000)
             dd = (init - bal) / max(init, 1) if init > 0 else 0
             if dd > 0.05:
                 warnings_list.append(f"Execution: drawdown {dd:.1%}")
 
         # Cycle error rate
-        err_rate = getattr(self, '_consecutive_eval_failures', 0)
+        err_rate = getattr(self, "_consecutive_eval_failures", 0)
         if err_rate > 0:
             warnings_list.append(f"Master AI: {err_rate} consecutive eval failures")
 
@@ -1419,7 +1653,11 @@ class MasterAIOrchestrator:
                 recommendations.append(f"WARN: {w}")
 
         return {
-            "status": "healthy" if not issues else "degraded" if len(issues) < 3 else "critical",
+            "status": (
+                "healthy"
+                if not issues
+                else "degraded" if len(issues) < 3 else "critical"
+            ),
             "issues": issues,
             "warnings": warnings_list,
             "recommendations": recommendations,
@@ -1438,7 +1676,9 @@ class MasterAIOrchestrator:
             "training_step": self.training_step,
             "epsilon": round(self.epsilon, 3),
             "eval_failures": self._consecutive_eval_failures,
-            "cold_start_remaining": max(0, self.COLD_START_TRADES - len(self.trade_history)),
+            "cold_start_remaining": max(
+                0, self.COLD_START_TRADES - len(self.trade_history)
+            ),
             "enhancements": {
                 k: {
                     "name": v.name,
@@ -1460,8 +1700,11 @@ class MasterAIOrchestrator:
                 for d in self.recent_decisions[-10:]
             ],
             "best_configurations": sorted(
-                [{"config": k, "performance": round(v, 4)}
-                 for k, v in self.enhancement_combinations.items() if v != 0.0],
+                [
+                    {"config": k, "performance": round(v, 4)}
+                    for k, v in self.enhancement_combinations.items()
+                    if v != 0.0
+                ],
                 key=lambda x: x["performance"],
                 reverse=True,
             )[:5],
@@ -1481,17 +1724,26 @@ class MasterAIOrchestrator:
             rec["recommended_action"] = "REDUCE_SIZE"
             rec["reasoning"] = "High volatility detected"
             rec["enhancements_to_trust"] = ["circuit_breaker", "var_sizing"]
-            rec["parameters_to_adjust"] = {"position_multiplier": 0.5, "confidence_threshold": 0.8}
+            rec["parameters_to_adjust"] = {
+                "position_multiplier": 0.5,
+                "confidence_threshold": 0.8,
+            }
         elif market_state == "calm":
             rec["recommended_action"] = "NORMAL"
             rec["reasoning"] = "Low volatility, normal trading"
             rec["enhancements_to_trust"] = ["ppo_integration", "ensemble_weighting"]
-            rec["parameters_to_adjust"] = {"position_multiplier": 1.0, "confidence_threshold": 0.65}
+            rec["parameters_to_adjust"] = {
+                "position_multiplier": 1.0,
+                "confidence_threshold": 0.65,
+            }
         else:
             rec["recommended_action"] = "NORMAL"
             rec["reasoning"] = "Normal market conditions"
             rec["enhancements_to_trust"] = list(self.enhancements.keys())[:5]
-            rec["parameters_to_adjust"] = {"position_multiplier": 0.8, "confidence_threshold": 0.7}
+            rec["parameters_to_adjust"] = {
+                "position_multiplier": 0.8,
+                "confidence_threshold": 0.7,
+            }
         if self.system_sharpe > 1.0:
             rec["confidence"] = 0.8
         elif self.system_sharpe < 0:

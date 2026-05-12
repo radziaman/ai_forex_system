@@ -2,12 +2,11 @@
 Risk Management — consolidated from rts_ai_fx/risk.py + dynamic_position_sizing.py.
 Adds VaR (Historical Simulation), stress testing, pre-trade checks.
 """
+
 import numpy as np
 import pandas as pd
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Dict  # Dict for backward compat
-from enum import Enum
-
+from typing import List, Optional, Tuple, Dict
 
 # Use plain strings to avoid enum comparison issues
 TRADE_MODE_PAPER = "PAPER"
@@ -65,28 +64,52 @@ class RiskManager:
         self._on_trade_close = None
 
     def calculate_kelly_size(
-        self, balance: float, price: float, atr: float, confidence: float,
-        symbol: str = None, open_positions: list = None
+        self,
+        balance: float,
+        price: float,
+        atr: float,
+        confidence: float,
+        symbol: str = None,
+        open_positions: list = None,
     ) -> float:
         """
         Kelly Criterion position sizing with VaR adjustment.
-        Enhanced with correlation-adjusted portfolio VaR and volatility targeting.
+        Uses R-multiple (PnL normalized by risk) for statistically meaningful averaging.
         """
         if atr <= 0:
             atr = price * 0.001
 
-        # Base Kelly calculation
+        # Base Kelly calculation — use R-multiple (PnL / risk) for size-independent averaging
         win_rate = self.get_win_rate()
         if win_rate == 0.0 and self.total_trades == 0:
-            win_rate = 0.55  # optimistic default for new accounts
+            win_rate = 0.55
         elif win_rate == 0.0 and self.total_trades > 0:
-            win_rate = 0.10  # 0% after real trades — near zero to reduce sizing
+            win_rate = 0.10
 
-        wins = [t.pnl for t in self.trade_history if t.status == "CLOSED" and t.pnl > 0]
-        losses = [t.pnl for t in self.trade_history if t.status == "CLOSED" and t.pnl < 0]
-        avg_win = np.mean(wins) if wins else 0.02
-        avg_loss = abs(np.mean(losses)) if losses else 0.01
-        b = avg_win / avg_loss if avg_loss > 0 else 2.0
+        closed = [t for t in self.trade_history if t.status == "CLOSED"]
+        if closed:
+            r_multiples = []
+            for t in closed:
+                risk = abs(t.entry_price - max(getattr(t, "sl", 0), 0)) * t.volume
+                if risk > 0:
+                    r_multiples.append(t.pnl / risk)
+            if r_multiples:
+                avg_r_win = (
+                    np.mean([r for r in r_multiples if r > 0])
+                    if any(r > 0 for r in r_multiples)
+                    else 0.5
+                )
+                avg_r_loss = (
+                    abs(np.mean([r for r in r_multiples if r < 0]))
+                    if any(r < 0 for r in r_multiples)
+                    else 0.5
+                )
+                b = avg_r_win / avg_r_loss if avg_r_loss > 0 else 2.0
+            else:
+                b = 2.0
+        else:
+            avg_win, avg_loss = 0.02, 0.01
+            b = avg_win / avg_loss if avg_loss > 0 else 2.0
         kelly = (win_rate * b - (1 - win_rate)) / b
         kelly = np.clip(kelly * self.params.kelly_fraction, 0.01, 0.25)
 
@@ -147,7 +170,7 @@ class RiskManager:
             return 1.0
 
         # Calculate current volatility (annualized)
-        current_vol = (atr / price) * (252 ** 0.5)  # Approximate annualized vol
+        current_vol = (atr / price) * (252**0.5)  # Approximate annualized vol
         target_vol = 0.15  # 15% target
 
         if current_vol <= 0:
@@ -163,30 +186,38 @@ class RiskManager:
         return sl, tp
 
     def var(self, confidence: float = 0.95) -> float:
-        """Historical VaR — returns the max loss not exceeded at given confidence."""
+        """Historical VaR — max loss at given confidence, computed against current balance."""
+        current_balance = max(self.initial_balance, 1)
         if len(self._price_history) < 20:
-            return self.initial_balance * 0.02
+            return -current_balance * 0.02
         returns = np.diff(self._price_history) / self._price_history[:-1]
+        returns = returns[np.isfinite(returns)]
         if len(returns) < 10:
-            return self.initial_balance * 0.02
-        var_val = float(np.percentile(returns, (1 - confidence) * 100)) * self.initial_balance
-        return max(var_val, -self.initial_balance * 0.10)  # Cap at 10% loss
+            return -current_balance * 0.02
+        var_pct = float(np.percentile(returns, (1 - confidence) * 100))
+        return var_pct * current_balance
 
     def cvar(self, confidence: float = 0.95) -> float:
         """Conditional VaR (expected shortfall) — average loss beyond VaR."""
+        current_balance = max(self.initial_balance, 1)
         if len(self._price_history) < 20:
-            return self.initial_balance * 0.03
+            return -current_balance * 0.03
         returns = np.diff(self._price_history) / self._price_history[:-1]
+        returns = returns[np.isfinite(returns)]
         var_val = self.var(confidence)
-        tail = returns[returns <= var_val / self.initial_balance]
+        tail = returns[
+            (
+                returns <= var_val / current_balance
+                if current_balance > 0
+                else returns <= 0
+            )
+        ]
         if len(tail) == 0:
             return var_val
-        cvar_val = float(np.mean(tail)) * self.initial_balance
-        return max(cvar_val, -self.initial_balance * 0.15)  # Cap at 15% loss
+        cvar_val = float(np.mean(tail)) * current_balance
+        return cvar_val
 
-    def stress_test(
-        self, scenario_returns: List[float]
-    ) -> dict:
+    def stress_test(self, scenario_returns: List[float]) -> dict:
         """Run stress test against historical crisis scenarios."""
         if not scenario_returns:
             return {"max_loss": 0, "impact": 0}
@@ -216,13 +247,19 @@ class RiskManager:
         # Track peak equity for accurate drawdown (includes floating PnL)
         if equity > self.peak_balance:
             self.peak_balance = equity
-        drawdown = (self.peak_balance - equity) / self.peak_balance if self.peak_balance > 0 else 0.0
+        drawdown = (
+            (self.peak_balance - equity) / self.peak_balance
+            if self.peak_balance > 0
+            else 0.0
+        )
         if drawdown > self.params.max_drawdown:
             self.kill_switch_triggered = True
             return False, f"Max drawdown exceeded: {drawdown:.1%}"
 
         # Daily loss check uses tracked daily PnL, not total unrealized
-        daily_loss = self.daily_pnl / self.initial_balance if self.initial_balance > 0 else 0.0
+        daily_loss = (
+            self.daily_pnl / self.initial_balance if self.initial_balance > 0 else 0.0
+        )
         if daily_loss < -self.params.max_daily_loss:
             return False, f"Daily loss limit hit: {daily_loss:.1%}"
 
@@ -234,7 +271,10 @@ class RiskManager:
         return True, "OK"
 
     def check_correlation(
-        self, new_pair: str, open_pairs: List[str], corr_matrix: Optional[pd.DataFrame] = None
+        self,
+        new_pair: str,
+        open_pairs: List[str],
+        corr_matrix: Optional[pd.DataFrame] = None,
     ) -> bool:
         if corr_matrix is not None and new_pair in corr_matrix.columns:
             for pair in open_pairs:
@@ -265,7 +305,7 @@ class RiskManager:
     def update_price_history(self, price: float):
         self._price_history.append(price)
         if len(self._price_history) > self._var_lookback * 24:
-            self._price_history = self._price_history[-self._var_lookback * 24:]
+            self._price_history = self._price_history[-self._var_lookback * 24 :]
 
     def update_trailing_stops(self, prices: dict):
         """Stub for engine compatibility — trailing stops managed by TrailingStopManager."""
@@ -288,16 +328,28 @@ class TrailingStopManager:
     def update(
         self, entry: float, current: float, atr: float, direction: str = "long"
     ) -> Optional[float]:
-        pnl_pct = (current - entry) / entry if direction == "long" else (entry - current) / entry
+        pnl_pct = (
+            (current - entry) / entry
+            if direction == "long"
+            else (entry - current) / entry
+        )
         for i, level in enumerate(self.tp_levels):
             if pnl_pct >= level and not self.tp_hit[i]:
                 self.tp_hit[i] = True
                 if i == 0:
                     return entry
                 elif i == 1:
-                    return entry + (atr * self.trail_mult) if direction == "long" else entry - (atr * self.trail_mult)
+                    return (
+                        entry + (atr * self.trail_mult)
+                        if direction == "long"
+                        else entry - (atr * self.trail_mult)
+                    )
                 else:
-                    return current - (atr * self.trail_mult) if direction == "long" else current + (atr * self.trail_mult)
+                    return (
+                        current - (atr * self.trail_mult)
+                        if direction == "long"
+                        else current + (atr * self.trail_mult)
+                    )
         return None
 
     def partial_close_sizes(self) -> list:

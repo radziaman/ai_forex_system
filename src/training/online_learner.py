@@ -2,6 +2,7 @@
 Online Learning Engine — drift-triggered retraining with model validation.
 Monitors ADWIN drift signals, retrains in background, auto-deploys if better.
 """
+
 import os
 import time
 import json
@@ -11,10 +12,11 @@ from typing import Dict, Optional, List, Callable
 from dataclasses import dataclass, field
 from loguru import logger
 
-warnings.filterwarnings('ignore')
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+warnings.filterwarnings("ignore")
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 import numpy as np
 import pandas as pd
+
 
 @dataclass
 class ModelSnapshot:
@@ -27,12 +29,14 @@ class ModelSnapshot:
     trained_bars: int
     timestamp: float = field(default_factory=time.time)
 
-    def is_better_than(self, other: Optional['ModelSnapshot']) -> bool:
+    def is_better_than(self, other: Optional["ModelSnapshot"]) -> bool:
         if other is None:
             return True
         # Require BOTH loss improvement AND accuracy maintained or improved
         loss_better = self.val_loss < other.val_loss * 0.95
-        accuracy_ok = self.val_accuracy >= other.val_accuracy * 0.98  # allow 2% accuracy drop
+        accuracy_ok = (
+            self.val_accuracy >= other.val_accuracy * 0.98
+        )  # allow 2% accuracy drop
         return loss_better and accuracy_ok
 
 
@@ -155,9 +159,7 @@ class OnlineLearner:
 
         # Build 3D sequences
         try:
-            X, y = fp.fit_transform(
-                {pair: {"1h": df}}, symbol=pair, flatten=False
-            )
+            X, y = fp.fit_transform({pair: {"1h": df}}, symbol=pair, flatten=False)
             if len(X) < 200:
                 logger.warning(f"Online learner: only {len(X)} sequences for {pair}")
                 return
@@ -175,7 +177,9 @@ class OnlineLearner:
 
         # Train LSTM-CNN
         logger.info(f"Online learner: training LSTM-CNN for {pair}")
-        lstm = LSTMCNNHybrid(lookback=30, n_features=nf, lstm_units=128, cnn_filters=128)
+        lstm = LSTMCNNHybrid(
+            lookback=30, n_features=nf, lstm_units=128, cnn_filters=128
+        )
         lstm.build()
         h = lstm.train(X_tr, y_tr, X_v, y_v, epochs=self.lstm_epochs, batch_size=32)
         vl = float(min(h.history.get("val_loss", [999])))
@@ -196,8 +200,12 @@ class OnlineLearner:
         clf.save(clf_path)
 
         new_snap = ModelSnapshot(
-            pair=pair, path_lstm=lstm_path, path_clf=clf_path,
-            val_loss=vl, val_mae=vm, val_accuracy=va,
+            pair=pair,
+            path_lstm=lstm_path,
+            path_clf=clf_path,
+            val_loss=vl,
+            val_mae=vm,
+            val_accuracy=va,
             trained_bars=len(df),
         )
 
@@ -212,11 +220,17 @@ class OnlineLearner:
             old_backups = {}
             try:
                 if os.path.exists(live_lstm):
-                    old_backups['lstm'] = (live_lstm, live_lstm.replace(".keras", "_backup.keras"))
-                    os.rename(*old_backups['lstm'])
+                    old_backups["lstm"] = (
+                        live_lstm,
+                        live_lstm.replace(".keras", "_backup.keras"),
+                    )
+                    os.rename(*old_backups["lstm"])
                 if os.path.exists(live_clf):
-                    old_backups['clf'] = (live_clf, live_clf.replace(".keras", "_backup.keras"))
-                    os.rename(*old_backups['clf'])
+                    old_backups["clf"] = (
+                        live_clf,
+                        live_clf.replace(".keras", "_backup.keras"),
+                    )
+                    os.rename(*old_backups["clf"])
 
                 # Deploy new (if either fails, rollback)
                 os.rename(lstm_path, live_lstm)
@@ -242,7 +256,7 @@ class OnlineLearner:
             logger.success(f"Online learner: deployed new {pair} model{improvement}")
 
             msg = (
-                f"\U0001F4A1 <b>Model Upgraded: {pair}</b>\n"
+                f"\U0001f4a1 <b>Model Upgraded: {pair}</b>\n"
                 f"Loss: {vl:.6f} \u2192 {vm:.6f}\n"
                 f"Accuracy: {va:.2%}\n"
                 f"Trained on: {len(df)} bars{improvement}"

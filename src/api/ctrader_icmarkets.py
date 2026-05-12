@@ -2,6 +2,7 @@
 cTrader IC Markets client for dashboard integration.
 Wraps CtraderClient with dashboard-specific methods.
 """
+
 import time
 import logging
 from dataclasses import dataclass, field

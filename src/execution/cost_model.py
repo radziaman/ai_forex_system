@@ -2,8 +2,9 @@
 Transaction cost model — spread, commission, slippage.
 Applies realistic costs to every simulated/executed trade.
 """
+
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import Dict, Optional, Callable
 import time
 
 
@@ -20,9 +21,18 @@ class CostResult:
 
 # Typical spreads in pips for major forex pairs (variable by liquidity)
 SPREADS: Dict[str, float] = {
-    "EURUSD": 0.5, "GBPUSD": 0.8, "USDJPY": 0.6, "AUDUSD": 0.7,
-    "USDCAD": 0.7, "USDCHF": 0.8, "NZDUSD": 0.9, "XAUUSD": 2.0,
-    "BTCUSD": 5.0, "EURJPY": 0.9, "GBPJPY": 1.5, "EURGBP": 0.7,
+    "EURUSD": 0.5,
+    "GBPUSD": 0.8,
+    "USDJPY": 0.6,
+    "AUDUSD": 0.7,
+    "USDCAD": 0.7,
+    "USDCHF": 0.8,
+    "NZDUSD": 0.9,
+    "XAUUSD": 2.0,
+    "BTCUSD": 5.0,
+    "EURJPY": 0.9,
+    "GBPJPY": 1.5,
+    "EURGBP": 0.7,
 }
 DEFAULT_SPREAD = 1.0  # pips
 MAX_SPREAD_MULT = 3.0  # Max spread = 3x normal
@@ -31,18 +41,24 @@ MAX_SPREAD_MULT = 3.0  # Max spread = 3x normal
 class CostModel:
     """
     Realistic transaction cost model with real-time spread verification.
-    
+
     - Spread: variable per pair, plus widening during high volatility
     - Commission: $7 per lot (standard for IC Markets/Raw Spread)
     - Slippage: function of trade size relative to ATR
     - Real-time spread check: rejects trades if spread too wide
     """
 
-    def __init__(self, commission_per_lot: float = 7.0, default_spread: float = 1.0):
+    def __init__(
+        self,
+        commission_per_lot: float = 7.0,
+        default_spread: float = 1.0,
+        price_provider: Optional[Callable[[str], float]] = None,
+    ):
         self.commission_per_lot = commission_per_lot
         self.default_spread = default_spread
         self._spread_history: Dict[str, list] = {}
         self._max_spread_multiplier = MAX_SPREAD_MULT
+        self._price_provider = price_provider
 
     def calculate(
         self,
@@ -55,7 +71,7 @@ class CostModel:
         actual_spread_pips: Optional[float] = None,
     ) -> CostResult:
         normal_spread = SPREADS.get(symbol.upper(), self.default_spread)
-        
+
         # Use actual spread if provided, otherwise estimate
         if actual_spread_pips is not None:
             spread_pips = actual_spread_pips
@@ -65,11 +81,15 @@ class CostModel:
             self._spread_history[symbol].append(spread_pips)
             if len(self._spread_history[symbol]) > 100:
                 self._spread_history[symbol] = self._spread_history[symbol][-100:]
-            
+
             # Check if spread is acceptable
             avg_spread = self._get_average_spread(symbol)
             is_acceptable = spread_pips <= avg_spread * self._max_spread_multiplier
-            rejection_reason = "" if is_acceptable else f"Spread {spread_pips:.1f} > {avg_spread * self._max_spread_multiplier:.1f} (3x avg)"
+            rejection_reason = (
+                ""
+                if is_acceptable
+                else f"Spread {spread_pips:.1f} > {avg_spread * self._max_spread_multiplier:.1f} (3x avg)"
+            )
         else:
             spread_pips = normal_spread * volatility_mult
             is_acceptable = True
@@ -77,7 +97,7 @@ class CostModel:
 
         # Convert pips to price units (pip size varies by symbol)
         pip_size = self._pip_size(symbol)
-        spread_cost = spread_pips * pip_size * volume
+        base_cost = spread_pips * pip_size * volume
 
         # Commission (1 lot = 100,000 units)
         lots = volume / 100_000
@@ -86,7 +106,13 @@ class CostModel:
         # Slippage: fraction of spread, increases with trade size
         size_factor = min(volume / 100_000 / 10, 1.0)  # 0-1 for 0-10 lots
         slippage_pips = spread_pips * 0.5 * size_factor
-        slippage = slippage_pips * pip_size * volume
+        slippage_cost = slippage_pips * pip_size * volume
+
+        # Cross-rate conversion to USD
+        usd_rate = self._to_usd_rate(symbol)
+
+        spread_cost = base_cost * usd_rate
+        slippage = slippage_cost * usd_rate
 
         return CostResult(
             spread_cost=spread_cost,
@@ -132,6 +158,34 @@ class CostModel:
         if "JPY" in sym:
             return 0.01
         return 0.0001
+
+    def _to_usd_rate(self, symbol: str) -> float:
+        """Convert quote-currency cost to USD. Returns 1.0 for USD pairs."""
+        sym = symbol.upper()
+        if sym in ("EURUSD", "GBPUSD", "AUDUSD", "NZDUSD"):
+            return 1.0
+        if sym in ("USDJPY", "USDCHF", "USDCAD"):
+            return 1.0
+        if sym in ("XAUUSD", "XAGUSD", "XTIUSD", "XBRUSD", "XNGUSD"):
+            return 1.0
+        if sym in ("BTCUSD", "ETHUSD", "LTCUSD", "XRPUSD"):
+            return 1.0
+        if sym in ("US500", "US30", "USTEC", "UK100", "DE40"):
+            return 1.0
+        if sym == "EURGBP":
+            gbpusd = self._price_provider("GBPUSD") if self._price_provider else 1.2
+            return gbpusd
+        if sym == "EURJPY":
+            usdjpy = self._price_provider("USDJPY") if self._price_provider else 100.0
+            return 1.0 / usdjpy
+        if sym == "GBPJPY":
+            usdjpy = self._price_provider("USDJPY") if self._price_provider else 100.0
+            gbpusd = self._price_provider("GBPUSD") if self._price_provider else 1.2
+            return gbpusd / usdjpy
+        if "JPY" in sym:
+            usdjpy = self._price_provider("USDJPY") if self._price_provider else 100.0
+            return 1.0 / usdjpy
+        return 1.0
 
     @staticmethod
     def pip_to_price(symbol: str) -> float:
