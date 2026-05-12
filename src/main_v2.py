@@ -180,7 +180,32 @@ class TradingOrchestrator:
 
         logger.info(f"[data] Ready: {total_with_data}/{len(SYMBOLS)} symbols have {total_bars} total bars")
 
-        # 4. Fit feature pipeline scalers on loaded data
+        # 4. Generate other timeframes from 1h data by resampling
+        tfs_needed = [tf for tf in self.config.features.timeframes if tf != "1h"]
+        if tfs_needed and total_with_data > 0:
+            generated = 0
+            for sym in SYMBOLS:
+                df_1h = dm.get_ohlcv(sym, "1h")
+                if df_1h is None or len(df_1h) < 30:
+                    continue
+                for tf in tfs_needed:
+                    if tf == "4h":
+                        res = df_1h.copy()
+                        res["timestamp"] = (res["timestamp"] // 14400) * 14400
+                        resampled = res.groupby("timestamp").agg(
+                            open=("open", "first"), high=("high", "max"),
+                            low=("low", "min"), close=("close", "last"),
+                            volume=("volume", "sum"),
+                        ).reset_index()
+                        dm.ohlcv[sym][tf] = resampled
+                    elif tf == "15m":
+                        # Just use 1h data for now (15m requires tick data)
+                        dm.ohlcv[sym][tf] = df_1h.copy()
+                generated += 1
+            if generated > 0:
+                logger.info(f"[data] Generated {len(tfs_needed)} timeframes for {generated} symbols")
+
+        # 5. Fit feature pipeline scalers on loaded data
         if total_with_data > 0:
             self.data_pipeline.feature_pipeline.fit_all(dm.ohlcv)
             logger.info(f"[data] Feature pipeline fitted on {total_with_data} symbols")
@@ -236,6 +261,19 @@ class TradingOrchestrator:
 
         # Load historical data so OHLCV is populated for signal generation
         await self._load_historical_data()
+
+        # In live mode, sync risk initial_balance to actual broker balance
+        if self.mode == "live":
+            try:
+                acc = await self.execution_service.get_account_info()
+                broker_balance = acc.get("balance", 0)
+                if broker_balance > 0:
+                    self.risk_gatekeeper.risk_manager.initial_balance = broker_balance
+                    self.risk_gatekeeper.risk_manager.peak_balance = broker_balance
+                    self.risk_gatekeeper.risk_manager.kill_switch_triggered = False
+                    logger.info(f"[risk] Synced to broker balance: ${broker_balance:,.2f}")
+            except Exception as e:
+                logger.warning(f"[risk] Could not sync broker balance: {e}")
 
         self.running = True
 

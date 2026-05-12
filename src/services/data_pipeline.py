@@ -55,6 +55,7 @@ class DataPipeline(TradingService):
         if features is not None:
             df = self.data_manager.get_ohlcv(symbol, "1h")
             price = self.data_manager.get_price(symbol, "1h")
+            logger.info(f"[data] {symbol}: features ready (price={price:.5f}, features.shape={features.shape})")
             update = FeatureUpdate(
                 symbol=symbol,
                 timeframe="1h",
@@ -67,6 +68,8 @@ class DataPipeline(TradingService):
                 self.event_bus.emit(EventType.FEATURES_READY, update, source="data_pipeline")
             )
             self._features_dirty[symbol] = False
+        else:
+            logger.info(f"[data] {symbol}: no features (insufficient data)")
 
     def get_features(self, symbol: str) -> Optional[Any]:
         cached = self.data_manager.get_cached_features(symbol, "1h")

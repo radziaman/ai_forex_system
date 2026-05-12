@@ -273,8 +273,17 @@ class DataManager:
                 continue
             res = res.reset_index()
             res["timestamp"] = res["datetime"].astype(np.int64) // 10 ** 9
-            self.ohlcv[symbol][tf] = res[["timestamp", "open", "high", "low",
-                                          "close", "volume"]]
+            new_bars = res[["timestamp", "open", "high", "low", "close", "volume"]]
+
+            existing = self.ohlcv[symbol].get(tf)
+            if existing is not None and len(existing) > len(new_bars):
+                # Merge: keep existing, append new bars, remove duplicates
+                merged = pd.concat([existing, new_bars], ignore_index=True)
+                merged = merged.drop_duplicates(subset=["timestamp"], keep="last")
+                merged = merged.sort_values("timestamp").reset_index(drop=True)
+                self.ohlcv[symbol][tf] = merged
+            else:
+                self.ohlcv[symbol][tf] = new_bars
             self._cap_bars(symbol, tf)
 
     def _cap_bars(self, symbol: str, tf: str, max_bars: int = 5000):
