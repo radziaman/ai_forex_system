@@ -127,6 +127,12 @@ class DataAgent(BaseAgent):
                          if self.dm.freshness.get(sym, type('',(),{'is_healthy':True})()).is_healthy)
             self.set_world("data.health_pct", healthy / max(len(SYMBOLS), 1))
 
+        # G3: Periodically flush OHLCV bars to disk (every 500 cycles ≈ every 50s)
+        if self.consciousness.cycle_count % 500 == 0:
+            tfs_to_save = ["1m", "5m", "1h"]
+            self.dm.save_all_ohlcv(timeframes=tfs_to_save)
+            self.log_state(f"OHLCV flushed to disk ({len(tfs_to_save)} timeframes)")
+
     async def on_message(self, message: AgentMessage):
         # G1: Handle live ticks from execution_agent
         if message.msg_type == MessageType.TICK_RECEIVED:

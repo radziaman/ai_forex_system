@@ -383,8 +383,46 @@ class DataManager:
         }
 
     # ------------------------------------------------------------------
-    # Historical data loading
+    # Historical data loading + disk persistence
     # ------------------------------------------------------------------
+
+    def save_ohlcv(self, symbol: str, tf: str = "1h"):
+        """Append in-memory OHLCV bars to CSV on disk.
+
+        Uses a single rolling file per symbol per timeframe.
+        Deduplicates by timestamp to handle append-after-restart.
+        """
+        df = self.ohlcv.get(symbol, {}).get(tf)
+        if df is None or df.empty:
+            return
+        path = os.path.join(self.historical_path, f"{symbol}_{tf}.csv")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        try:
+            if os.path.exists(path):
+                existing = pd.read_csv(path)
+                combined = pd.concat([existing, df], ignore_index=True)
+                combined = combined.drop_duplicates(
+                    subset=["timestamp"], keep="last"
+                ).sort_values("timestamp").reset_index(drop=True)
+                combined.to_csv(path, index=False)
+            else:
+                df.to_csv(path, index=False)
+            logger.debug(f"Saved {symbol} {tf}: {len(df)} bars → {path}")
+        except Exception as e:
+            logger.debug(f"Save failed for {symbol} {tf}: {e}")
+
+    def save_all_ohlcv(self, timeframes: Optional[List[str]] = None):
+        """Save all symbols × timeframes to CSV."""
+        tfs = timeframes or TIMEFRAMES
+        saved = 0
+        for sym in SYMBOLS:
+            for tf in tfs:
+                df = self.ohlcv.get(sym, {}).get(tf)
+                if df is not None and not df.empty:
+                    self.save_ohlcv(sym, tf)
+                    saved += 1
+        if saved > 0:
+            logger.info(f"Saved {saved} symbol-TF pairs to disk")
 
     def load_historical(self, symbol: str, tf: str, days: int = 365):
         fp = os.path.join(self.historical_path, f"{symbol}_{tf}_{days}d.csv")
@@ -637,6 +675,7 @@ class DataManager:
                 self.freshness[symbol].bar_count[timeframe] = len(
                     self.ohlcv[symbol][timeframe]
                 )
+                self.save_ohlcv(symbol, timeframe)
                 return True
         except Exception as e:
             self._source_health["yfinance"]["failures"] += 1
