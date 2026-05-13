@@ -58,8 +58,10 @@ class RiskAgent(BaseAgent):
             spread_multiplier_threshold=5.0,
             volume_spike_multiplier=10.0,
         )
+        # G3: Wire price_provider so cost_model uses live prices for cross-rate conversions
         self.cost_model = CostModel(
             commission_per_lot=self.config.trading.commission_per_lot,
+            price_provider=lambda sym: self.get_world(f"data.price.{sym}", None) or 1.0,
         )
         self.set_world("risk.initial_balance", self.initial_balance)
         self.set_world("risk.status", "ready")
@@ -191,8 +193,13 @@ class RiskAgent(BaseAgent):
         volume = max(round(volume / lot_min) * lot_min, lot_min)
         volume = min(volume, balance * 0.5 / max(price, 0.0001))
 
-        cost = self.cost_model.calculate(symbol=symbol, direction=direction,
-                                          volume=volume, price=price, atr=atr)
+        # Live spread from broker depth data (G1) — pips, or None if broker not streaming
+        live_spread = self.get_world(f"data.spread.{symbol}", None)
+        cost = self.cost_model.calculate(
+            symbol=symbol, direction=direction, volume=volume,
+            price=price, atr=atr,
+            actual_spread_pips=live_spread,
+        )
         if not cost.is_acceptable:
             self._reject(message, cost.rejection_reason); return
 

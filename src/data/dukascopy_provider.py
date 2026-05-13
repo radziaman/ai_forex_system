@@ -25,9 +25,6 @@ DUKASCOPE_SYMBOLS = {
     "USDCAD": "USDCAD",
     "USDCHF": "USDCHF",
     "NZDUSD": "NZDUSD",
-    "EURJPY": "EURJPY",
-    "GBPJPY": "GBPJPY",
-    "EURGBP": "EURGBP",
     "XAUUSD": "XAUUSD",
 }
 

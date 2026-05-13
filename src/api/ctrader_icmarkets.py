@@ -53,9 +53,6 @@ FOREX_PAIRS = [
     ForexPair(symbol="USDCAD", symbol_id=7, digits=5),
     ForexPair(symbol="USDCHF", symbol_id=8, digits=5),
     ForexPair(symbol="NZDUSD", symbol_id=9, digits=5),
-    ForexPair(symbol="EURJPY", symbol_id=10, digits=3),
-    ForexPair(symbol="GBPJPY", symbol_id=11, digits=3),
-    ForexPair(symbol="EURGBP", symbol_id=12, digits=5),
 ]
 
 

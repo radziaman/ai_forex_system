@@ -54,18 +54,33 @@ class ExecutionAgent(BaseAgent):
 
         # G1: Wire live price feed from broker to data pipeline
         async def _on_tick(depth):
-            """Forward broker ticks to data_agent via message bus."""
+            """Forward broker ticks to data_agent and store live spread in world state."""
             try:
+                symbol = getattr(depth, 'symbol', '')
+                bid = getattr(depth, 'bid', 0)
+                ask = getattr(depth, 'ask', 0)
+                ts = time.time()
+
+                # Compute live spread in pips and store in world state
+                if bid > 0 and ask > 0:
+                    from execution.cost_model import CostModel
+                    pip_size = CostModel.pip_to_price(symbol)
+                    spread_pips = (ask - bid) / pip_size if pip_size > 0 else 0
+                    self.set_world(f"data.spread.{symbol}", round(spread_pips, 2))
+                    self.set_world(f"data.bid.{symbol}", round(float(bid), 5))
+                    self.set_world(f"data.ask.{symbol}", round(float(ask), 5))
+                    self.set_world(f"data.price.{symbol}", round(float((bid + ask) / 2), 5))
+
                 await self.send(
                     MessageType.TICK_RECEIVED,
                     payload={
-                        "symbol": getattr(depth, 'symbol', ''),
-                        "bid": getattr(depth, 'bid', 0),
-                        "ask": getattr(depth, 'ask', 0),
+                        "symbol": symbol,
+                        "bid": bid,
+                        "ask": ask,
                         "volume": getattr(depth, 'volume', 0),
-                        "timestamp": time.time(),
+                        "timestamp": ts,
                     },
-                    target_capability="tick_ingestion",  # G6: route to whoever can handle ticks
+                    target_capability="tick_ingestion",
                     priority=MessagePriority.HIGH,
                 )
             except Exception:
