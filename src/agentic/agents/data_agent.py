@@ -127,6 +127,16 @@ class DataAgent(BaseAgent):
                          if self.dm.freshness.get(sym, type('',(),{'is_healthy':True})()).is_healthy)
             self.set_world("data.health_pct", healthy / max(len(SYMBOLS), 1))
 
+            # Publish OHLCV reference for regime_agent/feature_agent (G1)
+            self.set_world("data.ohlcv", self.dm.ohlcv, ttl=120)
+            # Publish primary symbol for agents that need a default
+            self.set_world("data.primary_symbol", SYMBOLS[0] if SYMBOLS else "EURUSD", ttl=120)
+
+            # Publish ATR for all symbols (needed by risk_agent, position_agent)
+            for sym in SYMBOLS:
+                atr = self.dm.get_atr(sym, "1h", 14)
+                self.set_world(f"data.atr.{sym}", atr, ttl=60)
+
         # G3: Periodically flush OHLCV bars to disk (every 500 cycles ≈ every 50s)
         if self.consciousness.cycle_count % 500 == 0:
             tfs_to_save = ["1m", "5m", "1h"]
