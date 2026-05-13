@@ -25,31 +25,18 @@ SYMBOLS = [
     "USDCAD",
     "USDCHF",
     "NZDUSD",
-    "EURJPY",
-    "GBPJPY",
-    "EURGBP",
     "XAUUSD",
-    "XAGUSD",
     "XTIUSD",
-    "XBRUSD",
-    "XNGUSD",
     "US500",
-    "US30",
-    "USTEC",
-    "UK100",
-    "DE40",
     "BTCUSD",
-    "ETHUSD",
-    "LTCUSD",
-    "XRPUSD",
 ]
 TIMEFRAMES = ["1m", "5m", "15m", "1h", "4h"]
 
-JPY_PAIRS = {"USDJPY", "EURJPY", "GBPJPY"}
-XAU_PAIRS = {"XAUUSD", "XAGUSD"}
-CRYPTO_PAIRS = {"BTCUSD", "ETHUSD", "LTCUSD", "XRPUSD"}
-INDEX_PAIRS = {"US500", "US30", "USTEC", "UK100", "DE40"}
-ENERGY_PAIRS = {"XTIUSD", "XBRUSD", "XNGUSD"}
+JPY_PAIRS = {"USDJPY"}
+XAU_PAIRS = {"XAUUSD"}
+CRYPTO_PAIRS = {"BTCUSD"}
+INDEX_PAIRS = {"US500"}
+ENERGY_PAIRS = {"XTIUSD"}
 
 BASE_PRICES = {
     "EURUSD": 1.12,
@@ -59,23 +46,10 @@ BASE_PRICES = {
     "USDCAD": 1.35,
     "USDCHF": 0.88,
     "NZDUSD": 0.61,
-    "EURJPY": 162.0,
-    "GBPJPY": 190.0,
-    "EURGBP": 0.86,
     "XAUUSD": 2000.0,
-    "XAGUSD": 24.0,
     "XTIUSD": 75.0,
-    "XBRUSD": 80.0,
-    "XNGUSD": 3.0,
     "US500": 4500.0,
-    "US30": 35000.0,
-    "USTEC": 15000.0,
-    "UK100": 7500.0,
-    "DE40": 17000.0,
     "BTCUSD": 45000.0,
-    "ETHUSD": 2500.0,
-    "LTCUSD": 80.0,
-    "XRPUSD": 0.60,
 }
 
 # Dukascopy symbols that are actually available
@@ -87,9 +61,6 @@ DUKASCOPE_SYMBOLS = {
     "USDCAD",
     "USDCHF",
     "NZDUSD",
-    "EURJPY",
-    "GBPJPY",
-    "EURGBP",
     "XAUUSD",
 }
 
@@ -606,23 +577,10 @@ class DataManager:
                 "USDCAD": "USDCAD=X",
                 "USDCHF": "USDCHF=X",
                 "NZDUSD": "NZDUSD=X",
-                "EURJPY": "EURJPY=X",
-                "GBPJPY": "GBPJPY=X",
-                "EURGBP": "EURGBP=X",
                 "XAUUSD": "GC=F",
-                "XAGUSD": "SI=F",
                 "XTIUSD": "CL=F",
-                "XBRUSD": "BZ=F",
-                "XNGUSD": "NG=F",
                 "BTCUSD": "BTC-USD",
-                "ETHUSD": "ETH-USD",
-                "LTCUSD": "LTC-USD",
-                "XRPUSD": "XRP-USD",
                 "US500": "^GSPC",
-                "US30": "^DJI",
-                "USTEC": "^IXIC",
-                "UK100": "^FTSE",
-                "DE40": "^GDAXI",
             }
             yf_sym = ticker_map.get(symbol, f"{symbol}=X")
             interval = timeframe.replace("m", "m").replace("h", "h")

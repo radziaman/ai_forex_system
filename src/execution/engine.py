@@ -87,7 +87,7 @@ class ExecutionEngine:
         mult = 1 if direction == "BUY" else -1
         diff = (exit - entry) * mult * volume
         sym = symbol.upper()
-        if sym in ("USDJPY", "EURJPY", "GBPJPY"):
+        if sym in ("USDJPY",):
             usdjpy = self._live_price("USDJPY") or 100.0
             return round(diff / usdjpy, 2)
         if sym in ("USDCHF",):
@@ -96,9 +96,6 @@ class ExecutionEngine:
         if sym in ("USDCAD",):
             usdcad = self._live_price("USDCAD") or 1.35
             return round(diff / usdcad, 2)
-        if sym == "EURGBP":
-            gbpusd = self._live_price("GBPUSD") or 1.2
-            return round(diff * gbpusd, 2)
         return round(diff, 2)
 
     async def open_position(

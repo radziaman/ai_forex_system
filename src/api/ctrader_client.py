@@ -39,35 +39,17 @@ logger = logging.getLogger(__name__)
 # ⚠️  VERIFIED from cTrader Symbol Info (Right-click → Symbol Info → FIX Symbol ID)
 # Symbol IDs VERIFIED by user from cTrader Symbol Info
 SYMBOL_MAP = {
-    # Forex Majors (VERIFIED)
-    "EURUSD": 1,  # VERIFIED
-    "GBPUSD": 2,  # VERIFIED
-    "USDJPY": 4,  # VERIFIED (was 3)
-    "XAUUSD": 41,  # VERIFIED
-    "BTCUSD": 114,  # VERIFIED (was 5)
-    "AUDUSD": 5,  # VERIFIED (was 6)
-    "USDCAD": 8,  # VERIFIED (was 7)
-    "USDCHF": 6,  # VERIFIED (was 8)
-    "NZDUSD": 12,  # VERIFIED (was 9)
-    # Forex Minors (VERIFIED)
-    "EURJPY": 3,  # VERIFIED (was 10)
-    "GBPJPY": 7,  # VERIFIED (was 11)
-    "EURGBP": 9,  # VERIFIED (was 12)
-    # Commodities (Metals & Energy) - VERIFIED
-    "XAGUSD": 42,  # VERIFIED (was 13)
-    "XTIUSD": 99,  # VERIFIED (was 14)
-    "XBRUSD": 100,  # VERIFIED (was 15)
-    "XNGUSD": 121,  # VERIFIED (was 16)
-    # Indices - VERIFIED
-    "US500": 115,  # VERIFIED (was 17)
-    "US30": 125,  # VERIFIED (was 18)
-    "USTEC": 108,  # VERIFIED (was 19)
-    "UK100": 116,  # VERIFIED (was 20)
-    "DE40": 139,  # VERIFIED (was 21)
-    # Crypto - VERIFIED
-    "ETHUSD": 105,  # VERIFIED (was 22)
-    "LTCUSD": 112,  # VERIFIED (was 23)
-    "XRPUSD": 215,  # VERIFIED (was 24)
+    "EURUSD": 1,
+    "GBPUSD": 2,
+    "USDJPY": 4,
+    "XAUUSD": 41,
+    "BTCUSD": 114,
+    "AUDUSD": 5,
+    "USDCAD": 8,
+    "USDCHF": 6,
+    "NZDUSD": 12,
+    "XTIUSD": 99,
+    "US500": 115,
 }
 
 REVERSE_SYMBOL_MAP = {v: k for k, v in SYMBOL_MAP.items()}
@@ -716,19 +698,14 @@ class CtraderClient:
     def _price_divisor(symbol: str, raw: float) -> float:
         """Determine the correct divisor for cTrader depth price scaling."""
         sym = symbol.upper()
-        # Indices and crypto have larger unit sizes
-        if sym in ("BTCUSD", "ETHUSD", "LTCUSD"):
+        if sym in ("BTCUSD",):
             return 100.0
-        if sym in ("XRPUSD",):
-            return 100000.0
-        if sym in ("US500", "US30", "USTEC", "UK100", "DE40"):
+        if sym in ("US500",):
             return 1000.0
-        if sym in ("XAUUSD", "XAGUSD", "XTIUSD", "XBRUSD", "XNGUSD"):
+        if sym in ("XAUUSD", "XTIUSD"):
             return 100.0
-        # JPY pairs: USDJPY ~ 150.123 → raw ~ 15012300 → divisor 100000
         if "JPY" in sym:
             return 100000.0
-        # Forex majors: EURUSD ~ 1.17867 → raw ~ 117867 → divisor 100000
         return 100000.0
 
     def get_market_depth(self, symbol: str) -> Optional[MarketDepth]:

@@ -93,26 +93,14 @@ class LoggingConfig:
 class SymbolsConfig:
     forex: List[str] = field(
         default_factory=lambda: [
-            "EURUSD",
-            "GBPUSD",
-            "USDJPY",
-            "AUDUSD",
-            "USDCAD",
-            "USDCHF",
-            "NZDUSD",
-            "EURJPY",
-            "GBPJPY",
-            "EURGBP",
+            "EURUSD", "GBPUSD", "USDJPY", "AUDUSD",
+            "USDCAD", "USDCHF", "NZDUSD",
         ]
     )
-    metals: List[str] = field(default_factory=lambda: ["XAUUSD", "XAGUSD"])
-    energy: List[str] = field(default_factory=lambda: ["XTIUSD", "XBRUSD", "XNGUSD"])
-    indices: List[str] = field(
-        default_factory=lambda: ["US500", "US30", "USTEC", "UK100", "DE40"]
-    )
-    crypto: List[str] = field(
-        default_factory=lambda: ["BTCUSD", "ETHUSD", "LTCUSD", "XRPUSD"]
-    )
+    metals: List[str] = field(default_factory=lambda: ["XAUUSD"])
+    energy: List[str] = field(default_factory=lambda: ["XTIUSD"])
+    indices: List[str] = field(default_factory=lambda: ["US500"])
+    crypto: List[str] = field(default_factory=lambda: ["BTCUSD"])
 
     @property
     def all(self) -> List[str]:

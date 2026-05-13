@@ -30,11 +30,9 @@ class PositionAgent(BaseAgent):
     """
 
     CORRELATED_GROUPS = [
-        {"EURUSD", "GBPUSD", "EURGBP"},
-        {"USDJPY", "GBPJPY", "EURJPY"},
-        {"XAUUSD", "XAGUSD"},
-        {"BTCUSD", "ETHUSD"},
-        {"US500", "US30", "USTEC"},
+        {"EURUSD", "GBPUSD"},
+        {"AUDUSD", "NZDUSD"},
+        {"USDCAD", "XTIUSD"},
     ]
 
     def __init__(self):

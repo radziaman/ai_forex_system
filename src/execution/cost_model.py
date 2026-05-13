@@ -30,9 +30,6 @@ SPREADS: Dict[str, float] = {
     "NZDUSD": 0.9,
     "XAUUSD": 2.0,
     "BTCUSD": 5.0,
-    "EURJPY": 0.9,
-    "GBPJPY": 1.5,
-    "EURGBP": 0.7,
 }
 DEFAULT_SPREAD = 1.0  # pips
 MAX_SPREAD_MULT = 3.0  # Max spread = 3x normal
@@ -145,15 +142,11 @@ class CostModel:
     @staticmethod
     def _pip_size(symbol: str) -> float:
         sym = symbol.upper()
-        if sym in ("XAUUSD", "XAGUSD", "XTIUSD", "XBRUSD"):
+        if sym in ("XAUUSD", "XTIUSD"):
             return 0.01
-        if sym in ("XNGUSD",):
-            return 0.001
-        if sym in ("BTCUSD", "ETHUSD", "LTCUSD"):
+        if sym in ("BTCUSD",):
             return 1.0
-        if sym in ("XRPUSD",):
-            return 0.0001
-        if sym in ("US500", "US30", "USTEC", "UK100", "DE40"):
+        if sym in ("US500",):
             return 1.0
         if "JPY" in sym:
             return 0.01
@@ -166,25 +159,12 @@ class CostModel:
             return 1.0
         if sym in ("USDJPY", "USDCHF", "USDCAD"):
             return 1.0
-        if sym in ("XAUUSD", "XAGUSD", "XTIUSD", "XBRUSD", "XNGUSD"):
+        if sym in ("XAUUSD", "XTIUSD"):
             return 1.0
-        if sym in ("BTCUSD", "ETHUSD", "LTCUSD", "XRPUSD"):
+        if sym in ("BTCUSD",):
             return 1.0
-        if sym in ("US500", "US30", "USTEC", "UK100", "DE40"):
+        if sym in ("US500",):
             return 1.0
-        if sym == "EURGBP":
-            gbpusd = self._price_provider("GBPUSD") if self._price_provider else 1.2
-            return gbpusd
-        if sym == "EURJPY":
-            usdjpy = self._price_provider("USDJPY") if self._price_provider else 100.0
-            return 1.0 / usdjpy
-        if sym == "GBPJPY":
-            usdjpy = self._price_provider("USDJPY") if self._price_provider else 100.0
-            gbpusd = self._price_provider("GBPUSD") if self._price_provider else 1.2
-            return gbpusd / usdjpy
-        if "JPY" in sym:
-            usdjpy = self._price_provider("USDJPY") if self._price_provider else 100.0
-            return 1.0 / usdjpy
         return 1.0
 
     @staticmethod
