@@ -19,26 +19,28 @@ class SignalAgent(BaseAgent):
         super().__init__(
             name="signal_agent",
             role="Ensemble Signal Generator",
-            purpose="Generate high-conviction trading signals from multi-model ensemble",
+            purpose="Generate symbol-specific trading signals from multi-model ensemble",
             domain="signals",
             capabilities={
                 "ensemble_signal_generation", "mixture_of_experts",
                 "elo_rating", "sharpe_weighting", "concept_drift_detection",
-                "regime_gated_inference", "online_learning",  # G8
-                "confidence_calibration",  # G16
+                "regime_gated_inference", "online_learning",
+                "confidence_calibration", "multi_symbol_models",
             },
             tick_interval=1.0,
             consciousness_level=ConsciousnessLevel.REFLECTIVE,
         )
         self.config = config
         self.ensemble = None
-        self._lstm_model = None
-        self._classifier = None
+        self._lstm_models: Dict[str, Any] = {}  # symbol -> loaded LSTM model
+        self._classifiers: Dict[str, Any] = {}  # symbol -> loaded classifier
+        self._model_registry = None
         self._regime_manager = None
         self._drift_monitors: Dict[str, Any] = {}
         self._models_loaded = False
         self._signal_count = 0
         self._last_signal_time = 0.0
+        self._fallback_warnings: set = set()  # Track which symbols we warned about
 
         # G8: Track outcomes per expert for online learning
         self._expert_outcomes: Dict[str, deque] = defaultdict(lambda: deque(maxlen=200))
@@ -124,9 +126,31 @@ class SignalAgent(BaseAgent):
         if not self.ensemble:
             return
 
+        # Compute symbol-specific LSTM prediction
+        lstm_pred = self._lstm_prediction_for_symbol(features, symbol)
+        lstm_conf = 0.6
+
+        # Get ensemble prediction (PPO + rule, LSTM is placeholder)
         pred = self.ensemble.predict(features, regime=regime_str)
         if pred is None or not hasattr(pred, 'confidence') or pred.confidence is None:
             return
+
+        # Blend in symbol-specific LSTM prediction
+        if pred.expert_outputs is not None:
+            pred.expert_outputs["lstm_cnn"] = {
+                "prediction": lstm_pred,
+                "confidence": lstm_conf,
+                "weight": 0.8,
+            }
+            # Recompute ensemble price with true LSTM value
+            all_preds = [v.get("prediction", 0) for v in pred.expert_outputs.values()]
+            all_confs = [v.get("confidence", 0.5) for v in pred.expert_outputs.values()]
+            all_w = [v.get("weight", 1.0) for v in pred.expert_outputs.values()]
+            if all_preds:
+                total_w = sum(all_w)
+                if total_w > 0:
+                    pred.price = sum(p * w for p, w in zip(all_preds, all_w)) / total_w
+                    pred.confidence = sum(c * w for c, w in zip(all_confs, all_w)) / total_w
 
         should_trade, direction_str, agreement = self.ensemble.should_trade(
             pred, price, min_confidence=0.40,
@@ -148,7 +172,7 @@ class SignalAgent(BaseAgent):
         }, priority=MessagePriority.NORMAL,
             intention=AgentIntention(
                 primary_goal=f"generate {direction_str} signal for {symbol}",
-                reasoning=f"ensemble confidence={pred.confidence:.2f}, agreement={agreement:.2f}",
+                reasoning=f"ensemble conf={pred.confidence:.2f} agree={agreement:.2f} LSTM={lstm_pred:.4f}",
                 expected_outcome="risk agent evaluates and gatekeeper approves or rejects",
                 confidence=float(pred.confidence),
             ))
@@ -206,36 +230,85 @@ class SignalAgent(BaseAgent):
             self.memory.know("signal.calibration", report, ttl=3600)
 
     def _load_models(self):
+        # PPO regime agents (shared across all symbols)
         try:
             from ai.regime_agents import RegimeSpecialistSystem
             self._regime_manager = RegimeSpecialistSystem(state_dim=55, n_actions=5)
             n_agents = len([a for a in self._regime_manager.agents.values() if a])
-            self.log_state(f"Loaded {n_agents} PPO regime agents")
+            self.log_state(f"Loaded {n_agents} PPO regime agents (shared across all symbols)")
         except Exception as e:
             self.log_state(f"PPO agents not loaded: {e}", "warning")
+
+        # Per-symbol model registry
         try:
-            from rts_ai_fx.model import LSTMCNNHybrid
-            # Try reloaded model first (saved with current TF, verified weights)
-            paths = ["models/lstm_cnn_model_reloaded.keras",
-                     "models/lstm_cnn_EURUSD.keras",
-                     "models/lstm_cnn_model.keras"]
-            for p in paths:
-                if not __import__('os').path.exists(p):
-                    continue
-                loaded = LSTMCNNHybrid.load(p)
-                if loaded and loaded.model is not None:
-                    self._lstm_model = loaded
-                    n_layers = len(loaded.model.layers)
-                    self.log_state(f"Loaded LSTM-CNN from {p} ({n_layers} layers)")
-                    break
+            from agentic.agents.model_registry import SymbolModelRegistry
+            self._model_registry = SymbolModelRegistry()
+            self._model_registry.discover()
+            self.log_state(f"Model registry: {self._model_registry.summary()}")
         except Exception as e:
-            self.log_state(f"LSTM-CNN not loaded: {e}", "warning")
-        try:
-            from rts_ai_fx.model import ProfitabilityClassifier
-            self._classifier = ProfitabilityClassifier(lookback=30, n_features=51)
-        except Exception:
-            pass
-        self._models_loaded = self._regime_manager is not None and self._lstm_model is not None
+            self.log_state(f"Model registry failed: {e}", "warning")
+
+        # Symbol-specific fallback warning
+        from data.data_manager import SYMBOLS
+
+        # Load LSTM models for all symbols that have them
+        from rts_ai_fx.model import LSTMCNNHybrid
+        for sym in SYMBOLS:
+            entry = self._model_registry.get_lstm(sym) if self._model_registry else None
+            if entry and entry.file_path and os.path.exists(entry.file_path):
+                try:
+                    loaded = LSTMCNNHybrid.load(entry.file_path)
+                    if loaded and loaded.model is not None:
+                        self._lstm_models[sym] = loaded
+                except Exception:
+                    pass
+            if sym not in self._lstm_models:
+                # Fallback: try the generic model
+                for p in ["models/lstm_cnn_model_reloaded.keras",
+                          "models/lstm_cnn_EURUSD.keras",
+                          "models/lstm_cnn_model.keras"]:
+                    if os.path.exists(p):
+                        try:
+                            loaded = LSTMCNNHybrid.load(p)
+                            if loaded and loaded.model is not None:
+                                self._lstm_models[sym] = loaded
+                                self._fallback_warnings.add(sym)
+                                break
+                        except Exception:
+                            pass
+
+        # Load classifier models per symbol
+        from rts_ai_fx.model import ProfitabilityClassifier
+        for sym in SYMBOLS:
+            entry = self._model_registry.get_classifier(sym) if self._model_registry else None
+            if entry and entry.file_path and os.path.exists(entry.file_path):
+                try:
+                    self._classifiers[sym] = ProfitabilityClassifier.load(entry.file_path)
+                except Exception:
+                    pass
+            if sym not in self._classifiers:
+                try:
+                    clf = ProfitabilityClassifier(lookback=30, n_features=51)
+                    self._classifiers[sym] = clf
+                except Exception:
+                    pass
+
+        # Log summary
+        lstm_count = len(self._lstm_models)
+        clf_count = len(self._classifiers)
+        lstm_unique = len(set(id(m) for m in self._lstm_models.values()))
+        if self._fallback_warnings:
+            fallback_list = sorted(self._fallback_warnings)[:5]
+            self.log_state(f"{lstm_count} symbols have LSTM models ({lstm_unique} unique instances) "
+                           f"— {len(self._fallback_warnings)} symbols fall back to EURUSD "
+                           f"({', '.join(fallback_list)}{'...' if len(self._fallback_warnings) > 5 else ''})",
+                           level="warning")
+        else:
+            self.log_state(f"{lstm_count} symbols have LSTM models ({lstm_unique} unique instances)")
+        self.log_state(f"{clf_count} symbols have classifiers")
+
+        self._models_loaded = (self._regime_manager is not None
+                               and len(self._lstm_models) > 0)
 
     def _register_experts(self):
         if not self.ensemble:
@@ -245,11 +318,24 @@ class SignalAgent(BaseAgent):
         if self._regime_manager:
             self.ensemble.add_expert(name="ppo_regime",
                 predict_fn=self._ppo_prediction, confidence_fn=self._ppo_confidence, regime="ranging")
-        if self._lstm_model:
+        # LSTM expert predict is handled symbol-specifically in _on_features.
+        # Register a placeholder that returns 0; the real LSTM value is blended in _on_features.
+        has_lstm = len(self._lstm_models) > 0
+        if has_lstm:
             self.ensemble.add_expert(name="lstm_cnn",
-                predict_fn=self._lstm_prediction, confidence_fn=lambda X: 0.6, regime="ranging")
+                predict_fn=lambda X: 0.0, confidence_fn=lambda X: 0.6, regime="ranging")
         self.ensemble.add_expert(name="rule_based",
             predict_fn=lambda X, sym="EURUSD": 0.0, confidence_fn=lambda X: 0.7, regime="ranging")
+
+    def _get_lstm_prediction(self, symbol: str) -> float:
+        """Get symbol-specific LSTM prediction."""
+        model = self._lstm_models.get(symbol) or self._lstm_models.get("EURUSD")
+        if model is None:
+            model = next(iter(self._lstm_models.values()), None)
+        if model is None:
+            return 0.0
+        # This is called from _on_features where we have the features
+        return 0.0  # Placeholder; actual prediction is done in _on_features
 
     def _features_to_ppo_state(self, X: np.ndarray) -> np.ndarray:
         """Extract a flat 55-dim state vector from multi-bar feature matrix.
@@ -306,15 +392,18 @@ class SignalAgent(BaseAgent):
         except Exception:
             return 0.5
 
-    def _features_to_lstm_input(self, X: np.ndarray) -> np.ndarray:
-        """Reshape features for LSTM using the loaded model's expected dimensions."""
+    def _features_to_lstm_input(self, X: np.ndarray, symbol: str = "EURUSD") -> np.ndarray:
+        """Reshape features for LSTM using the symbol-specific model's dimensions."""
         X_arr = np.asarray(X)
         if X_arr.ndim == 3 and X_arr.shape[0] == 1:
             X_arr = X_arr[0]
         
-        # Read expected dims from the loaded model
-        expected_lookback = self._lstm_model.model.input_shape[1] if self._lstm_model.model else 30
-        expected_n_features = self._lstm_model.model.input_shape[2] if self._lstm_model.model else 51
+        model = self._lstm_models.get(symbol) or next(iter(self._lstm_models.values()), None)
+        if model and model.model:
+            expected_lookback = model.model.input_shape[1]
+            expected_n_features = model.model.input_shape[2]
+        else:
+            expected_lookback, expected_n_features = 30, 51
         
         lookback = min(X_arr.shape[0], expected_lookback) if X_arr.ndim >= 2 else 1
         if X_arr.ndim >= 2:
@@ -331,13 +420,17 @@ class SignalAgent(BaseAgent):
             padded = np.pad(padded, ((expected_lookback - padded.shape[0], 0), (0, 0)))
         return padded.reshape(1, expected_lookback, expected_n_features).astype(np.float32)
 
-    def _lstm_prediction(self, X: np.ndarray) -> float:
-        """Return return signal from LSTM with sanity bounds."""
-        if self._lstm_model is None:
+    def _lstm_prediction_for_symbol(self, X: np.ndarray, symbol: str) -> float:
+        """Symbol-specific LSTM prediction. Falls back to EURUSD model if no dedicated model."""
+        model = self._lstm_models.get(symbol)
+        if model is None:
+            # Try EURUSD as fallback
+            model = self._lstm_models.get("EURUSD") or next(iter(self._lstm_models.values()), None)
+        if model is None:
             return 0.0
         try:
-            X_lstm = self._features_to_lstm_input(X)
-            pred = self._lstm_model.predict(X_lstm, verbose=0)
+            X_lstm = self._features_to_lstm_input(X, symbol)
+            pred = model.predict(X_lstm, verbose=0)
             raw = float(pred[0][0]) if hasattr(pred, '__len__') else float(pred)
             # Sanity: raw must be a finite number in a realistic price range
             if not np.isfinite(raw):
