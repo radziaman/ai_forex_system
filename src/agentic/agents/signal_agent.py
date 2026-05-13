@@ -215,10 +215,19 @@ class SignalAgent(BaseAgent):
             self.log_state(f"PPO agents not loaded: {e}", "warning")
         try:
             from rts_ai_fx.model import LSTMCNNHybrid
-            loaded = LSTMCNNHybrid.load("models/lstm_cnn_model.keras")
-            if loaded and loaded.model is not None:
-                self._lstm_model = loaded
-                self.log_state("Loaded LSTM-CNN model")
+            # Try reloaded model first (saved with current TF, verified weights)
+            paths = ["models/lstm_cnn_model_reloaded.keras",
+                     "models/lstm_cnn_EURUSD.keras",
+                     "models/lstm_cnn_model.keras"]
+            for p in paths:
+                if not __import__('os').path.exists(p):
+                    continue
+                loaded = LSTMCNNHybrid.load(p)
+                if loaded and loaded.model is not None:
+                    self._lstm_model = loaded
+                    n_layers = len(loaded.model.layers)
+                    self.log_state(f"Loaded LSTM-CNN from {p} ({n_layers} layers)")
+                    break
         except Exception as e:
             self.log_state(f"LSTM-CNN not loaded: {e}", "warning")
         try:
@@ -242,15 +251,47 @@ class SignalAgent(BaseAgent):
         self.ensemble.add_expert(name="rule_based",
             predict_fn=lambda X, sym="EURUSD": 0.0, confidence_fn=lambda X: 0.7, regime="ranging")
 
+    def _features_to_ppo_state(self, X: np.ndarray) -> np.ndarray:
+        """Extract a flat 55-dim state vector from multi-bar feature matrix.
+        
+        The feature pipeline produces (lookback, n_features).
+        PPO was trained on flat 55-dim vectors from the most recent bar.
+        We take the last bar's features and trim/pad to 55.
+        """
+        X_arr = np.asarray(X)
+        if X_arr.ndim == 3:
+            X_arr = X_arr[0]  # (1, lookback, n_features) -> (lookback, n_features)
+        if X_arr.ndim == 2:
+            state = X_arr[-1, :]  # Last bar only
+        else:
+            state = X_arr.flatten()
+        state = state[:55]
+        if len(state) < 55:
+            state = np.pad(state, (0, 55 - len(state)))
+        return state.astype(np.float32)
+
+    def _sane_prediction(self, value: float, label: str = "model", bounds: tuple = (-10, 10)) -> float:
+        """Fix 4: Sanity-check a model prediction for NaN, Inf, and realistic bounds."""
+        if value is None or (hasattr(value, '__len__') and len(value) == 0):
+            self.memory.remember(f"{label}_prediction_invalid", f"None/empty prediction", importance=0.3)
+            return 0.0
+        v = float(value) if hasattr(value, '__float__') else 0.0
+        if not np.isfinite(v):
+            self.memory.remember(f"{label}_prediction_nan", f"Non-finite prediction: {v}", importance=0.5, emotion="warning")
+            return 0.0
+        lo, hi = bounds
+        if v < lo or v > hi:
+            return float(np.clip(v, lo, hi))
+        return v
+
     def _ppo_prediction(self, X: np.ndarray) -> float:
         if self._regime_manager is None:
             return 0.0
         try:
-            X_flat = np.asarray(X).flatten()
-            if X_flat.shape[0] < 55:
-                X_flat = np.pad(X_flat, (0, 55 - X_flat.shape[0]))
-            action, _ = self._regime_manager.select_action(X_flat[:55], regime="ranging")
-            return 0.001 if action in (1, 3) else -0.001 if action in (2, 4) else 0.0
+            state = self._features_to_ppo_state(X)
+            action, _ = self._regime_manager.select_action(state, regime="ranging")
+            pred = 0.001 if action in (1, 3) else -0.001 if action in (2, 4) else 0.0
+            return self._sane_prediction(pred, "ppo", (-0.01, 0.01))
         except Exception:
             return 0.0
 
@@ -258,14 +299,55 @@ class SignalAgent(BaseAgent):
         if self._regime_manager is None:
             return 0.5
         try:
-            action, log_probs = self._regime_manager.select_action(X.flatten()[:55], regime="ranging")
+            state = self._features_to_ppo_state(X)
+            action, log_probs = self._regime_manager.select_action(state, regime="ranging")
             prob = float(np.exp(log_probs)) if hasattr(log_probs, '__float__') else 0.6
-            return float(np.clip(prob, 0.0, 1.0))
+            return float(np.clip(self._sane_prediction(prob, "ppo_conf", (0, 1)), 0.0, 1.0))
         except Exception:
             return 0.5
 
+    def _features_to_lstm_input(self, X: np.ndarray) -> np.ndarray:
+        """Reshape features for LSTM using the loaded model's expected dimensions."""
+        X_arr = np.asarray(X)
+        if X_arr.ndim == 3 and X_arr.shape[0] == 1:
+            X_arr = X_arr[0]
+        
+        # Read expected dims from the loaded model
+        expected_lookback = self._lstm_model.model.input_shape[1] if self._lstm_model.model else 30
+        expected_n_features = self._lstm_model.model.input_shape[2] if self._lstm_model.model else 51
+        
+        lookback = min(X_arr.shape[0], expected_lookback) if X_arr.ndim >= 2 else 1
+        if X_arr.ndim >= 2:
+            trimmed = X_arr[-lookback:, :expected_n_features]
+        else:
+            trimmed = np.zeros((1, expected_n_features))
+        
+        n_features = trimmed.shape[1]
+        if n_features < expected_n_features:
+            padded = np.pad(trimmed, ((0, 0), (0, expected_n_features - n_features)))
+        else:
+            padded = trimmed[:, :expected_n_features]
+        if padded.shape[0] < expected_lookback:
+            padded = np.pad(padded, ((expected_lookback - padded.shape[0], 0), (0, 0)))
+        return padded.reshape(1, expected_lookback, expected_n_features).astype(np.float32)
+
     def _lstm_prediction(self, X: np.ndarray) -> float:
+        """Return return signal from LSTM with sanity bounds."""
         if self._lstm_model is None:
+            return 0.0
+        try:
+            X_lstm = self._features_to_lstm_input(X)
+            pred = self._lstm_model.predict(X_lstm, verbose=0)
+            raw = float(pred[0][0]) if hasattr(pred, '__len__') else float(pred)
+            # Sanity: raw must be a finite number in a realistic price range
+            if not np.isfinite(raw):
+                self.memory.remember("lstm_nan", "LSTM output non-finite", importance=0.5, emotion="warning")
+                return 0.0
+            if abs(raw) > 1e6:  # Absurd price
+                return 0.0
+            return float(np.clip((raw - 1.12) / 1.12, -0.01, 0.01))
+        except Exception as e:
+            logger.debug(f"LSTM predict error: {e}")
             return 0.0
         try:
             X_arr = np.asarray(X)

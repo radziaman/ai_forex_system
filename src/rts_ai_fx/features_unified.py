@@ -353,16 +353,25 @@ class FeaturePipeline:
             self.fit(dfs, symbol)
 
     def save_normalization(self, path: str = "models/feature_norm.npz"):
-        """Persist normalization statistics to disk."""
+        """Persist normalization statistics to disk.
+
+        Each symbol-TF pair saved as individual arrays to handle
+        variable feature counts across symbols.
+        """
         import os
 
         os.makedirs(os.path.dirname(path), exist_ok=True)
         keys = list(self._means.keys())
-        means = np.array([self._means[k] for k in keys]) if keys else np.array([])
-        stds = np.array([self._stds[k] for k in keys]) if keys else np.array([])
-        np.savez_compressed(
-            path, keys=keys, means=means, stds=stds, feature_cols=self._feature_cols
-        )
+        save_dict = {
+            "keys": np.array(keys, dtype=object),
+            "feature_cols": np.array(self._feature_cols, dtype=object),
+            "n_pairs": len(keys),
+        }
+        for i, k in enumerate(keys):
+            save_dict[f"mean_{i}"] = self._means[k]
+            save_dict[f"std_{i}"] = self._stds[k]
+            save_dict[f"dim_{i}"] = np.array([self._means[k].shape[0]])
+        np.savez_compressed(path, **save_dict)
         logger.info(
             f"Feature normalization saved: {len(keys)} symbol-tf pairs to {path}"
         )
@@ -371,21 +380,22 @@ class FeaturePipeline:
         """Load normalization statistics from disk. Returns True on success."""
         try:
             data = np.load(path, allow_pickle=True)
-            keys = data["keys"].tolist()
-            means = data["means"]
-            stds = data["stds"]
+            n_pairs = int(data.get("n_pairs", 0))
+            keys = data["keys"].tolist() if n_pairs > 0 else []
             self._feature_cols = data.get("feature_cols", [])
             self._feature_cols = (
                 self._feature_cols.tolist()
                 if hasattr(self._feature_cols, "tolist")
-                else self._feature_cols
+                else (list(self._feature_cols) if hasattr(self._feature_cols, "__iter__")
+                      else self._feature_cols)
             )
-            for i, key in enumerate(keys):
-                if i < len(means) and i < len(stds):
-                    self._means[key] = means[i]
-                    self._stds[key] = stds[i]
-            logger.info(f"Feature normalization loaded: {len(keys)} symbol-tf pairs")
-            return True
+            for i in range(n_pairs):
+                key = keys[i] if i < len(keys) else None
+                if key is not None and f"mean_{i}" in data and f"std_{i}" in data:
+                    self._means[key] = data[f"mean_{i}"]
+                    self._stds[key] = data[f"std_{i}"]
+            logger.info(f"Feature normalization loaded: {n_pairs} symbol-tf pairs")
+            return n_pairs > 0
         except Exception as e:
             logger.warning(f"Could not load feature normalization: {e}")
             return False

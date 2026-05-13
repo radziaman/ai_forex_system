@@ -80,6 +80,7 @@ class PPOAgent:
         vf_coef: float = 0.5,
         max_grad_norm: float = 0.5,
         device: str = "auto",
+        max_memory: int = 10000,  # Fix 3: cap memory to prevent unbounded growth
     ):
         self.device = (
             torch.device(
@@ -95,6 +96,7 @@ class PPOAgent:
         self.vf_coef = vf_coef
         self.max_grad_norm = max_grad_norm
         self.hidden_dims = hidden_dims
+        self.max_memory = max_memory  # Fix 3
 
         self.actor = ActorNetwork(state_dim, n_actions, hidden_dims).to(self.device)
         self.optimizer = optim.Adam(self.actor.parameters(), lr=lr)
@@ -122,6 +124,9 @@ class PPOAgent:
             action = dist.sample().item()
             log_prob = dist.log_prob(torch.tensor(action, device=self.device)).item()
 
+        # Fix 3: Cap memory to prevent unbounded growth when train() is never called
+        if len(self.states) >= self.max_memory:
+            self._clear_memory()
         self.states.append(state.copy())
         self.actions.append(action)
         self.log_probs.append(log_prob)

@@ -49,7 +49,7 @@ class RiskManager:
     def __init__(self, params: RiskParameters, initial_balance: float = 100_000.0):
         self.params = params
         self.initial_balance = initial_balance
-        self.peak_balance = initial_balance  # Track peak for accurate drawdown
+        self.peak_balance = initial_balance
         self.mode: str = TRADE_MODE_PAPER
         self.kill_switch_triggered = False
         self.daily_pnl = 0.0
@@ -58,8 +58,9 @@ class RiskManager:
         self.total_trades = 0
         self.wins = 0
         self.losses = 0
-        self.trade_history = []  # List[TradeRecord] - avoid 3.12 syntax
-        self._price_history = []  # List[float] - avoid 3.12 syntax
+        self.trade_history = []
+        # Fix 2: Per-symbol price history for VaR instead of shared single list
+        self._price_history: Dict[str, List[float]] = {}
         self._var_lookback = 60
         self._on_trade_close = None
 
@@ -90,26 +91,26 @@ class RiskManager:
         if closed:
             r_multiples = []
             for t in closed:
-                risk = abs(t.entry_price - max(getattr(t, "sl", 0), 0)) * t.volume
-                if risk > 0:
-                    r_multiples.append(t.pnl / risk)
-            if r_multiples:
-                avg_r_win = (
-                    np.mean([r for r in r_multiples if r > 0])
-                    if any(r > 0 for r in r_multiples)
-                    else 0.5
-                )
-                avg_r_loss = (
-                    abs(np.mean([r for r in r_multiples if r < 0]))
-                    if any(r < 0 for r in r_multiples)
-                    else 0.5
-                )
-                b = avg_r_win / avg_r_loss if avg_r_loss > 0 else 2.0
+                sl_price = getattr(t, "sl", 0)
+                if sl_price is None or sl_price <= 0:
+                    continue
+                # Correct R-multiple: PnL / (entry-SL distance * volume)
+                # SL distance represents risk per unit, times notional
+                risk_distance = abs(t.entry_price - sl_price)
+                entry_pct_risk = risk_distance / t.entry_price if t.entry_price > 0 else 0.01
+                notional_risk = entry_pct_risk * t.entry_price * t.volume
+                if notional_risk > 0 and t.pnl != 0:
+                    r_multiples.append(t.pnl / notional_risk)
+            if len(r_multiples) >= 3:
+                positives = [r for r in r_multiples if r > 0]
+                negatives = [r for r in r_multiples if r < 0]
+                avg_r_win = np.mean(positives) if positives else 0.5
+                avg_r_loss = abs(np.mean(negatives)) if negatives else 0.5
+                b = max(avg_r_win / max(avg_r_loss, 0.001), 1.01)
             else:
                 b = 2.0
         else:
-            avg_win, avg_loss = 0.02, 0.01
-            b = avg_win / avg_loss if avg_loss > 0 else 2.0
+            b = 2.0
         kelly = (win_rate * b - (1 - win_rate)) / b
         kelly = np.clip(kelly * self.params.kelly_fraction, 0.01, 0.25)
 
@@ -185,33 +186,44 @@ class RiskManager:
         tp = entry + (atr * self.params.tp_atr_multiplier)
         return sl, tp
 
-    def var(self, confidence: float = 0.95) -> float:
-        """Historical VaR — max loss at given confidence, computed against current balance."""
+    def _get_price_series(self, symbol: str = None) -> List[float]:
+        """Get price history for VaR computation.
+        
+        Uses per-symbol price history (Fix 2). Falls back to any available 
+        series if symbol not specified.
+        """
+        key = symbol or list(self._price_history.keys())[0] if self._price_history else None
+        if key and key in self._price_history:
+            return self._price_history[key]
+        # Return first available series as fallback
+        for k in self._price_history:
+            return self._price_history[k]
+        return []
+
+    def var(self, confidence: float = 0.95, symbol: str = None) -> float:
+        """Historical VaR — per-symbol price history (Fix 2)."""
         current_balance = max(self.initial_balance, 1)
-        if len(self._price_history) < 20:
+        prices = self._get_price_series(symbol)
+        if len(prices) < 20:
             return -current_balance * 0.02
-        returns = np.diff(self._price_history) / self._price_history[:-1]
+        returns = np.diff(prices) / np.array(prices[:-1], dtype=float)
         returns = returns[np.isfinite(returns)]
         if len(returns) < 10:
             return -current_balance * 0.02
         var_pct = float(np.percentile(returns, (1 - confidence) * 100))
         return var_pct * current_balance
 
-    def cvar(self, confidence: float = 0.95) -> float:
-        """Conditional VaR (expected shortfall) — average loss beyond VaR."""
+    def cvar(self, confidence: float = 0.95, symbol: str = None) -> float:
+        """Conditional VaR — per-symbol price history (Fix 2)."""
         current_balance = max(self.initial_balance, 1)
-        if len(self._price_history) < 20:
+        prices = self._get_price_series(symbol)
+        if len(prices) < 20:
             return -current_balance * 0.03
-        returns = np.diff(self._price_history) / self._price_history[:-1]
+        returns = np.diff(prices) / np.array(prices[:-1], dtype=float)
         returns = returns[np.isfinite(returns)]
-        var_val = self.var(confidence)
-        tail = returns[
-            (
-                returns <= var_val / current_balance
-                if current_balance > 0
-                else returns <= 0
-            )
-        ]
+        var_val = self.var(confidence, symbol)
+        var_frac = var_val / current_balance
+        tail = returns[returns <= var_frac]
         if len(tail) == 0:
             return var_val
         cvar_val = float(np.mean(tail)) * current_balance
@@ -302,10 +314,13 @@ class RiskManager:
             except Exception:
                 pass
 
-    def update_price_history(self, price: float):
-        self._price_history.append(price)
-        if len(self._price_history) > self._var_lookback * 24:
-            self._price_history = self._price_history[-self._var_lookback * 24 :]
+    def update_price_history(self, price: float, symbol: str = "EURUSD"):
+        if symbol not in self._price_history:
+            self._price_history[symbol] = []
+        self._price_history[symbol].append(price)
+        max_len = self._var_lookback * 24
+        if len(self._price_history[symbol]) > max_len:
+            self._price_history[symbol] = self._price_history[symbol][-max_len:]
 
     def update_trailing_stops(self, prices: dict):
         """Stub for engine compatibility — trailing stops managed by TrailingStopManager."""
