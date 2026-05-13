@@ -577,7 +577,7 @@ class ExecutionService(TradingService):
 **File:** `src/main_v2.py`
 
 ```python
-"""RTS: AI Moneybot System Elite — v2 Service Architecture Entry Point."""
+"""RTS: Agentic Moneybot System Elite — v2 Service Architecture Entry Point."""
 import asyncio
 import signal
 import os
@@ -650,7 +650,7 @@ class TradingOrchestrator:
 
     async def start(self):
         logger.info("=" * 50)
-        logger.info("  RTS: AI Moneybot System Elite v2 — Service Architecture")
+        logger.info("  RTS: Agentic Moneybot System Elite v2 — Service Architecture")
         logger.info("=" * 50)
 
         errors = self.config.validate()
@@ -679,7 +679,7 @@ class TradingOrchestrator:
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description="RTS: AI Moneybot System Elite v2")
+    parser = argparse.ArgumentParser(description="RTS: Agentic Moneybot System Elite v2")
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--capital", type=float, default=100_000.0)
     args = parser.parse_args()

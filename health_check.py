@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""System Health Check for RTS: AI Moneybot System Elite."""
+"""System Health Check for RTS: Agentic Moneybot System Elite."""
 import sys, os
 sys.path.insert(0, 'src')
 sys.path.insert(0, os.path.join(os.getcwd(), 'src'))

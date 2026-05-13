@@ -130,7 +130,7 @@ def run_backtest(prices: np.ndarray, atr: np.ndarray):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="RTS: AI Moneybot System Elite - Validation Suite"
+        description="RTS: Agentic Moneybot System Elite - Validation Suite"
     )
     parser.add_argument(
         "--walk-forward", action="store_true", help="Run walk-forward validation"

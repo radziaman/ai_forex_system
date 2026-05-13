@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 setup(
     name="rts_ai_fx_trading",
     version="3.0",
-    description="RTS: AI Moneybot System Elite with ML and risk management",
+    description="RTS: Agentic Moneybot System Elite with ML and risk management",
     package_dir={"": "src"},
     packages=find_packages(where="src"),
     python_requires=">=3.9",

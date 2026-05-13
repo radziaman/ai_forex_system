@@ -655,9 +655,9 @@ class DataManager:
                     None,
                 )
                 if date_col:
-                    df["timestamp"] = pd.to_datetime(df[date_col]).astype(int) // 10**9
+                    df["timestamp"] = pd.to_datetime(df[date_col]).astype("int64") // 10**9
                 elif df.columns[0].lower() in ("date", "datetime"):
-                    df["timestamp"] = pd.to_datetime(df.iloc[:, 0]).astype(int) // 10**9
+                    df["timestamp"] = pd.to_datetime(df.iloc[:, 0]).astype("int64") // 10**9
                 cols_lower = {c: c.lower() for c in df.columns if isinstance(c, str)}
                 df = df.rename(columns=cols_lower)
                 new_bars = df[["timestamp", "open", "high", "low", "close", "volume"]]

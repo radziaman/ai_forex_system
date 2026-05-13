@@ -163,7 +163,7 @@ class cTraderEnvClient:
 
 
 if __name__ == "__main__":
-    print("RTS: AI Moneybot System Elite: cTrader Environment Client")
+    print("RTS: Agentic Moneybot System Elite: cTrader Environment Client")
     print("=" * 60)
 
     client = cTraderEnvClient()

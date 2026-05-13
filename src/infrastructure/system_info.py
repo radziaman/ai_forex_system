@@ -33,7 +33,7 @@ class SystemReport:
         lines = []
         w = 60
         lines.append("=" * w)
-        lines.append(f"  RTS: AI Moneybot System Elite v{self.version}")
+        lines.append(f"  RTS: Agentic Moneybot System Elite v{self.version}")
         lines.append(f"  Mode: {self.mode.upper()}")
         lines.append("=" * w)
         lines.append("")

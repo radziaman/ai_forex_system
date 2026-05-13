@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "rts_ai_fx_trading"
 version = "3.0"
-description = "RTS: AI Moneybot System Elite"
+description = "RTS: Agentic Moneybot System Elite"
 requires-python = ">=3.9"
 dependencies = [
     "pandas>=2.3.0",
