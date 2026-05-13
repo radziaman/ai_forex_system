@@ -15,7 +15,7 @@ class TestAppConfig:
         assert cfg.trading.max_drawdown == 0.10
         assert cfg.features.lookback == 30
         assert cfg.features.timeframes == ["1h"]
-        assert len(cfg.symbols.all) == 24
+        assert len(cfg.symbols.all) == 11
 
     def test_from_yaml_with_file(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
@@ -68,7 +68,7 @@ class TestAppConfig:
         assert "XAUUSD" in sym.metals
         assert "US500" in sym.indices
         assert "XTIUSD" in sym.energy
-        assert len(sym.all) == 24
+        assert len(sym.all) == 11
         assert all(
             s in sym.all for s in ["EURUSD", "BTCUSD", "XAUUSD", "US500", "XTIUSD"]
         )

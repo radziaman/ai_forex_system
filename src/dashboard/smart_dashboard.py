@@ -95,8 +95,8 @@ def verify_token(token: str) -> Optional[Dict]:
 
 def verify_credentials(credentials: HTTPBasicCredentials) -> bool:
     """Verify HTTP Basic credentials."""
-    correct_username = os.getenv("DASHBOARD_USER", "admin")
-    correct_password = os.getenv("DASHBOARD_PASS", "moneybot_2026")
+    correct_username = os.environ["DASHBOARD_USER"]
+    correct_password = os.environ["DASHBOARD_PASS"]
     username_hash = hashlib.sha256(credentials.username.encode()).hexdigest()
     password_hash = hashlib.sha256(credentials.password.encode()).hexdigest()
     return (

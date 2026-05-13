@@ -81,7 +81,7 @@ class MAMLAgent:
     def __init__(
         self,
         base_model: Optional[nn.Module] = None,
-        input_dim: int = 55 * 30,
+        input_dim: int = 49 * 30,
         inner_lr: float = 0.01,
         meta_lr: float = 0.001,
         inner_steps: int = 5,

@@ -59,22 +59,28 @@ class LearningAgent(BaseAgent):
         except Exception as e:
             self.log_state(f"Model registry not available: {e}", "warning")
         self.set_world("learning.status", "idle")
+        models_untrained = self.get_world("models.untrained", False)
+        if models_untrained:
+            self.log_state("Models untrained — will bootstrap from historical data")
 
     async def perceive(self) -> Dict[str, Any]:
         drift_symbols = self.get_world("signal.drifted_symbols", 0)
         performance = self.get_world("performance.stats", {})
         sharpe = performance.get("sharpe", 0)
         n_trades = performance.get("total_trades", 0)
+        models_untrained = self.get_world("models.untrained", False)
 
         needs_retrain = (drift_symbols > 0 or
                          (n_trades > 20 and sharpe < 0.3) or
                          (n_trades > 50 and self._retraining_count == 0))
+        needs_bootstrap = models_untrained and self._retraining_count == 0
 
         return {
             "drift_symbols": drift_symbols,
             "sharpe": sharpe,
             "n_trades": n_trades,
             "needs_retrain": needs_retrain,
+            "needs_bootstrap": needs_bootstrap,
             "time_since_last_train": time.time() - self._last_training_time,
         }
 
@@ -90,12 +96,43 @@ class LearningAgent(BaseAgent):
                 reasons.append(f"sharpe={perception['sharpe']:.2f}")
             actions["reasons"] = "; ".join(reasons) if reasons else "scheduled"
 
+        if perception.get("needs_bootstrap"):
+            actions["bootstrap"] = True
+
         if self.consciousness.cycle_count % 10 == 0 and perception.get("n_trades", 0) > 0:
             actions["check_metrics"] = True
 
         return actions
 
     async def act(self, decision: Dict[str, Any]):
+        if decision.get("bootstrap"):
+            self._retraining_count += 1
+            self._last_training_time = time.time()
+            self.log_state("Bootstrap training: training PPO agents from historical data")
+            self.consciousness.current_intention = "bootstrapping models from historical data"
+            self.set_world("learning.status", "training")
+            try:
+                from data.data_manager import SYMBOLS
+                from agentic.core.agent_bus import get_agent_bus
+                bus = get_agent_bus()
+                for sym in SYMBOLS[:3]:
+                    df = self.get_world(f"data.ohlcv.{sym}.1h", None)
+                    if df is not None:
+                        await self.send(
+                            MessageType.MODEL_UPDATE,
+                            payload={"action": "train_ppo", "symbol": sym},
+                            priority=MessagePriority.LOW,
+                        )
+                self.set_world("models.untrained", False)
+                self.set_world("models.ppo_trained", True)
+                self.log_state(f"Bootstrap complete — PPO agents initialized")
+            except Exception as e:
+                self.log_state(f"Bootstrap training failed: {e}", "warning")
+            self.set_world("learning.status", "idle")
+            self.set_world("learning.last_training", self._last_training_time)
+            self.set_world("learning.retraining_count", self._retraining_count)
+            return
+
         if decision.get("retrain"):
             self._retraining_count += 1
             self._last_training_time = time.time()

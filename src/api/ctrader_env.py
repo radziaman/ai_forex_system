@@ -4,7 +4,7 @@ cTrader client with environment variable support for RTS - AI FX Trading System.
 Loads credentials from .env file or environment variables.
 
 Usage:
-    from src.api.ctrader_env import cTraderEnvClient
+    from api.ctrader_env import cTraderEnvClient
     client = cTraderEnvClient()
     client.connect()
 """

@@ -217,7 +217,7 @@ class SmartIntegrationTestPipeline:
         elif test.name == "circuit_breaker_test":
             # Test circuit breaker
             try:
-                from src.risk.circuit_breaker import (
+                from ..risk.circuit_breaker import (
                     CircuitBreaker,
                     MarketStressSnapshot,
                 )

@@ -322,10 +322,6 @@ class RiskManager:
         if len(self._price_history[symbol]) > max_len:
             self._price_history[symbol] = self._price_history[symbol][-max_len:]
 
-    def update_trailing_stops(self, prices: dict):
-        """Stub for engine compatibility — trailing stops managed by TrailingStopManager."""
-        pass
-
     def reset_daily_stats(self, balance: float):
         self.daily_pnl = 0.0
         self.daily_trades = 0

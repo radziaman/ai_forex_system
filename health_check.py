@@ -97,11 +97,8 @@ try:
 except Exception as e:
     check('infrastructure.secrets', lambda: (_ for _ in ()).throw(e))
 
-try:
-    from infrastructure.event_bus import TradingEventBus
-    check('infrastructure.event_bus', lambda: True)
-except Exception as e:
-    check('infrastructure.event_bus', lambda: (_ for _ in ()).throw(e))
+# Note: infrastructure.event_bus was removed in v3.0 refactor.
+# Agent communication now uses agentic.core.agent_bus.
 
 # Risk
 try:

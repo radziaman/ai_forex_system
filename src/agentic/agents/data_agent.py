@@ -197,22 +197,26 @@ class DataAgent(BaseAgent):
 
     async def _load_historical_data(self):
         self.consciousness.current_intention = "loading historical data"
+        for sym in SYMBOLS:
+            self.dm.try_alternative_source(sym, "1h", days=60)
         self.dm.load_from_dukascopy_cache(max_hours=168)
         for sym in SYMBOLS:
             df = self.dm.get_ohlcv(sym, "1h")
             if df is None or (hasattr(df, 'empty') and df.empty) or len(df) < 50:
-                self.dm.try_alternative_source(sym, "1h", days=60)
+                if not self.dm.try_alternative_source(sym, "1h", days=60):
+                    logger.warning(f"No real data for {sym}")
         for tf in [tf for tf in self.config.features.timeframes if tf != "1h"]:
             for sym in SYMBOLS:
                 df = self.dm.get_ohlcv(sym, "1h")
                 if df is not None and hasattr(df, 'empty') and not df.empty and len(df) >= 30:
                     self._resample_timeframe(sym, tf, df)
+        self.dm.save_all_ohlcv()
         total_bars = 0
         for sym in SYMBOLS:
             df = self.dm.get_ohlcv(sym, "1h")
             if df is not None and hasattr(df, 'empty') and not df.empty:
                 total_bars += len(df)
-        self.log_state(f"Historical: {total_bars} bars across {len(SYMBOLS)} symbols")
+        self.log_state(f"Historical: {total_bars} bars across {len(SYMBOLS)} symbols (persisted to disk)")
 
     def _resample_timeframe(self, symbol, tf, df_1h):
         import numpy as np, pandas as pd

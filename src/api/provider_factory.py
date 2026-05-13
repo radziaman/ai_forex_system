@@ -114,8 +114,9 @@ class CtraderExecutionAdapter(ExecutionProvider):
                 return OrderResult(
                     order_id="0", position_id=position_id, status="FILLED"
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"close_position failed: {e}")
         return OrderResult(order_id="0", position_id=position_id, status="FILLED")
 
     async def get_positions(self) -> list:

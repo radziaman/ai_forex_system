@@ -425,7 +425,7 @@ class DataManager:
             logger.info(f"Saved {saved} symbol-TF pairs to disk")
 
     def load_historical(self, symbol: str, tf: str, days: int = 365):
-        fp = os.path.join(self.historical_path, f"{symbol}_{tf}_{days}d.csv")
+        fp = os.path.join(self.historical_path, f"{symbol}_{tf}.csv")
         if os.path.exists(fp):
             self.ohlcv[symbol][tf] = pd.read_csv(fp)
             self.freshness[symbol].last_source = "csv"
@@ -433,14 +433,20 @@ class DataManager:
             logger.info(
                 f"Loaded {symbol} {tf} CSV ({len(self.ohlcv[symbol][tf])} bars)"
             )
-        else:
-            self._gen_synthetic(symbol, tf, days)
-            os.makedirs(os.path.dirname(fp), exist_ok=True)
-            self.ohlcv[symbol][tf].to_csv(fp, index=False)
-            self.freshness[symbol].last_source = "synthetic"
-            logger.info(
-                f"Generated synthetic {symbol} {tf} ({len(self.ohlcv[symbol][tf])} bars)"
-            )
+            return
+
+        # No CSV cache — fetch real data from Yahoo Finance
+        if self.try_alternative_source(symbol, tf, days=days):
+            return
+
+        # Fallback: Dukascopy BI5 cache
+        self.load_from_dukascopy_cache(symbols=[symbol], timeframes=[tf], max_hours=days * 24)
+        bars = self.ohlcv.get(symbol, {}).get(tf, pd.DataFrame())
+        if bars is not None and hasattr(bars, 'empty') and not bars.empty and len(bars) > 10:
+            self.save_ohlcv(symbol, tf)
+            return
+
+        logger.warning(f"No real data source available for {symbol} {tf}")
 
     def load_all(self, days: int = 365, timeframes: Optional[List[str]] = None):
         tfs = timeframes or TIMEFRAMES
@@ -681,27 +687,6 @@ class DataManager:
             self._source_health["yfinance"]["failures"] += 1
             logger.debug(f"yFinance failed for {symbol}: {e}")
         return False
-
-    def _gen_synthetic(self, symbol: str, tf: str, days: int):
-        tf_map = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
-        secs = tf_map.get(tf, 3600)
-        periods = days * 86400 // secs
-        dates = pd.date_range(end=pd.Timestamp.now(), periods=periods, freq=f"{secs}s")
-        base = BASE_PRICES.get(symbol, 1.12)
-        prices = base * np.exp(np.cumsum(np.random.normal(0, 0.0001, periods)))
-        spread = 0.0001 if "JPY" not in symbol.upper() else 0.01
-        data = [
-            {
-                "timestamp": d.timestamp(),
-                "open": p,
-                "high": p * (1 + spread),
-                "low": p * (1 - spread),
-                "close": p * (1 + np.random.normal(0, spread / 2)),
-                "volume": int(np.random.exponential(50000)),
-            }
-            for d, p in zip(dates, prices)
-        ]
-        self.ohlcv[symbol][tf] = pd.DataFrame(data)
 
     # ------------------------------------------------------------------
     # Data gap detection & healing
@@ -956,7 +941,7 @@ class DataManager:
 
     def get_snapshot(self, symbol: str = "EURUSD", acc=None, positions=None):
         try:
-            from src.data.feature_engine import FeatureEngine
+            from .feature_engine import FeatureEngine
 
             fe = FeatureEngine()
             features = fe.compute_features(

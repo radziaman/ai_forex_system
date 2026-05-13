@@ -35,7 +35,7 @@ class LSTMCNNHybrid:
     def __init__(
         self,
         lookback: int = 30,
-        n_features: int = 51,
+        n_features: int = 49,
         lstm_units: int = 128,
         cnn_filters: int = 128,
     ):
@@ -166,7 +166,7 @@ class LSTMCNNHybrid:
 class ProfitabilityClassifier:
     """Binary direction classifier — predicts if NEXT bar will be up (1) or down (0)."""
 
-    def __init__(self, lookback: int = 30, n_features: int = 51):
+    def __init__(self, lookback: int = 30, n_features: int = 49):
         self.lookback = lookback
         self.n_features = n_features
         self.model = None  # type: Optional[Model]

@@ -3,6 +3,7 @@ Signal Agent — G8: online learning from trade outcomes, G16: confidence calibr
 """
 
 from __future__ import annotations
+import os
 import time
 import numpy as np
 from typing import Dict, List, Optional, Any, Set, Callable
@@ -233,9 +234,19 @@ class SignalAgent(BaseAgent):
         # PPO regime agents (shared across all symbols)
         try:
             from ai.regime_agents import RegimeSpecialistSystem
-            self._regime_manager = RegimeSpecialistSystem(state_dim=55, n_actions=5)
+            self._regime_manager = RegimeSpecialistSystem(state_dim=49, n_actions=5)
             n_agents = len([a for a in self._regime_manager.agents.values() if a])
-            self.log_state(f"Loaded {n_agents} PPO regime agents (shared across all symbols)")
+            import torch
+            has_real_weights = any(
+                any(p.norm().item() > 1.0 for p in agent.actor.parameters())
+                for agent in self._regime_manager.agents.values() if agent
+            )
+            self.set_world("models.ppo_trained", has_real_weights)
+            if not has_real_weights:
+                self.log_state(f"Loaded {n_agents} PPO regime agents (untrained — random weights)")
+                self.set_world("models.untrained", True)
+            else:
+                self.log_state(f"Loaded {n_agents} PPO regime agents (trained weights loaded)")
         except Exception as e:
             self.log_state(f"PPO agents not loaded: {e}", "warning")
 
@@ -288,7 +299,7 @@ class SignalAgent(BaseAgent):
                     pass
             if sym not in self._classifiers:
                 try:
-                    clf = ProfitabilityClassifier(lookback=30, n_features=51)
+                    clf = ProfitabilityClassifier(lookback=30, n_features=49)
                     self._classifiers[sym] = clf
                 except Exception:
                     pass
@@ -338,22 +349,18 @@ class SignalAgent(BaseAgent):
         return 0.0  # Placeholder; actual prediction is done in _on_features
 
     def _features_to_ppo_state(self, X: np.ndarray) -> np.ndarray:
-        """Extract a flat 55-dim state vector from multi-bar feature matrix.
-        
-        The feature pipeline produces (lookback, n_features).
-        PPO was trained on flat 55-dim vectors from the most recent bar.
-        We take the last bar's features and trim/pad to 55.
-        """
+        """Extract a flat state vector from multi-bar feature matrix matching PPO dims."""
         X_arr = np.asarray(X)
         if X_arr.ndim == 3:
-            X_arr = X_arr[0]  # (1, lookback, n_features) -> (lookback, n_features)
+            X_arr = X_arr[0]
         if X_arr.ndim == 2:
-            state = X_arr[-1, :]  # Last bar only
+            state = X_arr[-1, :]
         else:
             state = X_arr.flatten()
-        state = state[:55]
-        if len(state) < 55:
-            state = np.pad(state, (0, 55 - len(state)))
+        target_dim = self._regime_manager.state_dim if self._regime_manager else 49
+        state = state[:target_dim]
+        if len(state) < target_dim:
+            state = np.pad(state, (0, target_dim - len(state)))
         return state.astype(np.float32)
 
     def _sane_prediction(self, value: float, label: str = "model", bounds: tuple = (-10, 10)) -> float:
@@ -403,7 +410,7 @@ class SignalAgent(BaseAgent):
             expected_lookback = model.model.input_shape[1]
             expected_n_features = model.model.input_shape[2]
         else:
-            expected_lookback, expected_n_features = 30, 51
+            expected_lookback, expected_n_features = 30, 49
         
         lookback = min(X_arr.shape[0], expected_lookback) if X_arr.ndim >= 2 else 1
         if X_arr.ndim >= 2:

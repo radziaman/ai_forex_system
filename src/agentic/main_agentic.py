@@ -123,7 +123,7 @@ class AgenticOrchestrator:
 
         self.feature_agent = FeatureAgent(self.config)
         self.feature_agent.consciousness.identity.purpose = (
-            "I transform raw OHLCV into 55+ normalized features. I bridge data and intelligence.")
+            "I transform raw OHLCV into normalized features. I bridge data and intelligence.")
         self.agents.append(self.feature_agent)
 
         self.regime_agent = RegimeAgent(self.config)

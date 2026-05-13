@@ -32,7 +32,7 @@ for name, cfg in REGIME_CONFIGS.items():
           f"clip={cfg.clip_range:.2f}")
 
 # Build and check agents
-rs = RegimeSpecialistSystem(state_dim=55, n_actions=5)
+rs = RegimeSpecialistSystem(state_dim=49, n_actions=5)
 n_loaded = len([a for a in rs.agents.values() if a is not None])
 print(f"\n  Agents loaded: {n_loaded}/4")
 for name, agent in rs.agents.items():
@@ -50,7 +50,7 @@ for name, agent in rs.agents.items():
 
 # Test inference
 print(f"\n[3] PPO INFERENCE TEST")
-test_state = np.random.randn(55).astype(np.float32)
+test_state = np.random.randn(49).astype(np.float32)
 for name, agent in rs.agents.items():
     if agent:
         t0 = time.time()
@@ -83,7 +83,7 @@ if lstm and lstm.model:
                       "saved weights not transferred due to TF version mismatch")
 
     # Test inference
-    test_X = np.random.randn(1, 30, 51).astype(np.float32)
+    test_X = np.random.randn(1, 30, 49).astype(np.float32)
     t0 = time.time()
     for _ in range(50):
         pred = lstm.predict(test_X)
@@ -125,21 +125,24 @@ class MetaNet(nn.Module):
 
 ml = MetaNet()
 total = sum(p.numel() for p in ml.parameters())
-ckpt = torch.load("models/meta_learner.pt", map_location="cpu")
 print(f"  Architecture: 16->128->64->32->5")
 print(f"  Total params: {total:,}")
-print(f"  Checkpoint keys: {list(ckpt.keys())[:8]}")
-if 'model_state_dict' in ckpt:
-    try:
-        ml.load_state_dict(ckpt['model_state_dict'])
-        print(f"  Weights: loaded OK")
-        print(f"  Training step: {ckpt.get('training_step', 'N/A')}")
-        print(f"  Stored Sharpe: {ckpt.get('system_sharpe', 'N/A')}")
-    except Exception as e:
-        issues.append(f"Meta-learner load: {e}")
-        print(f"  Load FAILED: {e}")
+if os.path.exists("models/meta_learner.pt"):
+    ckpt = torch.load("models/meta_learner.pt", map_location="cpu")
+    print(f"  Checkpoint keys: {list(ckpt.keys())[:8]}")
+    if 'model_state_dict' in ckpt:
+        try:
+            ml.load_state_dict(ckpt['model_state_dict'])
+            print(f"  Weights: loaded OK")
+            print(f"  Training step: {ckpt.get('training_step', 'N/A')}")
+            print(f"  Stored Sharpe: {ckpt.get('system_sharpe', 'N/A')}")
+        except Exception as e:
+            issues.append(f"Meta-learner load: {e}")
+            print(f"  Load FAILED: {e}")
+    else:
+        print(f"  Weights: direct state dict format")
 else:
-    print(f"  Weights: direct state dict format")
+    print(f"  No checkpoint file found (fresh system — will be trained on live data)")
 
 # 6. Feature pipeline normalization
 print(f"\n[7] FEATURE PIPELINE")
@@ -160,16 +163,16 @@ for key in sorted(fp._means.keys()):
 print(f"\n[8] DIMENSIONAL CONSISTENCY")
 dims = {
     "Feature pipeline output": n_features,
-    "PPO state_dim (config)": 55,
-    "LSTM n_features (build)": 51,
-    "LSTM lookback (build)": 30,
+    "PPO state_dim": 49,
+    "LSTM n_features": 49,
+    "LSTM lookback": 30,
     "Feature lookback (config)": 30,
 }
 for name, dim in dims.items():
     print(f"  {name:<35} {dim}")
-if n_features > 0 and n_features != 55:
-    issues.append(f"Feature pipeline outputs {n_features} dims but PPO expects 55")
-    print(f"  >> MISMATCH: features={n_features} vs PPO=55")
+if n_features > 0 and n_features != 49:
+    issues.append(f"Feature pipeline outputs {n_features} dims but PPO expects 49")
+    print(f"  >> MISMATCH: features={n_features} vs PPO=49")
 elif n_features == 0:
     print(f"  >> Feature pipeline not fitted yet (will adapt at runtime)")
 
