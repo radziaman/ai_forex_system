@@ -25,5 +25,5 @@ RUN mkdir -p data/logs data/trades data/historical models
 # Expose dashboard port
 EXPOSE 8000
 
-# Run the system
-CMD ["python", "-m", "src.main"]
+# Run the system (agentic architecture)
+CMD ["python", "-m", "agentic.main_agentic", "--mode", "paper"]
