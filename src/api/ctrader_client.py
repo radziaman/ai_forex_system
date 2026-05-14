@@ -698,12 +698,12 @@ class CtraderClient:
     def _price_divisor(symbol: str, raw: float) -> float:
         """Determine the correct divisor for cTrader depth price scaling."""
         sym = symbol.upper()
-        if sym in ("BTCUSD",):
-            return 1000.0
         if sym in ("US500",):
             return 100.0
         if sym in ("XAUUSD", "XTIUSD"):
-            return 1000.0
+            return 100.0
+        if sym in ("BTCUSD",):
+            return 100.0
         if "JPY" in sym:
             return 100000.0
         return 100000.0
