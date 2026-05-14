@@ -99,6 +99,10 @@ class ExecutionAgent(BaseAgent):
             if hasattr(self.ctrader, 'on_market_data'):
                 self.ctrader.on_market_data = _on_tick
 
+        raw = getattr(self.ctrader, 'raw', None)
+        if raw:
+            raw.on_disconnect = lambda: asyncio.ensure_future(self._on_disconnect())
+
         connected = await self.ctrader.start()
         if connected and hasattr(self.ctrader, 'is_connected') and self.ctrader.is_connected():
             self.log_state(f"cTrader connected ({engine_mode})")
@@ -120,6 +124,11 @@ class ExecutionAgent(BaseAgent):
 
         self.set_world("execution.mode", engine_mode)
         self.set_world("execution.status", "ready")
+
+    async def _on_disconnect(self):
+        """Called when cTrader connection drops."""
+        self.log_state("cTrader disconnected", "warning")
+        self.set_world("execution.connected", False)
 
     async def perceive(self) -> Dict[str, Any]:
         if self.engine is None:

@@ -163,6 +163,7 @@ class CtraderClient:
         self.on_order_update: Optional[Callable] = None
         self.on_positions_update: Optional[Callable] = None
         self.on_depth_update: Optional[Callable] = None  # Callback for DOM updates
+        self.on_disconnect: Optional[Callable] = None  # Called when connection drops
 
     async def start(self) -> bool:
         try:
@@ -575,6 +576,10 @@ class CtraderClient:
                 if self._is_connected:
                     logger.debug(f"Background listener error: {e}")
                 break
+
+        self._is_connected = False
+        if self.on_disconnect:
+            await self.on_disconnect()
 
     async def _handle_message(self, msg):
         """Dispatch incoming messages to appropriate handlers."""
