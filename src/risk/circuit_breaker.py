@@ -243,11 +243,11 @@ class CircuitBreaker:
         self, symbol: str, snapshot: MarketStressSnapshot
     ) -> Tuple[bool, str]:
         prices = self.price_history[symbol]
-        if len(prices) < 2:
+        if len(prices) < 11:
             return False, ""
 
         # Calculate recent returns
-        returns = np.diff(prices[-10:]) / prices[-11:-1]
+        returns = np.diff(prices[-10:]) / prices[-10:-1]
         if len(returns) == 0:
             return False, ""
 

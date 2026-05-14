@@ -702,7 +702,7 @@ class CtraderClient:
             return 1000.0
         if sym in ("US500",):
             return 100.0
-        if sym in ("XAUUSD", "XTIUSD", "XAGUSD", "XBRUSD", "XNGUSD"):
+        if sym in ("XAUUSD", "XTIUSD"):
             return 1000.0
         if "JPY" in sym:
             return 100000.0
