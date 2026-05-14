@@ -420,15 +420,11 @@ class CtraderClient:
 
     async def disconnect(self):
         self._is_connected = False
+        self._authenticated = False
+        self._subscribed_depth.clear()
         if self._listener_task and not self._listener_task.done():
             self._listener_task.cancel()
         if self._writer:
-            # Unsubscribe from all depth subscriptions
-            for sym_id in list(self._subscribed_depth.keys()):
-                try:
-                    await self.unsubscribe_depth(sym_id)
-                except Exception:
-                    pass
             try:
                 self._writer.close()
                 await self._writer.wait_closed()
