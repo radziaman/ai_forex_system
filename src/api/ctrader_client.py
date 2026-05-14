@@ -234,7 +234,7 @@ class CtraderClient:
             await self._writer.drain()
             return True
         except Exception as e:
-            logger.warning(f"Send failed: {e}")
+            logger.debug(f"Send failed: {e}")
             return False
 
     async def _recv_msg(self, timeout: int = 15):
@@ -422,10 +422,13 @@ class CtraderClient:
         self._is_connected = False
         if self._listener_task and not self._listener_task.done():
             self._listener_task.cancel()
-        # Unsubscribe from all depth subscriptions
-        for sym_id in list(self._subscribed_depth.keys()):
-            await self.unsubscribe_depth(sym_id)
         if self._writer:
+            # Unsubscribe from all depth subscriptions
+            for sym_id in list(self._subscribed_depth.keys()):
+                try:
+                    await self.unsubscribe_depth(sym_id)
+                except Exception:
+                    pass
             try:
                 self._writer.close()
                 await self._writer.wait_closed()

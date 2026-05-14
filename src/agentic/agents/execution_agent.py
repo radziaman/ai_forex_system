@@ -135,6 +135,7 @@ class ExecutionAgent(BaseAgent):
         try:
             if self.ctrader:
                 await self.ctrader.stop()
+            await asyncio.sleep(3)
             from data.data_manager import SYMBOLS
             from api.symbol_map import get_symbol_id
             connected = await self.ctrader.start()
