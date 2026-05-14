@@ -79,6 +79,7 @@ class ExecutionAgent(BaseAgent):
                     self.set_world(f"data.bid.{symbol}", round(float(bid), 5))
                     self.set_world(f"data.ask.{symbol}", round(float(ask), 5))
                     self.set_world(f"data.price.{symbol}", round(float((bid + ask) / 2), 5))
+                    logger.debug(f"TICK {symbol}: bid={bid:.5f} ask={ask:.5f} spread={spread_pips:.2f}")
 
                 await self.send(
                     MessageType.TICK_RECEIVED,
