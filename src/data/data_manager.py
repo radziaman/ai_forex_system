@@ -188,7 +188,7 @@ class DataManager:
         if volume < 0:
             return False
         base = BASE_PRICES.get(symbol, 1.12)
-        if bid > base * 100 or ask > base * 100:
+        if bid > base * 10 or ask > base * 10:
             logger.debug(f"{symbol}: price {bid}/{ask} >> base {base}, rejected")
             return False
         prev = self._last_realtime_price.get(symbol)
