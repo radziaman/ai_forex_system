@@ -130,6 +130,34 @@ class ExecutionAgent(BaseAgent):
         self.log_state("cTrader disconnected", "warning")
         self.set_world("execution.connected", False)
 
+    async def _reconnect(self):
+        """Reconnect to cTrader and re-subscribe depth quotes."""
+        try:
+            if self.ctrader:
+                await self.ctrader.stop()
+            from data.data_manager import SYMBOLS
+            from api.symbol_map import get_symbol_id
+            connected = await self.ctrader.start()
+            if connected:
+                raw = getattr(self.ctrader, 'raw', None)
+                if raw:
+                    raw.on_disconnect = lambda: asyncio.ensure_future(self._on_disconnect())
+                for sym in SYMBOLS:
+                    try:
+                        sid = get_symbol_id(sym)
+                        if raw and hasattr(raw, 'subscribe_depth'):
+                            await raw.subscribe_depth(sid)
+                    except Exception:
+                        pass
+                self._executed = 0
+                self._failed = 0
+                self.log_state(f"Reconnected to cTrader, subscribed to {len(SYMBOLS)} symbols")
+                self.set_world("execution.connected", True)
+            else:
+                self.log_state("Reconnect failed", "warning")
+        except Exception as e:
+            self.log_state(f"Reconnect error: {e}", "warning")
+
     async def perceive(self) -> Dict[str, Any]:
         if self.engine is None:
             return {"skip": True}
@@ -199,6 +227,9 @@ class ExecutionAgent(BaseAgent):
                 pid = payload.get("position_id")
                 if pid:
                     await self.engine.close_position(int(pid), payload.get("reason", "directive"))
+            elif action == "reconnect":
+                self.log_state("Reconnecting to cTrader...")
+                await self._reconnect()
         elif message.msg_type == MessageType.DIAGNOSTIC_REQUEST:
             await self.send(MessageType.DIAGNOSTIC_RESULT, payload={
                 "agent": self.name, "executed": self._executed, "failed": self._failed,
