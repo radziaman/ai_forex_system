@@ -57,12 +57,18 @@ class ExecutionAgent(BaseAgent):
             """Forward broker ticks to data_agent and store live spread in world state."""
             try:
                 symbol = getattr(depth, 'symbol', '')
-                bid = getattr(depth, 'bid', 0)
-                ask = getattr(depth, 'ask', 0)
+                raw_bid = getattr(depth, 'bid', 0)
+                raw_ask = getattr(depth, 'ask', 0)
                 ts = time.time()
 
-                # Compute live spread in pips and store in world state
+                # Normalize cTrader raw prices to human-readable format
+                bid, ask = raw_bid, raw_ask
                 if bid > 0 and ask > 0:
+                    from api.ctrader_client import CtraderClient
+                    div = CtraderClient._price_divisor(symbol, bid)
+                    bid = bid / div
+                    ask = ask / div
+
                     from execution.cost_model import CostModel
                     pip_size = CostModel.pip_to_price(symbol)
                     spread_pips = (ask - bid) / pip_size if pip_size > 0 else 0
