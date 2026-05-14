@@ -616,6 +616,7 @@ class CtraderClient:
                 raw = quote.bid if quote.HasField("bid") else quote.ask
                 divisor = self._price_divisor(symbol, raw)
                 price = raw / divisor if divisor else raw
+
                 size = quote.size / 100.0  # Convert cents to units
                 level = DepthLevel(price=price, size=size)
                 if quote.HasField("bid"):
@@ -696,17 +697,23 @@ class CtraderClient:
 
     @staticmethod
     def _price_divisor(symbol: str, raw: float) -> float:
-        """Determine the correct divisor for cTrader depth price scaling."""
+        """Determine the correct divisor for cTrader depth price scaling.
+        
+        Uses per-symbol thresholds since raw values from cTrader can vary
+        in scale between connections and market data sessions.
+        """
         sym = symbol.upper()
-        if sym in ("US500",):
-            return 100.0
-        if sym in ("XAUUSD", "XTIUSD"):
-            return 100.0
-        if sym in ("BTCUSD",):
-            return 100.0
         if "JPY" in sym:
             return 100000.0
-        return 100000.0
+        if sym in ("EURUSD", "GBPUSD", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD"):
+            return 100000.0
+        if sym == "BTCUSD":
+            return 100.0 if raw < 100_000_000 else 1000.0
+        if sym in ("XAUUSD", "XTIUSD"):
+            return 100.0 if raw < 10_000_000 else 1000.0
+        if sym == "US500":
+            return 100.0 if raw < 5_000_000 else 1000.0
+        return 100.0
 
     def get_market_depth(self, symbol: str) -> Optional[MarketDepth]:
         """Get latest Level II market depth for a symbol."""
