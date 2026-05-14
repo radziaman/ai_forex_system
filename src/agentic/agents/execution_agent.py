@@ -95,6 +95,17 @@ class ExecutionAgent(BaseAgent):
         if connected and hasattr(self.ctrader, 'is_connected') and self.ctrader.is_connected():
             self.log_state(f"cTrader connected ({engine_mode})")
             self.set_world("execution.connected", True)
+            from data.data_manager import SYMBOLS
+            from api.symbol_map import get_symbol_id
+            raw = getattr(self.ctrader, 'raw', None)
+            if raw and hasattr(raw, 'subscribe_depth'):
+                for sym in SYMBOLS:
+                    try:
+                        sid = get_symbol_id(sym)
+                        await raw.subscribe_depth(sid)
+                    except Exception as e:
+                        logger.debug(f"Depth subscribe failed for {sym}: {e}")
+                self.log_state(f"Subscribed to depth quotes for {len(SYMBOLS)} symbols")
         else:
             self.log_state(f"Running in {engine_mode} mode (simulation)", "warning")
             self.set_world("execution.connected", False)

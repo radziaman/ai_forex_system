@@ -39,7 +39,7 @@ class CtraderExecutionAdapter(ExecutionProvider):
         if self.on_price:
             from api.base import PriceTick
 
-            self.on_price(
+            result = self.on_price(
                 PriceTick(
                     symbol=depth.symbol,
                     bid=depth.bid,
@@ -48,6 +48,8 @@ class CtraderExecutionAdapter(ExecutionProvider):
                     volume=depth.volume,
                 )
             )
+            if hasattr(result, '__await__'):
+                await result
 
     @property
     def raw(self):

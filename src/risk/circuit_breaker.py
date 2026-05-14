@@ -272,7 +272,7 @@ class CircuitBreaker:
         if normal <= 0:
             normal = spread
 
-        ratio = spread / normal
+        ratio = spread / normal if normal > 0 else 1.0
         snapshot.spread_ratio = ratio
 
         if ratio > self.spread_multiplier_threshold:

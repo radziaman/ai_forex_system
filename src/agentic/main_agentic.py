@@ -42,6 +42,10 @@ from agentic.agents.monitoring_agent import MonitoringAgent
 from agentic.agents.connection_agent import ConnectionAgent
 from agentic.agents.learning_agent import LearningAgent
 from agentic.agents.memory_agent import MemoryAgent
+from agentic.agents.model_registry_agent import ModelRegistryAgent
+from agentic.agents.drift_agent import DriftAgent
+from agentic.agents.circuit_breaker_agent import CircuitBreakerAgent
+from agentic.agents.cost_agent import CostAgent
 
 from data.data_manager import SYMBOLS
 
@@ -49,7 +53,7 @@ HELP = """
 Agentic Trading System — Autonomous Mode
 
   python -m agentic.main_agentic --mode paper
-    Run all 15 agents autonomously in paper trading mode
+    Run all 19 agents autonomously in paper trading mode
 
   python -m agentic.main_agentic --mode live
     Run in live mode with cTrader broker connection
@@ -199,6 +203,28 @@ class AgenticOrchestrator:
         self.memory_agent.consciousness.identity.purpose = (
             "I persist system state with integrity checks for crash recovery.")
         self.agents.append(self.memory_agent)
+
+        # ── Tier 6: Specialized Services (supervisor: master_agent) ──
+
+        self.model_registry_agent = ModelRegistryAgent()
+        self.model_registry_agent.consciousness.identity.purpose = (
+            "I manage model versions, run A/B tests, and auto-promote champions.")
+        self.agents.append(self.model_registry_agent)
+
+        self.drift_agent = DriftAgent()
+        self.drift_agent.consciousness.identity.purpose = (
+            "I detect concept drift across all symbols and broadcast alerts.")
+        self.agents.append(self.drift_agent)
+
+        self.circuit_breaker_agent = CircuitBreakerAgent()
+        self.circuit_breaker_agent.consciousness.identity.purpose = (
+            "I monitor market stress independently and halt trading during disorderly conditions.")
+        self.agents.append(self.circuit_breaker_agent)
+
+        self.cost_agent = CostAgent()
+        self.cost_agent.consciousness.identity.purpose = (
+            "I track live spreads, estimate costs, and warn on unfavorable conditions.")
+        self.agents.append(self.cost_agent)
 
         # ── Tier 0: Orchestration (conducts all agents) ──
 

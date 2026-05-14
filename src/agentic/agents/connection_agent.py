@@ -163,3 +163,19 @@ class ConnectionAgent(BaseAgent):
     def _resubscribe(self):
         self.log_state(f"Resubscribing to {len(self._symbols)} symbols")
         self.set_world("connection.resubscribed", True)
+        asyncio.ensure_future(self._do_resubscribe())
+
+    async def _do_resubscribe(self):
+        from api.symbol_map import get_symbol_id
+        connected = self.get_world("execution.connected", False)
+        if not connected:
+            return
+        for sym in self._symbols:
+            try:
+                sid = get_symbol_id(sym)
+                await self.send(MessageType.AGENT_DIRECTIVE, payload={
+                    "target": "execution_agent", "action": "subscribe_depth",
+                    "symbol_id": sid, "reason": "resubscribe_after_reconnect",
+                })
+            except Exception:
+                pass
