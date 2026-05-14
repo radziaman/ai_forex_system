@@ -69,11 +69,14 @@ class LearningAgent(BaseAgent):
         sharpe = performance.get("sharpe", 0)
         n_trades = performance.get("total_trades", 0)
         models_untrained = self.get_world("models.untrained", False)
+        time_since_last = time.time() - self._last_training_time
 
         needs_retrain = (drift_symbols > 0 or
                          (n_trades > 20 and sharpe < 0.3) or
                          (n_trades > 50 and self._retraining_count == 0))
         needs_bootstrap = models_untrained and self._retraining_count == 0
+        needs_data_retrain = (time_since_last > 3600 and n_trades > 0) or \
+                             (time_since_last > 7200 and self._retraining_count > 0)
 
         return {
             "drift_symbols": drift_symbols,
@@ -81,7 +84,8 @@ class LearningAgent(BaseAgent):
             "n_trades": n_trades,
             "needs_retrain": needs_retrain,
             "needs_bootstrap": needs_bootstrap,
-            "time_since_last_train": time.time() - self._last_training_time,
+            "needs_data_retrain": needs_data_retrain,
+            "time_since_last_train": time_since_last,
         }
 
     async def reason(self, perception: Dict[str, Any]) -> Dict[str, Any]:
@@ -99,12 +103,19 @@ class LearningAgent(BaseAgent):
         if perception.get("needs_bootstrap"):
             actions["bootstrap"] = True
 
+        if perception.get("needs_data_retrain"):
+            actions["data_retrain"] = True
+
         if self.consciousness.cycle_count % 10 == 0 and perception.get("n_trades", 0) > 0:
             actions["check_metrics"] = True
 
         return actions
 
     async def act(self, decision: Dict[str, Any]):
+        if decision.get("data_retrain"):
+            await self._data_retrain()
+            return
+
         if decision.get("bootstrap"):
             self._retraining_count += 1
             self._last_training_time = time.time()
@@ -165,6 +176,53 @@ class LearningAgent(BaseAgent):
             self.set_world("learning.status", "idle")
             self.set_world("learning.last_training", self._last_training_time)
             self.set_world("learning.retraining_count", self._retraining_count)
+
+    async def _data_retrain(self):
+        """Retrain classifiers on latest live data — no trades required."""
+        self._retraining_count += 1
+        self._last_training_time = time.time()
+        self.log_state("Data-driven retrain: training on latest bars")
+        self.set_world("learning.status", "training")
+        try:
+            from data.data_manager import SYMBOLS
+            from rts_ai_fx.features_unified import FeaturePipeline
+            from rts_ai_fx.model import ProfitabilityClassifier
+            import numpy as np
+
+            fp = FeaturePipeline(lookback=30, timeframes=["1h", "4h"], use_microstructure=True)
+            fp.load_normalization()
+            trained = 0
+            ohlcv_data = self.get_world("data.ohlcv", {})
+            for sym in SYMBOLS:
+                try:
+                    dfs = {}
+                    for tf in ["1h", "4h"]:
+                        symbol_data = ohlcv_data.get(sym, {}) if isinstance(ohlcv_data, dict) else {}
+                        df = symbol_data.get(tf) if isinstance(symbol_data, dict) else None
+                        if df is not None and hasattr(df, '__len__') and len(df) > 100:
+                            dfs[tf] = df
+                    if not dfs:
+                        continue
+                    seqs, targets = fp.create_sequences(dfs, symbol=sym)
+                    if len(seqs) < 100:
+                        continue
+                    split = int(len(seqs) * 0.8)
+                    nf = seqs.shape[-1]
+                    clf = ProfitabilityClassifier(lookback=30, n_features=nf)
+                    clf.build()
+                    clf.train(seqs[:split], targets[:split], seqs[split:], targets[split:],
+                              epochs=15, batch_size=32)
+                    clf.save(f"models/{sym}_classifier.keras")
+                    va = clf.model.evaluate(seqs[split:], targets[split:], verbose=0)[1]
+                    trained += 1
+                except Exception:
+                    pass
+            self.log_state(f"Data retrain complete: {trained} symbols updated")
+        except Exception as e:
+            self.log_state(f"Data retrain failed: {e}", "warning")
+        self.set_world("learning.status", "idle")
+        self.set_world("learning.last_training", self._last_training_time)
+        self.set_world("learning.retraining_count", self._retraining_count)
 
     async def reflect(self, outcome: Dict[str, Any]):
         self.memory.know("learning.retraining_count", self._retraining_count, ttl=3600)
