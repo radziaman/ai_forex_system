@@ -36,6 +36,7 @@ class DataAgent(BaseAgent):
         self._features_dirty: Dict[str, bool] = {}
         self.tick_counter = 0
         self._symbol: str = SYMBOLS[0] if SYMBOLS else "EURUSD"
+        self._heal_cooldown: Dict[str, float] = {}
 
         self.subscribe(MessageType.TICK_RECEIVED)
         self.subscribe(MessageType.AGENT_DIRECTIVE)
@@ -92,13 +93,16 @@ class DataAgent(BaseAgent):
         self.consciousness.current_state = AgentState.ACTING
         self.consciousness.current_intention = f"processing {len(decision.get('emit_features', []))} symbols"
 
+        now = time.time()
         for sym in decision.get("heal_symbols", []):
-            gaps = self.dm.detect_gaps(sym)
-            if gaps:
-                healed = self.dm.heal_gaps(sym)
-                if healed > 0:
-                    self.memory.remember(event_type="gap_healed",
-                        description=f"Healed {healed} gaps for {sym}", importance=0.5, emotion="success")
+            last_heal = self._heal_cooldown.get(sym, 0)
+            if now - last_heal < 3600:
+                continue
+            healed = self.dm.heal_gaps(sym, max_gap_minutes=180)
+            if healed > 0:
+                self._heal_cooldown[sym] = now
+                self.memory.remember(event_type="gap_healed",
+                    description=f"Healed {healed} gaps for {sym}", importance=0.5, emotion="success")
 
         for sym in decision.get("emit_features", []):
             features = self._get_features(sym)
