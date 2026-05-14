@@ -164,6 +164,7 @@ class CtraderClient:
         self.on_positions_update: Optional[Callable] = None
         self.on_depth_update: Optional[Callable] = None  # Callback for DOM updates
         self.on_disconnect: Optional[Callable] = None  # Called when connection drops
+        self._listener_task: Optional[asyncio.Task] = None
 
     async def start(self) -> bool:
         try:
@@ -184,7 +185,9 @@ class CtraderClient:
             await self._fetch_account_info()
             self._is_connected = True
             # Start background listener for DOM and other events
-            await self.start_background_listener()
+            if self._listener_task and not self._listener_task.done():
+                self._listener_task.cancel()
+            self._listener_task = asyncio.create_task(self._background_listener())
             logger.info("cTrader client connected, authenticated, and listening")
             return True
         except Exception as e:
@@ -417,6 +420,8 @@ class CtraderClient:
 
     async def disconnect(self):
         self._is_connected = False
+        if self._listener_task and not self._listener_task.done():
+            self._listener_task.cancel()
         # Unsubscribe from all depth subscriptions
         for sym_id in list(self._subscribed_depth.keys()):
             await self.unsubscribe_depth(sym_id)
