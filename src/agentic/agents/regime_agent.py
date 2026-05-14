@@ -84,7 +84,10 @@ class RegimeAgent(BaseAgent):
         if not perception.get("df_available"):
             return {"skip": True}
 
-        df = perception["df"]
+        df = perception.get("df")
+        if df is None:
+            return {"skip": True, "reason": "no_df"}
+
         should_fit = (self.detector and self.detector.model is None
                       and len(df) >= 100)
 

@@ -33,6 +33,8 @@ class HMMRegimeDetector:
 
     def _extract_features(self, df: pd.DataFrame) -> np.ndarray:
         """Extract features for HMM: returns, volatility, volume change."""
+        if df is None or not hasattr(df, 'get'):
+            return np.array([])
         prices = df["close"].values
         returns = np.diff(prices) / prices[:-1]
         vol = df.get("atr_14", df["close"].rolling(14).std()).values
