@@ -35,6 +35,7 @@ class ExecutionAgent(BaseAgent):
         self.ctrader = None
         self._executed = 0
         self._failed = 0
+        self._reconnecting = False
 
         self.subscribe(MessageType.RISK_APPROVED)
         self.subscribe(MessageType.AGENT_DIRECTIVE)
@@ -132,6 +133,9 @@ class ExecutionAgent(BaseAgent):
 
     async def _reconnect(self):
         """Reconnect to cTrader and re-subscribe depth quotes."""
+        if self._reconnecting:
+            return
+        self._reconnecting = True
         try:
             if self.ctrader:
                 await self.ctrader.stop()
@@ -158,6 +162,8 @@ class ExecutionAgent(BaseAgent):
                 self.log_state("Reconnect failed", "warning")
         except Exception as e:
             self.log_state(f"Reconnect error: {e}", "warning")
+        finally:
+            self._reconnecting = False
 
     async def perceive(self) -> Dict[str, Any]:
         if self.engine is None:
