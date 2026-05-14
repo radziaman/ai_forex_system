@@ -61,13 +61,15 @@ class ExecutionAgent(BaseAgent):
                 raw_ask = getattr(depth, 'ask', 0)
                 ts = time.time()
 
-                # Normalize cTrader raw prices to human-readable format
+                # Normalize cTrader raw prices: forex already scaled, non-forex needs division
                 bid, ask = raw_bid, raw_ask
                 if bid > 0 and ask > 0:
-                    from api.ctrader_client import CtraderClient
-                    div = CtraderClient._price_divisor(symbol, bid)
-                    bid = bid / div
-                    ask = ask / div
+                    sym = symbol.upper()
+                    if sym not in ("EURUSD", "GBPUSD", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD") and "JPY" not in sym:
+                        from api.ctrader_client import CtraderClient
+                        div = CtraderClient._price_divisor(symbol, bid)
+                        bid = bid / div
+                        ask = ask / div
 
                     from execution.cost_model import CostModel
                     pip_size = CostModel.pip_to_price(symbol)
