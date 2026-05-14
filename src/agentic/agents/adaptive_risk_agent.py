@@ -87,6 +87,10 @@ class AdaptiveRiskAgent(BaseAgent):
         atr = perception.get("atr", 0.001)
         regime = perception.get("regime", "ranging")
 
+        # Skip drawdown check until account state is initialized
+        if equity <= 0:
+            return {}
+
         if equity > self._equity_high_water:
             self._equity_high_water = equity
         dd = ((self._equity_high_water - equity) / max(self._equity_high_water, 1)
