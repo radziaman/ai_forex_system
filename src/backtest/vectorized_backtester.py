@@ -26,6 +26,7 @@ class BacktestResult:
     equity_curve: np.ndarray = field(default_factory=lambda: np.array([]))
     regime_returns: Dict[str, float] = field(default_factory=dict)
     monthly_returns: np.ndarray = field(default_factory=lambda: np.array([]))
+    trade_regimes: list = field(default_factory=list)
 
     def to_dict(self) -> Dict:
         return {
@@ -84,12 +85,14 @@ class VectorizedBacktester:
 
         for i in range(1, n):
             sig = signals[i] if i < len(signals) else 0
+            pnl_pct = 0.0
 
             if position == 0 and sig != 0:
                 position = sig
                 slippage = self._slippage(prices[i], sig)
                 entry_price = prices[i] + slippage if sig == 1 else prices[i] - slippage
                 entry_idx = i
+                equity.append(equity[-1] * (1 + pnl_pct))
                 continue
 
             if position != 0:
@@ -138,8 +141,8 @@ class VectorizedBacktester:
                     if regimes is not None:
                         trade_regimes.append(regimes[entry_idx])
                     position = 0
+                    pnl_pct = net_pnl / 100.0
 
-            pnl_pct = trades_pnls[-1] / 100 if trades_pnls else 0.0
             equity.append(equity[-1] * (1 + pnl_pct))
 
         trade_pnls = np.array(trades_pnls)
@@ -161,6 +164,7 @@ class VectorizedBacktester:
                 sortino=0.0,
                 trade_pnls=trade_pnls,
                 equity_curve=equity_curve,
+                trade_regimes=trade_regimes,
             )
 
         total_return = float(equity_curve[-1] - 1.0) * 100
@@ -226,6 +230,7 @@ class VectorizedBacktester:
             equity_curve=equity_curve,
             regime_returns=regime_returns,
             monthly_returns=monthly,
+            trade_regimes=trade_regimes,
         )
 
     def _slippage(self, price: float, direction: int) -> float:

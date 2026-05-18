@@ -46,6 +46,7 @@ from agentic.agents.model_registry_agent import ModelRegistryAgent
 from agentic.agents.drift_agent import DriftAgent
 from agentic.agents.circuit_breaker_agent import CircuitBreakerAgent
 from agentic.agents.cost_agent import CostAgent
+from agentic.agents.screener_agent import InstrumentScreenerAgent
 
 from data.data_manager import SYMBOLS
 
@@ -53,7 +54,7 @@ HELP = """
 Agentic Trading System — Autonomous Mode
 
   python -m agentic.main_agentic --mode paper
-    Run all 19 agents autonomously in paper trading mode
+    Run all 20 agents autonomously in paper trading mode
 
   python -m agentic.main_agentic --mode live
     Run in live mode with cTrader broker connection
@@ -104,13 +105,15 @@ class AgenticOrchestrator:
         """Create all 15 autonomous agents with G17 supervisor hierarchy."""
 
         # Shared config knowledge
-        for k, v in [("config.max_positions", self.config.trading.max_positions),
-                     ("config.max_drawdown", self.config.trading.max_drawdown),
-                     ("config.kelly_fraction", self.config.trading.kelly_fraction),
-                     ("config.lookback", self.config.features.lookback),
-                     ("config.timeframes", self.config.features.timeframes),
-                     ("config.mode", self.mode),
-                     ("config.initial_balance", self.initial_balance)]:
+        for k, v in [
+            ("config.max_positions", self.config.trading.max_positions),
+            ("config.max_drawdown", self.config.trading.max_drawdown),
+            ("config.kelly_fraction", self.config.trading.kelly_fraction),
+            ("config.lookback", self.config.features.lookback),
+            ("config.timeframes", self.config.features.timeframes),
+            ("config.mode", self.mode),
+            ("config.initial_balance", self.initial_balance),
+        ]:
             self.world.set(k, v, ttl=86400)
 
         # G17: Supervisor hierarchy — master_agent supervises all domain supervisors
@@ -121,23 +124,21 @@ class AgenticOrchestrator:
         self.data_agent = DataAgent(self.config)
         self.data_agent.consciousness.identity.purpose = (
             "I ingest market data from all sources, maintain OHLCV across 5 timeframes, "
-            "detect and heal data gaps, and publish fresh features when bars close.")
+            "detect and heal data gaps, and publish fresh features when bars close."
+        )
         self.data_agent.consciousness.identity.capabilities.add("tick_ingestion")
         self.agents.append(self.data_agent)
 
         self.feature_agent = FeatureAgent(self.config)
-        self.feature_agent.consciousness.identity.purpose = (
-            "I transform raw OHLCV into normalized features. I bridge data and intelligence.")
+        self.feature_agent.consciousness.identity.purpose = "I transform raw OHLCV into normalized features. I bridge data and intelligence."
         self.agents.append(self.feature_agent)
 
         self.regime_agent = RegimeAgent(self.config)
-        self.regime_agent.consciousness.identity.purpose = (
-            "I detect market hidden state via HMM: trending, ranging, volatile, or crisis.")
+        self.regime_agent.consciousness.identity.purpose = "I detect market hidden state via HMM: trending, ranging, volatile, or crisis."
         self.agents.append(self.regime_agent)
 
         self.signal_agent = SignalAgent(self.config)
-        self.signal_agent.consciousness.identity.purpose = (
-            "I fuse PPO, LSTM-CNN, rule-based experts into high-conviction signals via MoE ensemble.")
+        self.signal_agent.consciousness.identity.purpose = "I fuse PPO, LSTM-CNN, rule-based experts into high-conviction signals via MoE ensemble."
         self.agents.append(self.signal_agent)
 
         # ── Tier 2: Risk (supervisor: master_agent) ──
@@ -145,7 +146,8 @@ class AgenticOrchestrator:
         self.risk_agent = RiskAgent(self.config, self.initial_balance)
         self.risk_agent.consciousness.identity.purpose = (
             "I am the gatekeeper. Kelly sizing, VaR, drawdown checks, circuit breakers. "
-            "No trade passes without my approval.")
+            "No trade passes without my approval."
+        )
         self.agents.append(self.risk_agent)
 
         self.adaptive_risk_agent = AdaptiveRiskAgent(
@@ -154,83 +156,98 @@ class AgenticOrchestrator:
         )
         self.adaptive_risk_agent.consciousness.identity.purpose = (
             "I am the risk thermostat. I dynamically adjust sizing based on "
-            "volatility, drawdown, and win rate trends.")
+            "volatility, drawdown, and win rate trends."
+        )
         self.agents.append(self.adaptive_risk_agent)
 
         # ── Tier 3: Execution (supervisor: master_agent) ──
 
-        self.execution_agent = ExecutionAgent(self.config, self.secrets, self.initial_balance)
+        self.execution_agent = ExecutionAgent(
+            self.config, self.secrets, self.initial_balance
+        )
         self.execution_agent.consciousness.identity.purpose = (
             "I send approved orders to the broker and stream live ticks back to data_agent. "
-            "I track every position through its lifecycle.")
+            "I track every position through its lifecycle."
+        )
         self.agents.append(self.execution_agent)
 
         self.position_agent = PositionAgent()
-        self.position_agent.consciousness.identity.purpose = (
-            "I manage trailing stops, partial closes, and correlation risk for all open positions.")
+        self.position_agent.consciousness.identity.purpose = "I manage trailing stops, partial closes, and correlation risk for all open positions."
         self.agents.append(self.position_agent)
 
         # ── Tier 4: Analytics (supervisor: master_agent) ──
 
         self.performance_agent = PerformanceAgent()
-        self.performance_agent.consciousness.identity.purpose = (
-            "I track every trade. Sharpe, profit factor, win rate, per-symbol analytics.")
+        self.performance_agent.consciousness.identity.purpose = "I track every trade. Sharpe, profit factor, win rate, per-symbol analytics."
         self.agents.append(self.performance_agent)
 
         self.validation_agent = ValidationAgent()
-        self.validation_agent.consciousness.identity.purpose = (
-            "I prove edge via walk-forward, Monte Carlo, stress tests, and A/B comparisons.")
+        self.validation_agent.consciousness.identity.purpose = "I prove edge via walk-forward, Monte Carlo, stress tests, and A/B comparisons."
         self.agents.append(self.validation_agent)
 
         # ── Tier 5: Infrastructure (supervisor: master_agent) ──
 
         self.connection_agent = ConnectionAgent(SYMBOLS)
         self.connection_agent.consciousness.identity.purpose = (
-            "I keep broker connection alive. Auto-reconnect with exponential backoff.")
+            "I keep broker connection alive. Auto-reconnect with exponential backoff."
+        )
         self.agents.append(self.connection_agent)
 
         self.monitoring_agent = MonitoringAgent(self.secrets)
         self.monitoring_agent.consciousness.identity.purpose = (
-            "I send Telegram alerts, update dashboard, maintain audit log.")
+            "I send Telegram alerts, update dashboard, maintain audit log."
+        )
         self.agents.append(self.monitoring_agent)
 
         self.learning_agent = LearningAgent()
         self.learning_agent.consciousness.identity.purpose = (
-            "I monitor for drift and trigger retraining when performance degrades.")
+            "I monitor for drift and trigger retraining when performance degrades."
+        )
         self.agents.append(self.learning_agent)
 
         self.memory_agent = MemoryAgent()
         self.memory_agent.consciousness.identity.purpose = (
-            "I persist system state with integrity checks for crash recovery.")
+            "I persist system state with integrity checks for crash recovery."
+        )
         self.agents.append(self.memory_agent)
 
         # ── Tier 6: Specialized Services (supervisor: master_agent) ──
 
         self.model_registry_agent = ModelRegistryAgent()
         self.model_registry_agent.consciousness.identity.purpose = (
-            "I manage model versions, run A/B tests, and auto-promote champions.")
+            "I manage model versions, run A/B tests, and auto-promote champions."
+        )
         self.agents.append(self.model_registry_agent)
 
         self.drift_agent = DriftAgent()
         self.drift_agent.consciousness.identity.purpose = (
-            "I detect concept drift across all symbols and broadcast alerts.")
+            "I detect concept drift across all symbols and broadcast alerts."
+        )
         self.agents.append(self.drift_agent)
 
         self.circuit_breaker_agent = CircuitBreakerAgent()
-        self.circuit_breaker_agent.consciousness.identity.purpose = (
-            "I monitor market stress independently and halt trading during disorderly conditions.")
+        self.circuit_breaker_agent.consciousness.identity.purpose = "I monitor market stress independently and halt trading during disorderly conditions."
         self.agents.append(self.circuit_breaker_agent)
 
         self.cost_agent = CostAgent()
         self.cost_agent.consciousness.identity.purpose = (
-            "I track live spreads, estimate costs, and warn on unfavorable conditions.")
+            "I track live spreads, estimate costs, and warn on unfavorable conditions."
+        )
         self.agents.append(self.cost_agent)
+
+        # ── Screener Agent (autonomous instrument discovery) ──
+
+        self.screener_agent = InstrumentScreenerAgent(scan_interval_hours=24)
+        self.screener_agent.consciousness.identity.purpose = (
+            "I autonomously scan all instruments for tradeable edges. "
+            "I publish only those that pass statistical thresholds."
+        )
+        self.agents.append(self.screener_agent)
 
         # ── Tier 0: Orchestration (conducts all agents) ──
 
         self.master_agent = MasterAgent()
-        self.master_agent.consciousness.identity.purpose = (
-            "I conduct the orchestra. Monitor health, escalate errors, coordinate healing.")
+        self.master_agent.consciousness.identity.purpose = "I conduct the orchestra. Monitor health, escalate errors, coordinate healing."
         self.master_agent.consciousness.level = ConsciousnessLevel.META
         self.agents.append(self.master_agent)
 
@@ -372,10 +389,16 @@ def main():
     parser.add_argument("--capital", type=float, default=100_000.0)
     parser.add_argument("--mode", choices=["paper", "live", "dry-run"], default="paper")
     parser.add_argument("--status", action="store_true", help="Print system status")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Print what would happen without executing")
-    parser.add_argument("--simulate", action="store_true",  # G18
-                        help="Run agents in simulation mode (no real I/O)")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print what would happen without executing",
+    )
+    parser.add_argument(
+        "--simulate",
+        action="store_true",  # G18
+        help="Run agents in simulation mode (no real I/O)",
+    )
 
     args = parser.parse_args()
 
@@ -388,7 +411,10 @@ def main():
     mode = "dry-run" if args.dry_run else args.mode
 
     orch = AgenticOrchestrator(
-        config, secrets, mode=mode, initial_balance=args.capital,
+        config,
+        secrets,
+        mode=mode,
+        initial_balance=args.capital,
     )
     orch.simulation_mode = args.simulate
 

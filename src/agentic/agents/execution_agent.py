@@ -9,7 +9,12 @@ from typing import Dict, List, Optional, Any, Set
 from loguru import logger
 
 from agentic.core.base_agent import BaseAgent
-from agentic.core.agent_message import MessageType, MessagePriority, AgentIntention
+from agentic.core.agent_message import (
+    MessageType,
+    MessagePriority,
+    AgentIntention,
+    AgentMessage,
+)
 from agentic.core.agent_consciousness import ConsciousnessLevel
 
 
@@ -21,9 +26,15 @@ class ExecutionAgent(BaseAgent):
             purpose="Execute trades through broker, wire live ticks, publish position state",
             domain="execution",
             capabilities={
-                "order_execution", "broker_connection", "position_tracking",
-                "sl_tp_monitoring", "paper_trading", "order_lifecycle",
-                "pnl_calculation", "account_info", "tick_wiring",  # G1
+                "order_execution",
+                "broker_connection",
+                "position_tracking",
+                "sl_tp_monitoring",
+                "paper_trading",
+                "order_lifecycle",
+                "pnl_calculation",
+                "account_info",
+                "tick_wiring",  # G1
             },
             tick_interval=1.0,
             consciousness_level=ConsciousnessLevel.REFLECTIVE,
@@ -40,6 +51,11 @@ class ExecutionAgent(BaseAgent):
         self.subscribe(MessageType.RISK_APPROVED)
         self.subscribe(MessageType.AGENT_DIRECTIVE)
         self.subscribe(MessageType.DIAGNOSTIC_REQUEST)
+        self.subscribe(MessageType.INSTRUMENTS_UPDATED)
+
+        # Active symbols: starts with defaults, dynamically updated by screener
+        from data.data_manager import SYMBOLS
+        self._active_symbols = list(SYMBOLS)
 
     async def _on_start(self):
         self.consciousness.current_intention = "initializing execution provider"
@@ -49,37 +65,57 @@ class ExecutionAgent(BaseAgent):
         self.ctrader, data_provider = create_execution_provider(self.secrets)
         engine_mode = "LIVE" if not self.secrets.is_demo else "PAPER"
         self.engine = ExecutionEngine(
-            self.ctrader, None, None,
-            initial_balance=self.initial_balance, mode=engine_mode,
+            self.ctrader,
+            None,
+            None,
+            initial_balance=self.initial_balance,
+            mode=engine_mode,
         )
 
         # G1: Wire live price feed from broker to data pipeline
         async def _on_tick(depth):
             """Forward broker ticks to data_agent and store live spread in world state."""
             try:
-                symbol = getattr(depth, 'symbol', '')
-                raw_bid = getattr(depth, 'bid', 0)
-                raw_ask = getattr(depth, 'ask', 0)
+                symbol = getattr(depth, "symbol", "")
+                raw_bid = getattr(depth, "bid", 0)
+                raw_ask = getattr(depth, "ask", 0)
                 ts = time.time()
 
                 # Normalize cTrader raw prices: forex already scaled, non-forex needs division
                 bid, ask = raw_bid, raw_ask
                 if bid > 0 and ask > 0:
                     sym = symbol.upper()
-                    if sym not in ("EURUSD", "GBPUSD", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD") and "JPY" not in sym:
+                    if (
+                        sym
+                        not in (
+                            "EURUSD",
+                            "GBPUSD",
+                            "AUDUSD",
+                            "USDCAD",
+                            "USDCHF",
+                            "NZDUSD",
+                        )
+                        and "JPY" not in sym
+                    ):
                         from api.ctrader_client import CtraderClient
+
                         div = CtraderClient._price_divisor(symbol, bid)
                         bid = bid / div
                         ask = ask / div
 
                     from execution.cost_model import CostModel
+
                     pip_size = CostModel.pip_to_price(symbol)
                     spread_pips = (ask - bid) / pip_size if pip_size > 0 else 0
                     self.set_world(f"data.spread.{symbol}", round(spread_pips, 2))
                     self.set_world(f"data.bid.{symbol}", round(float(bid), 5))
                     self.set_world(f"data.ask.{symbol}", round(float(ask), 5))
-                    self.set_world(f"data.price.{symbol}", round(float((bid + ask) / 2), 5))
-                    logger.debug(f"TICK {symbol}: bid={bid:.5f} ask={ask:.5f} spread={spread_pips:.2f}")
+                    self.set_world(
+                        f"data.price.{symbol}", round(float((bid + ask) / 2), 5)
+                    )
+                    logger.debug(
+                        f"TICK {symbol}: bid={bid:.5f} ask={ask:.5f} spread={spread_pips:.2f}"
+                    )
 
                 await self.send(
                     MessageType.TICK_RECEIVED,
@@ -87,7 +123,7 @@ class ExecutionAgent(BaseAgent):
                         "symbol": symbol,
                         "bid": bid,
                         "ask": ask,
-                        "volume": getattr(depth, 'volume', 0),
+                        "volume": getattr(depth, "volume", 0),
                         "timestamp": ts,
                     },
                     target_capability="tick_ingestion",
@@ -97,29 +133,36 @@ class ExecutionAgent(BaseAgent):
                 pass
 
         if self.ctrader:
-            self.ctrader.on_price = _on_tick if hasattr(self.ctrader, 'on_price') else None
-            if hasattr(self.ctrader, 'on_market_data'):
+            self.ctrader.on_price = (
+                _on_tick if hasattr(self.ctrader, "on_price") else None
+            )
+            if hasattr(self.ctrader, "on_market_data"):
                 self.ctrader.on_market_data = _on_tick
 
-        raw = getattr(self.ctrader, 'raw', None)
+        raw = getattr(self.ctrader, "raw", None)
         if raw:
             raw.on_disconnect = lambda: asyncio.ensure_future(self._on_disconnect())
 
         connected = await self.ctrader.start()
-        if connected and hasattr(self.ctrader, 'is_connected') and self.ctrader.is_connected():
+        if (
+            connected
+            and hasattr(self.ctrader, "is_connected")
+            and self.ctrader.is_connected()
+        ):
             self.log_state(f"cTrader connected ({engine_mode})")
             self.set_world("execution.connected", True)
             from data.data_manager import SYMBOLS
             from api.symbol_map import get_symbol_id
-            raw = getattr(self.ctrader, 'raw', None)
-            if raw and hasattr(raw, 'subscribe_depth'):
-                for sym in SYMBOLS:
+
+            raw = getattr(self.ctrader, "raw", None)
+            if raw and hasattr(raw, "subscribe_depth"):
+                for sym in self._active_symbols:
                     try:
                         sid = get_symbol_id(sym)
                         await raw.subscribe_depth(sid)
                     except Exception as e:
                         logger.debug(f"Depth subscribe failed for {sym}: {e}")
-                self.log_state(f"Subscribed to depth quotes for {len(SYMBOLS)} symbols")
+                self.log_state(f"Subscribed to depth quotes for {len(self._active_symbols)} active symbols")
         else:
             self.log_state(f"Running in {engine_mode} mode (simulation)", "warning")
             self.set_world("execution.connected", False)
@@ -141,23 +184,27 @@ class ExecutionAgent(BaseAgent):
             if self.ctrader:
                 await self.ctrader.stop()
             await asyncio.sleep(3)
-            from data.data_manager import SYMBOLS
             from api.symbol_map import get_symbol_id
+
             connected = await self.ctrader.start()
             if connected:
-                raw = getattr(self.ctrader, 'raw', None)
+                raw = getattr(self.ctrader, "raw", None)
                 if raw:
-                    raw.on_disconnect = lambda: asyncio.ensure_future(self._on_disconnect())
-                for sym in SYMBOLS:
+                    raw.on_disconnect = lambda: asyncio.ensure_future(
+                        self._on_disconnect()
+                    )
+                for sym in self._active_symbols:
                     try:
                         sid = get_symbol_id(sym)
-                        if raw and hasattr(raw, 'subscribe_depth'):
+                        if raw and hasattr(raw, "subscribe_depth"):
                             await raw.subscribe_depth(sid)
                     except Exception:
                         pass
                 self._executed = 0
                 self._failed = 0
-                self.log_state(f"Reconnected to cTrader, subscribed to {len(SYMBOLS)} symbols")
+                self.log_state(
+                    f"Reconnected to cTrader, subscribed to {len(self._active_symbols)} active symbols"
+                )
                 self.set_world("execution.connected", True)
             else:
                 self.log_state("Reconnect failed", "warning")
@@ -196,8 +243,12 @@ class ExecutionAgent(BaseAgent):
                 elif price <= pos["tp"]:
                     tp_hits.append(pos)
 
-        return {"open_positions": n_positions, "account": account,
-                "sl_hits": sl_hits, "tp_hits": tp_hits}
+        return {
+            "open_positions": n_positions,
+            "account": account,
+            "sl_hits": sl_hits,
+            "tp_hits": tp_hits,
+        }
 
     async def reason(self, perception: Dict[str, Any]) -> Dict[str, Any]:
         close_positions = []
@@ -210,11 +261,16 @@ class ExecutionAgent(BaseAgent):
     async def act(self, decision: Dict[str, Any]):
         for cp in decision.get("close_positions", []):
             pid, reason = cp["pid"], cp["reason"]
+            assert self.engine is not None
             success = await self.engine.close_position(int(pid), reason)
             if success:
                 await self.send(
                     MessageType.POSITION_CLOSED,
-                    payload={"position_id": pid, "reason": reason, "timestamp": time.time()},
+                    payload={
+                        "position_id": pid,
+                        "reason": reason,
+                        "timestamp": time.time(),
+                    },
                     priority=MessagePriority.NORMAL,
                 )
 
@@ -224,26 +280,54 @@ class ExecutionAgent(BaseAgent):
             self.memory.know("execution.failed", self._failed, ttl=3600)
 
     async def on_message(self, message: AgentMessage):
+        if message.msg_type == MessageType.INSTRUMENTS_UPDATED:
+            payload = message.payload if isinstance(message.payload, dict) else {}
+            tradeable = payload.get("tradeable", [])
+            if tradeable:
+                new_symbols = [t.get("ticker", "") for t in tradeable if t.get("ticker")]
+                if new_symbols:
+                    old_count = len(self._active_symbols)
+                    self._active_symbols = new_symbols
+                    self.log_state(
+                        f"Screener updated: {len(new_symbols)} tradeable instruments "
+                        f"(was {old_count}) — depth subscriptions will update on reconnect"
+                    )
+            return
+
         if message.msg_type == MessageType.RISK_APPROVED:
             await self._execute(message)
         elif message.msg_type == MessageType.AGENT_DIRECTIVE:
             payload = message.payload if isinstance(message.payload, dict) else {}
             action = payload.get("action", "")
             if action == "close_all":
-                await self.engine.close_all_positions(payload.get("reason", "directive"))
+                assert self.engine is not None
+                await self.engine.close_all_positions(
+                    payload.get("reason", "directive")
+                )
             elif action == "close_position":
                 pid = payload.get("position_id")
                 if pid:
-                    await self.engine.close_position(int(pid), payload.get("reason", "directive"))
+                    assert self.engine is not None
+                    await self.engine.close_position(
+                        int(pid), payload.get("reason", "directive")
+                    )
             elif action == "reconnect":
                 self.log_state("Reconnecting to cTrader...")
                 await self._reconnect()
         elif message.msg_type == MessageType.DIAGNOSTIC_REQUEST:
-            await self.send(MessageType.DIAGNOSTIC_RESULT, payload={
-                "agent": self.name, "executed": self._executed, "failed": self._failed,
-                "connected": self.get_world("execution.connected", False),
-                "open_positions": len(self.engine.get_open_positions()) if self.engine else 0,
-            }, target=message.source_agent)
+            await self.send(
+                MessageType.DIAGNOSTIC_RESULT,
+                payload={
+                    "agent": self.name,
+                    "executed": self._executed,
+                    "failed": self._failed,
+                    "connected": self.get_world("execution.connected", False),
+                    "open_positions": (
+                        len(self.engine.get_open_positions()) if self.engine else 0
+                    ),
+                },
+                target=message.source_agent,
+            )
 
     async def _execute(self, message: AgentMessage):
         if self.engine is None:
@@ -259,31 +343,59 @@ class ExecutionAgent(BaseAgent):
             return
 
         trade = await self.engine.open_position(
-            symbol=symbol, direction=direction, volume=volume,
-            sl=sl_price, tp=tp_price,
+            symbol=symbol,
+            direction=direction,
+            volume=volume,
+            sl=sl_price,
+            tp=tp_price,
             reason=f"agentic_signal_conf={signal.get('confidence', 0):.2f}",
         )
         if trade:
             self._executed += 1
-            await self.send(MessageType.EXECUTION_RESULT, payload={
-                "success": True, "symbol": symbol, "direction": direction,
-                "volume": volume, "filled_price": trade.entry_price,
-                "position_id": trade.position_id, "timestamp": time.time(),
-            }, priority=MessagePriority.HIGH, requires_ack=True)
-            await self.send(MessageType.POSITION_OPENED, payload={
-                "position_id": trade.position_id, "symbol": symbol,
-                "direction": direction, "volume": volume, "entry": trade.entry_price,
-            })
+            await self.send(
+                MessageType.EXECUTION_RESULT,
+                payload={
+                    "success": True,
+                    "symbol": symbol,
+                    "direction": direction,
+                    "volume": volume,
+                    "filled_price": trade.entry_price,
+                    "position_id": trade.position_id,
+                    "timestamp": time.time(),
+                },
+                priority=MessagePriority.HIGH,
+                requires_ack=True,
+            )
+            await self.send(
+                MessageType.POSITION_OPENED,
+                payload={
+                    "position_id": trade.position_id,
+                    "symbol": symbol,
+                    "direction": direction,
+                    "volume": volume,
+                    "entry": trade.entry_price,
+                },
+            )
         else:
             self._failed += 1
-            await self.send(MessageType.EXECUTION_RESULT, payload={
-                "success": False, "symbol": symbol, "error": "order_failed",
-                "timestamp": time.time(),
-            }, priority=MessagePriority.HIGH)
+            await self.send(
+                MessageType.EXECUTION_RESULT,
+                payload={
+                    "success": False,
+                    "symbol": symbol,
+                    "error": "order_failed",
+                    "timestamp": time.time(),
+                },
+                priority=MessagePriority.HIGH,
+            )
 
     async def _get_account_info(self) -> Dict:
         if self.engine is None:
-            return {"balance": self.initial_balance, "equity": self.initial_balance, "margin": 0}
+            return {
+                "balance": self.initial_balance,
+                "equity": self.initial_balance,
+                "margin": 0,
+            }
         result = self.engine.get_account_info()
         return await result if asyncio.iscoroutine(result) else result
 

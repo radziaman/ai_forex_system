@@ -22,7 +22,7 @@ class HMMRegimeDetector:
     Fit on historical returns + volatility features.
     """
 
-    REGIME_NAMES = ["trending", "ranging", "volatile", "crisis"]
+    REGIME_NAMES = ["crisis", "ranging", "volatile", "trending"]
 
     def __init__(self, n_regimes: int = 4, lookback: int = 60):
         self.n_regimes = n_regimes
@@ -32,21 +32,66 @@ class HMMRegimeDetector:
         self.regime_history: List[str] = []
 
     def _extract_features(self, df: pd.DataFrame) -> np.ndarray:
-        """Extract features for HMM: returns, volatility, volume change."""
+        """Extract features for HMM: returns, volatility, momentum, trend strength.
+
+        Uses available columns from df. If pre-computed indicators (adx_14, rsi_14,
+        bb_width, atr_14) are present, uses them directly. Otherwise falls back to
+        computing rolling statistics from close prices.
+        """
         if df is None or not hasattr(df, "get"):
             return np.array([])
         prices = np.asarray(df["close"].values, dtype=float)
-        returns = np.diff(prices) / prices[:-1]
-        vol = df.get("atr_14", df["close"].rolling(14).std()).values
-        vol_ratio = vol / np.mean(vol[-60:]) if len(vol) > 60 else np.ones_like(vol)
+        returns = np.diff(prices) / (prices[:-1] + 1e-10)
+        returns = np.clip(returns, -0.1, 0.1)
+
+        # Volatility: use ATR if available, else rolling std
+        if "atr_14" in df.columns:
+            vol = df["atr_14"].values
+        else:
+            vol = df["close"].rolling(14).std().values
+        vol_ratio = vol / (np.mean(vol[-60:]) + 1e-8) if len(vol) > 60 else np.ones_like(vol)
         vol_ratio = np.clip(vol_ratio, 0.1, 5.0)
+
+        # Trend strength: use ADX if available
+        if "adx_14" in df.columns:
+            adx = np.asarray(df["adx_14"].values, dtype=float)
+            adx = np.nan_to_num(adx, nan=25.0)
+        else:
+            adx = np.full(len(df), 25.0)
+
+        # Momentum: use RSI if available
+        if "rsi_14" in df.columns:
+            rsi = np.asarray(df["rsi_14"].values, dtype=float)
+            rsi = np.nan_to_num(rsi, nan=50.0)
+            rsi_os = (rsi < 30).astype(float)   # oversold indicator
+            rsi_ob = (rsi > 70).astype(float)    # overbought indicator
+        else:
+            rsi_os = np.zeros(len(df))
+            rsi_ob = np.zeros(len(df))
+
+        # Volatility regime: use BB width if available
+        if "bb_width" in df.columns:
+            bbw = np.asarray(df["bb_width"].values, dtype=float)
+            bbw = np.nan_to_num(bbw, nan=0.02)
+            bbw_wide = (bbw > np.percentile(bbw[~np.isnan(bbw)], 75) * 1.5).astype(float)
+        else:
+            bbw_wide = np.zeros(len(df))
+
+        # Build feature matrix (all aligned to length n-1 due to diff on returns)
+        n = len(returns)
         features = np.column_stack(
             [
-                returns,
-                vol_ratio[1:],
-                np.abs(returns),
+                returns,                     # 0: raw returns
+                vol_ratio[1:],              # 1: normalized volatility
+                np.abs(returns),            # 2: absolute returns (volatility)
+                adx[1:] / 50.0,             # 3: normalized ADX (0-2 range)
+                rsi_os[1:],                 # 4: oversold flag
+                rsi_ob[1:],                 # 5: overbought flag
+                bbw_wide[1:],               # 6: wide Bollinger Band flag
+                np.sign(returns),           # 7: direction sign
             ]
         )
+
         features = np.nan_to_num(features, nan=0.0, posinf=5.0, neginf=-5.0)
         features = np.clip(features, -5, 5)
         means = np.mean(features, axis=0)
@@ -68,11 +113,12 @@ class HMMRegimeDetector:
             _warnings.filterwarnings("ignore", message=".*transmat_.*zero sum.*")
             self.model = hmm.GaussianHMM(
                 n_components=self.n_regimes,
-                covariance_type="diag",
-                n_iter=500,
+                covariance_type="full",
+                n_iter=1000,
                 random_state=42,
-                tol=1e-2,
+                tol=1e-3,
                 params="stmc",
+                init_params="stmc",
             )
             self.model.fit(features)
         if np.any(np.isnan(self.model.startprob_)):

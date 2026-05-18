@@ -9,10 +9,24 @@ from typing import Dict, List, Optional, Any, Set
 from loguru import logger
 
 from agentic.core.base_agent import BaseAgent
-from agentic.core.agent_message import MessageType, MessagePriority, AgentIntention
+from agentic.core.agent_message import (
+    MessageType,
+    MessagePriority,
+    AgentIntention,
+    AgentMessage,
+)
 from agentic.core.agent_consciousness import ConsciousnessLevel, AgentState
 
 from data.data_manager import DataManager, SYMBOLS, DUKASCOPE_SYMBOLS, BASE_PRICES
+
+# The full screener universe — includes all instruments the system can potentially trade.
+# The screener_agent tests all of these, and only tradeable ones flow through to processing.
+# Merge with existing SYMBOLS to ensure backward compatibility.
+try:
+    from agentic.agents.screener_agent import INSTRUMENT_UNIVERSE as SCREENER_UNIVERSE
+    SCREENER_SYMBOLS = list(set(SYMBOLS) | set(SCREENER_UNIVERSE.keys()))
+except ImportError:
+    SCREENER_SYMBOLS = SYMBOLS
 
 
 class DataAgent(BaseAgent):
@@ -23,9 +37,15 @@ class DataAgent(BaseAgent):
             purpose="Ingest, aggregate, and maintain fresh market data for all symbols",
             domain="data",
             capabilities={
-                "tick_ingestion", "ohlcv_aggregation", "data_freshness_monitoring",
-                "gap_detection", "gap_healing", "multi_source_fallback",
-                "feature_caching", "cvd_tracking", "market_depth",
+                "tick_ingestion",
+                "ohlcv_aggregation",
+                "data_freshness_monitoring",
+                "gap_detection",
+                "gap_healing",
+                "multi_source_fallback",
+                "feature_caching",
+                "cvd_tracking",
+                "market_depth",
             },
             tick_interval=0.1,
             consciousness_level=ConsciousnessLevel.REFLECTIVE,
@@ -35,7 +55,7 @@ class DataAgent(BaseAgent):
         self._last_bar_ts: Dict[str, float] = {}
         self._features_dirty: Dict[str, bool] = {}
         self.tick_counter = 0
-        self._symbol: str = SYMBOLS[0] if SYMBOLS else "EURUSD"
+        self._symbol: str = SCREENER_SYMBOLS[0] if SCREENER_SYMBOLS else "EURUSD"
         self._heal_cooldown: Dict[str, float] = {}
 
         self.subscribe(MessageType.TICK_RECEIVED)
@@ -48,15 +68,19 @@ class DataAgent(BaseAgent):
         fresh = self._check_freshness()
         self.log_state(f"Started: {fresh['fresh']}/{fresh['total']} symbols fresh")
         self.set_world("data.freshness", fresh)
-        self.set_world("data.symbols", SYMBOLS)
+        self.set_world("data.symbols", SCREENER_SYMBOLS)
         self.set_world("data.status", "ready")
 
     async def perceive(self) -> Dict[str, Any]:
-        result = {"skip": False, "new_bars": [], "stale_symbols": [],
-                  "tick_rate": self.tick_counter}
+        result = {
+            "skip": False,
+            "new_bars": [],
+            "stale_symbols": [],
+            "tick_rate": self.tick_counter,
+        }
         self.tick_counter = 0
 
-        for sym in SYMBOLS:
+        for sym in SCREENER_SYMBOLS:
             df = self.dm.get_ohlcv(sym, "1m")
             if df is not None and not df.empty:
                 current_ts = float(df["timestamp"].iloc[-1])
@@ -67,7 +91,9 @@ class DataAgent(BaseAgent):
                     result["new_bars"].append(sym)
             last_tick = self._last_bar_ts.get(sym, 0)
             age = time.time() - last_tick if last_tick > 0 else float("inf")
-            if age > 300 and last_tick > 0:  # Grace period: skip stale check on first cycle
+            if (
+                age > 300 and last_tick > 0
+            ):  # Grace period: skip stale check on first cycle
                 result["stale_symbols"].append(sym)
 
         self.set_world("data.tick_rate", self.tick_counter)
@@ -78,20 +104,26 @@ class DataAgent(BaseAgent):
         return result
 
     async def reason(self, perception: Dict[str, Any]) -> Dict[str, Any]:
-        decision = {"heal_symbols": [], "emit_features": [], "status_update": False}
+        decision: Dict[str, Any] = {
+            "heal_symbols": [],
+            "emit_features": [],
+            "status_update": False,
+        }
         for sym in perception.get("stale_symbols", []):
-            decision["heal_symbols"].append(sym)
+            decision["heal_symbols"].append(sym)  # type: ignore[attr-defined]
         for sym in perception.get("new_bars", []):
             df = self.dm.get_ohlcv(sym, "1h")
             if df is not None and len(df) > self.config.features.lookback + 10:
-                decision["emit_features"].append(sym)
+                decision["emit_features"].append(sym)  # type: ignore[attr-defined]
         if self.consciousness.cycle_count % 50 == 0:
             decision["status_update"] = True
         return decision
 
     async def act(self, decision: Dict[str, Any]):
         self.consciousness.current_state = AgentState.ACTING
-        self.consciousness.current_intention = f"processing {len(decision.get('emit_features', []))} symbols"
+        self.consciousness.current_intention = (
+            f"processing {len(decision.get('emit_features', []))} symbols"
+        )
 
         now = time.time()
         for sym in decision.get("heal_symbols", []):
@@ -101,23 +133,35 @@ class DataAgent(BaseAgent):
             healed = self.dm.heal_gaps(sym, max_gap_minutes=180)
             if healed > 0:
                 self._heal_cooldown[sym] = now
-                self.memory.remember(event_type="gap_healed",
-                    description=f"Healed {healed} gaps for {sym}", importance=0.5, emotion="success")
+                self.memory.remember(
+                    event_type="gap_healed",
+                    description=f"Healed {healed} gaps for {sym}",
+                    importance=0.5,
+                    emotion="success",
+                )
 
         for sym in decision.get("emit_features", []):
             features = self._get_features(sym)
             if features is not None:
                 df = self.dm.get_ohlcv(sym, "1h")
                 price = self.dm.get_price(sym, "1h")
-                await self.send(MessageType.FEATURES_READY, payload={
-                    "symbol": sym, "timeframe": "1h", "features": features,
-                    "ohlcv": df, "price": price, "timestamp": time.time(),
-                }, intention=AgentIntention(
-                    primary_goal=f"emit features for {sym}",
-                    reasoning="new bar closed, features ready for signal generation",
-                    expected_outcome="signal agent processes features",
-                    confidence=0.9,
-                ))
+                await self.send(
+                    MessageType.FEATURES_READY,
+                    payload={
+                        "symbol": sym,
+                        "timeframe": "1h",
+                        "features": features,
+                        "ohlcv": df,
+                        "price": price,
+                        "timestamp": time.time(),
+                    },
+                    intention=AgentIntention(
+                        primary_goal=f"emit features for {sym}",
+                        reasoning="new bar closed, features ready for signal generation",
+                        expected_outcome="signal agent processes features",
+                        confidence=0.9,
+                    ),
+                )
                 self._features_dirty[sym] = False
 
         if decision.get("status_update"):
@@ -127,17 +171,24 @@ class DataAgent(BaseAgent):
     async def reflect(self, outcome: Dict[str, Any]):
         if self.consciousness.cycle_count % 100 == 0:
             self.memory.consolidate_semantic()
-            healthy = sum(1 for sym in SYMBOLS
-                         if self.dm.freshness.get(sym, type('',(),{'is_healthy':True})()).is_healthy)
-            self.set_world("data.health_pct", healthy / max(len(SYMBOLS), 1))
+            healthy = sum(
+                1
+                for sym in SCREENER_SYMBOLS
+                if self.dm.freshness.get(
+                    sym, type("", (), {"is_healthy": True})()
+                ).is_healthy
+            )
+            self.set_world("data.health_pct", healthy / max(len(SCREENER_SYMBOLS), 1))
 
             # Publish OHLCV reference for regime_agent/feature_agent (G1)
             self.set_world("data.ohlcv", self.dm.ohlcv, ttl=120)
             # Publish primary symbol for agents that need a default
-            self.set_world("data.primary_symbol", SYMBOLS[0] if SYMBOLS else "EURUSD", ttl=120)
+            self.set_world(
+                "data.primary_symbol", SCREENER_SYMBOLS[0] if SCREENER_SYMBOLS else "EURUSD", ttl=120
+            )
 
             # Publish ATR for all symbols (needed by risk_agent, position_agent)
-            for sym in SYMBOLS:
+            for sym in SCREENER_SYMBOLS:
                 atr = self.dm.get_atr(sym, "1h", 14)
                 self.set_world(f"data.atr.{sym}", atr, ttl=60)
 
@@ -153,9 +204,15 @@ class DataAgent(BaseAgent):
             self._on_tick(message)
         elif message.msg_type == MessageType.DIAGNOSTIC_REQUEST:
             fresh = self._check_freshness()
-            await self.send(MessageType.DIAGNOSTIC_RESULT, payload={
-                "agent": self.name, "freshness": fresh, "tick_rate": self.tick_counter,
-            }, target=message.source_agent)
+            await self.send(
+                MessageType.DIAGNOSTIC_RESULT,
+                payload={
+                    "agent": self.name,
+                    "freshness": fresh,
+                    "tick_rate": self.tick_counter,
+                },
+                target=message.source_agent,
+            )
         elif message.msg_type == MessageType.AGENT_DIRECTIVE:
             payload = message.payload or {}
             if isinstance(payload, dict) and payload.get("action") == "reload_data":
@@ -182,6 +239,7 @@ class DataAgent(BaseAgent):
             return None
         try:
             from rts_ai_fx.features_unified import FeaturePipeline
+
             fp = FeaturePipeline(
                 lookback=self.config.features.lookback,
                 timeframes=self.config.features.timeframes,
@@ -196,39 +254,54 @@ class DataAgent(BaseAgent):
             return None
 
     def _check_freshness(self) -> Dict:
-        fresh = sum(1 for sym in SYMBOLS if self._last_bar_ts.get(sym, 0) > 0)
-        return {"fresh": fresh, "total": len(SYMBOLS), "stale": len(SYMBOLS) - fresh}
+        fresh = sum(1 for sym in SCREENER_SYMBOLS if self._last_bar_ts.get(sym, 0) > 0)
+        return {"fresh": fresh, "total": len(SCREENER_SYMBOLS), "stale": len(SCREENER_SYMBOLS) - fresh}
 
     async def _load_historical_data(self):
         self.consciousness.current_intention = "loading historical data"
-        for sym in SYMBOLS:
+        for sym in SCREENER_SYMBOLS:
             self.dm.try_alternative_source(sym, "1h", days=60)
         self.dm.load_from_dukascopy_cache(max_hours=168)
-        for sym in SYMBOLS:
+        for sym in SCREENER_SYMBOLS:
             df = self.dm.get_ohlcv(sym, "1h")
-            if df is None or (hasattr(df, 'empty') and df.empty) or len(df) < 50:
+            if df is None or (hasattr(df, "empty") and df.empty) or len(df) < 50:
                 if not self.dm.try_alternative_source(sym, "1h", days=60):
                     logger.warning(f"No real data for {sym}")
         for tf in [tf for tf in self.config.features.timeframes if tf != "1h"]:
-            for sym in SYMBOLS:
+            for sym in SCREENER_SYMBOLS:
                 df = self.dm.get_ohlcv(sym, "1h")
-                if df is not None and hasattr(df, 'empty') and not df.empty and len(df) >= 30:
+                if (
+                    df is not None
+                    and hasattr(df, "empty")
+                    and not df.empty
+                    and len(df) >= 30
+                ):
                     self._resample_timeframe(sym, tf, df)
         self.dm.save_all_ohlcv()
         total_bars = 0
-        for sym in SYMBOLS:
+        for sym in SCREENER_SYMBOLS:
             df = self.dm.get_ohlcv(sym, "1h")
-            if df is not None and hasattr(df, 'empty') and not df.empty:
+            if df is not None and hasattr(df, "empty") and not df.empty:
                 total_bars += len(df)
-        self.log_state(f"Historical: {total_bars} bars across {len(SYMBOLS)} symbols (persisted to disk)")
+        self.log_state(
+            f"Historical: {total_bars} bars across {len(SCREENER_SYMBOLS)} symbols (persisted to disk)"
+        )
 
     def _resample_timeframe(self, symbol, tf, df_1h):
         import numpy as np, pandas as pd
+
         if tf == "4h":
             res = df_1h.copy()
             res["timestamp"] = (res["timestamp"] // 14400) * 14400
-            resampled = res.groupby("timestamp").agg(
-                open=("open", "first"), high=("high", "max"),
-                low=("low", "min"), close=("close", "last"), volume=("volume", "sum"),
-            ).reset_index()
+            resampled = (
+                res.groupby("timestamp")
+                .agg(
+                    open=("open", "first"),
+                    high=("high", "max"),
+                    low=("low", "min"),
+                    close=("close", "last"),
+                    volume=("volume", "sum"),
+                )
+                .reset_index()
+            )
             self.dm.ohlcv[symbol][tf] = resampled
