@@ -5,14 +5,14 @@ Enhanced with Sharpe-based dynamic weighting and MAML meta-learning (Enhancement
 """
 
 import numpy as np
-from typing import Dict, List, Optional, Callable, Tuple
+from typing import Any, Dict, List, Optional, Callable, Tuple
 from dataclasses import dataclass, field
 from collections import defaultdict
 
 try:
     import torch
 except ImportError:
-    torch = None
+    torch: Any = None  # type: ignore[no-redef]
 
 
 @dataclass
@@ -80,7 +80,7 @@ class MoEEnsemble:
 
         predictions = []
         confidences = []
-        weights = []
+        weight_values: List[float] = []
         expert_outputs = {}
 
         for expert in self.experts:
@@ -113,7 +113,7 @@ class MoEEnsemble:
             weight = regime_weight * elo_weight * sharpe_weight * conf_weight
             predictions.append(pred)
             confidences.append(conf)
-            weights.append(weight)
+            weight_values.append(weight)
             expert_outputs[expert.name] = {
                 "prediction": pred,
                 "confidence": conf,
@@ -123,7 +123,7 @@ class MoEEnsemble:
         if not predictions:
             return EnsemblePrediction()
 
-        weights = np.array(weights)
+        weights = np.array(weight_values)
         total = weights.sum()
         if total == 0:
             return EnsemblePrediction()
@@ -154,7 +154,7 @@ class MoEEnsemble:
                 )
                 with torch.no_grad():
                     adapted = self.maml_agent.base_model(X_tensor)
-                return adapted.cpu().numpy()
+                return np.asarray(adapted.cpu().numpy())
         except Exception:
             pass
         return X

@@ -33,9 +33,9 @@ class HMMRegimeDetector:
 
     def _extract_features(self, df: pd.DataFrame) -> np.ndarray:
         """Extract features for HMM: returns, volatility, volume change."""
-        if df is None or not hasattr(df, 'get'):
+        if df is None or not hasattr(df, "get"):
             return np.array([])
-        prices = df["close"].values
+        prices = np.asarray(df["close"].values, dtype=float)
         returns = np.diff(prices) / prices[:-1]
         vol = df.get("atr_14", df["close"].rolling(14).std()).values
         vol_ratio = vol / np.mean(vol[-60:]) if len(vol) > 60 else np.ones_like(vol)
@@ -52,7 +52,7 @@ class HMMRegimeDetector:
         means = np.mean(features, axis=0)
         stds = np.std(features, axis=0) + 1e-8
         features = (features - means) / stds
-        return features
+        return np.asarray(features)
 
     def fit(self, df: pd.DataFrame):
         """Fit HMM on historical data with robust initialization."""
@@ -107,7 +107,7 @@ class HMMRegimeDetector:
             regime = self.REGIME_NAMES[current_state % len(self.REGIME_NAMES)]
         self.current_regime = regime
         self.regime_history.append(regime)
-        return regime
+        return str(regime)
 
     def _fallback_regime(self, df: pd.DataFrame) -> str:
         """Fallback rule-based regime detection when HMM unavailable."""
@@ -167,14 +167,14 @@ class HMMRegimeDetector:
         """Get position size multiplier based on regime and sentiment."""
         base_mult = self.get_regime_params(regime).get("pos_mult", 1.0)
         # Adjust based on sentiment (positive sentiment = increase size)
-        sentiment_adj = 0.5 + 0.5 * max(-1, min(1, sentiment_score))
-        return base_mult * sentiment_adj
+        sentiment_adj = 0.5 + 0.5 * max(-1.0, min(1.0, float(sentiment_score)))
+        return float(base_mult * sentiment_adj)
 
     def should_trade(self, regime: str) -> bool:
-        return self.get_regime_params(regime)["pos_mult"] > 0
+        return float(self.get_regime_params(regime)["pos_mult"]) > 0.0
 
     # Enhancement #12: Smart Regime Transition Trading
-    def detect_transition(self, symbol: str = None) -> Dict:
+    def detect_transition(self, symbol: Optional[str] = None) -> Dict:
         """
         Detect regime transitions and provide trading signals.
         Trade the transition, not just the regime.
@@ -279,7 +279,7 @@ class HMMRegimeDetector:
 
         return {"should_pause": False, "reason": "normal_conditions"}
 
-    def get_transition_trading_signal(self, symbol: str = None) -> Dict:
+    def get_transition_trading_signal(self, symbol: Optional[str] = None) -> Dict:
         """
         Get trading signal specifically for regime transitions.
         Returns action to take during transitions.

@@ -35,7 +35,9 @@ class MAMLModel(nn.Module):
         self.input_dim = input_dim
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.network(x)
+        result = self.network(x)
+        assert isinstance(result, torch.Tensor)
+        return result
 
 
 class FastParameterCopy(nn.Module):
@@ -109,7 +111,7 @@ class MAMLAgent:
         for _ in range(self.inner_steps):
             pred = self._forward_from_params(params, x)
             loss = criterion(pred, y.unsqueeze(1) if y.dim() == 1 else y)
-            grads = torch.autograd.grad(loss, params.values(), create_graph=True)
+            grads = torch.autograd.grad(loss, list(params.values()), create_graph=True)
             grad_dict = {name: g for name, g in zip(params.keys(), grads)}
             params = {
                 name: p - self.inner_lr * grad_dict[name] for name, p in params.items()
@@ -222,7 +224,7 @@ class MAMLAgent:
 
                 grads = torch.autograd.grad(
                     loss,
-                    params.values(),
+                    list(params.values()),
                     create_graph=True,
                     allow_unused=True,
                 )
@@ -248,7 +250,9 @@ class MAMLAgent:
             torch.nn.utils.clip_grad_norm_(self.base_model.parameters(), max_norm=1.0)
             self.meta_optimizer.step()
 
-            return meta_loss.detach()
+            result = meta_loss.detach()
+            assert isinstance(result, torch.Tensor)
+            return result
         except Exception as e:
             logger.debug(f"MAML task error: {e}")
             return None
@@ -262,7 +266,9 @@ class MAMLAgent:
         """Adapt and predict in one call."""
         adapted = self.adapt((new_data_x, new_data_y), adapt_steps)
         with torch.no_grad():
-            return adapted(new_data_x)
+            result = adapted(new_data_x)
+            assert isinstance(result, torch.Tensor)
+            return result
 
     def create_task(
         self,

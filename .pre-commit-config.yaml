@@ -4,13 +4,13 @@ repos:
     hooks:
       - id: black
         language_version: python3
-        files: ^(src/ai_forex_system/|tests/|main\.py|requirements\.txt|README\.md)$
+        files: ^(src/|tests/|main\.py|requirements\.txt|README\.md)$
 
   - repo: https://github.com/pycqa/flake8
     rev: 7.3.0
     hooks:
       - id: flake8
-        files: ^(src/ai_forex_system/|tests/|main\.py)$
+        files: ^(src/|tests/|main\.py)$
         exclude: ^(src/api/|src/ai/|src/dashboard/|src/data/|src/execution/)$
 
   - repo: https://github.com/pre-commit/mirrors-mypy
@@ -19,4 +19,4 @@ repos:
       - id: mypy
         additional_dependencies: [types-requests]
         args: [--ignore-missing-imports]
-        files: ^(src/ai_forex_system/|tests/)$
+        files: ^(src/|tests/)$

@@ -73,7 +73,7 @@ class LSTMCNNHybrid:
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         if self.model is not None:
-            return self.model.predict(X, verbose=0)
+            return self.model.predict(X, verbose=0)  # type: ignore[no-any-return]
         raise ValueError("Model not built.")
 
     def train(
@@ -87,6 +87,7 @@ class LSTMCNNHybrid:
     ):
         if self.model is None:
             self.build()
+        assert self.model is not None
         callbacks = [
             tf.keras.callbacks.EarlyStopping(
                 monitor="val_loss", patience=10, restore_best_weights=True
@@ -110,7 +111,6 @@ class LSTMCNNHybrid:
             self.model.save(path)
 
     @classmethod
-    @classmethod
     def load(cls, path: str) -> "LSTMCNNHybrid":
         """
         Load a saved model. If the saved format is incompatible (e.g. Keras 3 vs 2),
@@ -132,7 +132,9 @@ class LSTMCNNHybrid:
         # Try loading with safe_mode=False (handles some version diffs)
         try:
             saved = tf.keras.models.load_model(
-                path, compile=False, safe_mode=False,
+                path,
+                compile=False,
+                safe_mode=False,
             )
             instance.model = saved
             return instance
@@ -142,8 +144,13 @@ class LSTMCNNHybrid:
         # Try rebuilding and transferring weights
         try:
             saved = tf.keras.models.load_model(
-                path, compile=False, safe_mode=False,
+                path,
+                compile=False,
+                safe_mode=False,
             )
+            if instance.model is None:
+                instance.build()
+            assert instance.model is not None
             for layer in instance.model.layers:
                 matching = saved.get_layer(layer.name)
                 if matching and len(layer.get_weights()) == len(matching.get_weights()):
@@ -203,6 +210,7 @@ class ProfitabilityClassifier:
     ):
         if self.model is None:
             self.build()
+        assert self.model is not None
         y_train = self._make_labels(prices_train)
         y_val = self._make_labels(prices_val)
         # Align X to y: X[t] predicts y[t] = direction of price[t+1] vs price[t]
@@ -225,7 +233,7 @@ class ProfitabilityClassifier:
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         if self.model is not None:
-            return self.model.predict(X, verbose=0)
+            return self.model.predict(X, verbose=0)  # type: ignore[no-any-return]
         raise ValueError("Model not built.")
 
     def save(self, path: str):

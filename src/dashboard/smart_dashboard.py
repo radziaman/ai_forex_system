@@ -38,6 +38,7 @@ except ImportError:
 
 
 # Dashboard state
+connected_clients: list = []
 latest_state: Dict[str, Any] = {
     "balance": 100000,
     "equity": 100000,
@@ -79,7 +80,7 @@ def create_access_token(data: Dict) -> str:
         return ""
     to_encode = data.copy()
     to_encode.update({"exp": time.time() + 3600})
-    return jwt.encode(to_encode, JWT_SECRET, algorithm="HS256")
+    return str(jwt.encode(to_encode, JWT_SECRET, algorithm="HS256"))
 
 
 def verify_token(token: str) -> Optional[Dict]:
@@ -87,7 +88,7 @@ def verify_token(token: str) -> Optional[Dict]:
     if not JWT_AVAILABLE:
         return None
     try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        payload: Dict[str, Any] = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
         return payload
     except Exception:
         return None
@@ -382,7 +383,7 @@ if FASTAPI_AVAILABLE:
         }
 
     @app.get("/api/state")
-    async def get_state(token: str = None):
+    async def get_state(token: Optional[str] = None):
         """Get current dashboard state (requires auth)."""
         payload = verify_token(token) if token else None
         if not payload:

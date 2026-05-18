@@ -65,9 +65,7 @@ class TimeframeAttention(nn.Module):
             attention_weights: Dict with attention per timeframe
         """
         if not tf_features or len(tf_features) == 0:
-            return None, {}
-
-        batch_size = tf_features[0].shape[0]
+            raise ValueError("No timeframe features provided to TimeframeAttention")
 
         # Stack timeframes: [batch, n_timeframes, seq_len, feature_dim]
         # First, average over seq_len to get timeframe embeddings
@@ -160,7 +158,7 @@ class TemporalAttentionFusion(nn.Module):
             attention_info: Dict with attention weights
         """
         if not tf_data:
-            return None, {}
+            raise ValueError("No timeframe data provided to TemporalAttentionFusion")
 
         # Apply feature attention per timeframe
         attended_features = []
@@ -181,14 +179,13 @@ class TemporalAttentionFusion(nn.Module):
             feature_attn[tf] = weights.mean(dim=0).mean(dim=0).item()
 
         if not attended_features:
-            return None, {}
+            raise ValueError("No attended features after feature attention")
 
         # Timeframe attention
         # Stack: [batch, n_timeframes, total_features]
         stacked = torch.stack(attended_features, dim=1)
 
         # Self-attention across timeframes
-        batch_size = stacked.shape[0]
         query = stacked  # [batch, n_tf, features]
 
         # Simple dot-product attention
@@ -220,7 +217,7 @@ class AttentionFusionPipeline:
 
     def __init__(
         self,
-        timeframes: List[str] = None,
+        timeframes: Optional[List[str]] = None,
         lookback: int = 30,
     ):
         self.timeframes = timeframes or ["15m", "1h", "4h"]
@@ -295,13 +292,13 @@ class AttentionFusionPipeline:
 
         # Average attention over last 10 updates
         recent = self.fusion_weights_history[-10:]
-        summary = {
+        summary: dict = {
             "recent_timeframe_weights": {},
             "recent_feature_weights": {},
         }
 
         # Average timeframe attention
-        tf_weights = {}
+        tf_weights: dict = {}
         for info in recent:
             tf_attn = info.get("timeframe_attention", {})
             for k, v in tf_attn.items():

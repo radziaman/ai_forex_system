@@ -3,9 +3,9 @@ import numpy as np
 try:
     import talib
 except ImportError:
-    talib = None
+    talib: Any = None  # type: ignore[no-redef]
 from loguru import logger
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 class FeatureEngine:

@@ -87,7 +87,7 @@ class DistributedTrainer:
     def hyperparameter_sweep(
         self,
         param_grid: Dict[str, List[Any]],
-        train_fn: Callable,
+        train_fn: Callable[..., Dict[str, Any]],
         X_train: np.ndarray,
         y_train: np.ndarray,
         X_val: np.ndarray,
@@ -110,7 +110,7 @@ class DistributedTrainer:
     def _ray_sweep(
         self,
         param_grid: Dict[str, List[Any]],
-        train_fn: Callable,
+        train_fn: Callable[..., Dict[str, Any]],
         X_train: np.ndarray,
         y_train: np.ndarray,
         X_val: np.ndarray,
@@ -175,7 +175,7 @@ class DistributedTrainer:
     def _local_sweep(
         self,
         param_grid: Dict[str, List[Any]],
-        train_fn: Callable,
+        train_fn: Callable[..., Dict[str, Any]],
         X_train: np.ndarray,
         y_train: np.ndarray,
         X_val: np.ndarray,
@@ -209,7 +209,7 @@ class DistributedTrainer:
     def _optuna_sweep(
         self,
         param_grid: Dict[str, List[Any]],
-        train_fn: Callable,
+        train_fn: Callable[..., Dict[str, Any]],
         X_train: np.ndarray,
         y_train: np.ndarray,
         X_val: np.ndarray,
@@ -273,34 +273,38 @@ class DistributedTrainer:
 
     def train_distributed(
         self,
-        train_fn: Callable,
+        train_fn: Callable[..., Dict[str, Any]],
         X_train: np.ndarray,
         y_train: np.ndarray,
         X_val: np.ndarray,
         y_val: np.ndarray,
         config: TrialConfig,
-    ) -> Dict:
+    ) -> Dict[str, Any]:
         if self.use_wandb:
             wandb.init(project=self.wandb_project, config=config.__dict__)
 
         if self.use_ray and RAY_AVAILABLE:
             return self._ray_train(train_fn, X_train, y_train, X_val, y_val, config)
-        return train_fn(X_train, y_train, X_val, y_val, config)
+        result = train_fn(X_train, y_train, X_val, y_val, config)
+        assert isinstance(result, dict)
+        return result
 
     def _ray_train(
         self,
-        train_fn: Callable,
+        train_fn: Callable[..., Dict[str, Any]],
         X_train: np.ndarray,
         y_train: np.ndarray,
         X_val: np.ndarray,
         y_val: np.ndarray,
         config: TrialConfig,
-    ) -> Dict:
+    ) -> Dict[str, Any]:
         if not RAY_AVAILABLE:
-            return train_fn(X_train, y_train, X_val, y_val, config)
+            result = train_fn(X_train, y_train, X_val, y_val, config)
+            assert isinstance(result, dict)
+            return result
 
         @ray.remote(num_gpus=0.5)
-        def _train(config_dict: Dict) -> Dict:
+        def _train(config_dict: Dict) -> Dict[str, Any]:
             import tensorflow as tf
 
             tf.get_logger().setLevel("ERROR")

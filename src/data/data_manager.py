@@ -401,9 +401,11 @@ class DataManager:
             if os.path.exists(path):
                 existing = pd.read_csv(path)
                 combined = pd.concat([existing, df], ignore_index=True)
-                combined = combined.drop_duplicates(
-                    subset=["timestamp"], keep="last"
-                ).sort_values("timestamp").reset_index(drop=True)
+                combined = (
+                    combined.drop_duplicates(subset=["timestamp"], keep="last")
+                    .sort_values("timestamp")
+                    .reset_index(drop=True)
+                )
                 combined.to_csv(path, index=False)
             else:
                 df.to_csv(path, index=False)
@@ -440,9 +442,16 @@ class DataManager:
             return
 
         # Fallback: Dukascopy BI5 cache
-        self.load_from_dukascopy_cache(symbols=[symbol], timeframes=[tf], max_hours=days * 24)
+        self.load_from_dukascopy_cache(
+            symbols=[symbol], timeframes=[tf], max_hours=days * 24
+        )
         bars = self.ohlcv.get(symbol, {}).get(tf, pd.DataFrame())
-        if bars is not None and hasattr(bars, 'empty') and not bars.empty and len(bars) > 10:
+        if (
+            bars is not None
+            and hasattr(bars, "empty")
+            and not bars.empty
+            and len(bars) > 10
+        ):
             self.save_ohlcv(symbol, tf)
             return
 
@@ -657,9 +666,13 @@ class DataManager:
                     None,
                 )
                 if date_col:
-                    df["timestamp"] = pd.to_datetime(df[date_col]).astype("int64") // 10**9
+                    df["timestamp"] = (
+                        pd.to_datetime(df[date_col]).astype("int64") // 10**9
+                    )
                 elif df.columns[0].lower() in ("date", "datetime"):
-                    df["timestamp"] = pd.to_datetime(df.iloc[:, 0]).astype("int64") // 10**9
+                    df["timestamp"] = (
+                        pd.to_datetime(df.iloc[:, 0]).astype("int64") // 10**9
+                    )
                 cols_lower = {c: c.lower() for c in df.columns if isinstance(c, str)}
                 df = df.rename(columns=cols_lower)
                 new_bars = df[["timestamp", "open", "high", "low", "close", "volume"]]
@@ -859,7 +872,8 @@ class DataManager:
 
             if isinstance(depth, CtraderDepth):
                 sym = depth.symbol
-                md = self.market_depth[sym]
+                md: Optional[MarketDepthData] = self.market_depth[sym]
+                assert md is not None, f"Market depth not found for {sym}"
                 md.symbol = sym
                 md.bid = depth.bid
                 md.ask = depth.ask
@@ -888,16 +902,17 @@ class DataManager:
         ):
             sym = depth.symbol
             md = self.market_depth.get(sym)
-            if md:
-                md.bid = getattr(depth, "bid", md.bid)
-                md.ask = getattr(depth, "ask", md.ask)
-                md.spread = md.ask - md.bid
-                md.timestamp = getattr(depth, "timestamp", time.time())
-                if depth.bids and isinstance(depth.bids[0], (tuple, list)):
-                    md.bids = [DepthLevelData(price=p, size=s) for p, s in depth.bids]
-                if depth.asks and isinstance(depth.asks[0], (tuple, list)):
-                    md.asks = [DepthLevelData(price=p, size=s) for p, s in depth.asks]
+            if md is None:
                 return
+            md.bid = getattr(depth, "bid", md.bid)
+            md.ask = getattr(depth, "ask", md.ask)
+            md.spread = md.ask - md.bid
+            md.timestamp = getattr(depth, "timestamp", time.time())
+            if depth.bids and isinstance(depth.bids[0], (tuple, list)):
+                md.bids = [DepthLevelData(price=p, size=s) for p, s in depth.bids]
+            if depth.asks and isinstance(depth.asks[0], (tuple, list)):
+                md.asks = [DepthLevelData(price=p, size=s) for p, s in depth.asks]
+            return
 
         logger.debug(f"update_market_depth: unknown type {type(depth).__name__}")
 

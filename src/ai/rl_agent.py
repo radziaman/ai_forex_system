@@ -18,7 +18,9 @@ from typing import Optional, Tuple, Dict, List
 class ActorNetwork(nn.Module):
     """Actor network with configurable architecture."""
 
-    def __init__(self, input_dim: int, n_actions: int = 5, hidden_dims: list = None):
+    def __init__(
+        self, input_dim: int, n_actions: int = 5, hidden_dims: Optional[list] = None
+    ):
         super().__init__()
         if hidden_dims is None:
             hidden_dims = [1024, 512, 256, 128]
@@ -71,7 +73,7 @@ class PPOAgent:
         self,
         state_dim: int,
         n_actions: int = 5,
-        hidden_dims: list = None,
+        hidden_dims: Optional[list] = None,
         lr: float = 3e-4,
         gamma: float = 0.99,
         gae_lambda: float = 0.95,
@@ -101,15 +103,15 @@ class PPOAgent:
         self.actor = ActorNetwork(state_dim, n_actions, hidden_dims).to(self.device)
         self.optimizer = optim.Adam(self.actor.parameters(), lr=lr)
 
-        self.states = []
-        self.actions = []
-        self.log_probs = []
-        self.rewards = []
-        self.dones = []
-        self.values = []
-        self.sl_vals = []
-        self.tp_vals = []
-        self.size_vals = []
+        self.states: list = []
+        self.actions: list = []
+        self.log_probs: list = []
+        self.rewards: list = []
+        self.dones: list = []
+        self.values: list = []
+        self.sl_vals: list = []
+        self.tp_vals: list = []
+        self.size_vals: list = []
 
         logger.info(
             f"PPOAgent initialized | Device: {self.device} | State dim: {state_dim}"
@@ -171,7 +173,7 @@ class PPOAgent:
             advantages_t.std() + 1e-8
         )
 
-        losses = {"policy_loss": [], "value_loss": [], "entropy": []}
+        losses: dict = {"policy_loss": [], "value_loss": [], "entropy": []}
         for _ in range(n_epochs):
             idx = np.random.permutation(len(states_t))
             for start in range(0, len(states_t), batch_size):
@@ -397,7 +399,7 @@ class TradingEnvironment:
         margin_pen = -3.0 * (self.margin / max(self.balance, 1))
         consec = sum(1 for t in self.trade_history[-5:] if not t["win"])
         consec_pen = -2.0 * consec
-        return (
+        return float(
             profit * 2.0
             + sharpe * 1.5
             + dd_pen * 3.0
