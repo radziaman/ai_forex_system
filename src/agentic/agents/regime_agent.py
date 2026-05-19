@@ -13,7 +13,12 @@ from typing import Dict, List, Optional, Any, Set
 from loguru import logger
 
 from agentic.core.base_agent import BaseAgent
-from agentic.core.agent_message import MessageType, MessagePriority, AgentIntention
+from agentic.core.agent_message import (
+    AgentMessage,
+    MessageType,
+    MessagePriority,
+    AgentIntention,
+)
 from agentic.core.agent_consciousness import ConsciousnessLevel
 
 
@@ -38,8 +43,10 @@ class RegimeAgent(BaseAgent):
             purpose="Detect and communicate the current market regime to all agents",
             domain="regime",
             capabilities={
-                "hmm_regime_detection", "regime_transition_detection",
-                "regime_parameter_provision", "regime_memory",
+                "hmm_regime_detection",
+                "regime_transition_detection",
+                "regime_parameter_provision",
+                "regime_memory",
                 "fallback_rule_based_regime",
             },
             tick_interval=5.0,
@@ -59,6 +66,7 @@ class RegimeAgent(BaseAgent):
     async def _on_start(self):
         self.consciousness.current_intention = "initializing HMM regime detector"
         from rts_ai_fx.regime_detector import HMMRegimeDetector
+
         self.detector = HMMRegimeDetector(n_regimes=4, lookback=60)
         self.set_world("regime.current", self._current_regime)
         self.set_world("regime.confidence", 0.0)
@@ -88,8 +96,7 @@ class RegimeAgent(BaseAgent):
         if df is None:
             return {"skip": True, "reason": "no_df"}
 
-        should_fit = (self.detector and self.detector.model is None
-                      and len(df) >= 100)
+        should_fit = self.detector and self.detector.model is None and len(df) >= 100
 
         regime = self.detector.detect_regime(df) if self.detector else "ranging"
         self._previous_regime = self._current_regime
@@ -115,7 +122,6 @@ class RegimeAgent(BaseAgent):
         transition_info = {}
         if self.detector:
             transition_info = self.detector.detect_transition()
-            pause = self.detector.get_pause_conditions()
 
         return {
             "should_fit": should_fit,
@@ -130,7 +136,7 @@ class RegimeAgent(BaseAgent):
     async def act(self, decision: Dict[str, Any]):
         if decision.get("should_fit"):
             self.detector.fit(decision.get("df"))
-            self.log_state(f"HMM fitted on historical data")
+            self.log_state("HMM fitted on historical data")
 
         self.set_world("regime.current", decision["regime"])
         self.set_world("regime.history", self._regime_history)
@@ -163,9 +169,12 @@ class RegimeAgent(BaseAgent):
     async def reflect(self, outcome: Dict[str, Any]):
         if self.consciousness.cycle_count % 50 == 0:
             self.memory.know("regime.current", self._current_regime, ttl=300)
-            self.memory.know("regime.transition_count", self._transition_count, ttl=3600)
+            self.memory.know(
+                "regime.transition_count", self._transition_count, ttl=3600
+            )
             n_transitions = sum(
-                1 for i in range(1, len(self._regime_history))
+                1
+                for i in range(1, len(self._regime_history))
                 if self._regime_history[i] != self._regime_history[i - 1]
             )
             stability = 1.0 - (n_transitions / max(len(self._regime_history) - 1, 1))
@@ -180,7 +189,8 @@ class RegimeAgent(BaseAgent):
                     "current_regime": self._current_regime,
                     "history": self._regime_history[-20:],
                     "transitions": self._transition_count,
-                    "hmm_fitted": self.detector is not None and self.detector.model is not None,
+                    "hmm_fitted": self.detector is not None
+                    and self.detector.model is not None,
                 },
                 target=message.source_agent,
             )

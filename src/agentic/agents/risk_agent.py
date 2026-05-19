@@ -74,7 +74,7 @@ class RiskAgent(BaseAgent):
         )
         self.set_world("risk.initial_balance", self.initial_balance)
         self.set_world("risk.status", "ready")
-        self.log_state(f"Risk systems active")
+        self.log_state("Risk systems active")
 
     async def perceive(self) -> Dict[str, Any]:
         # G7: Actually check and act on halted symbols

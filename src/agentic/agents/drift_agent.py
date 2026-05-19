@@ -15,8 +15,11 @@ class DriftAgent(BaseAgent):
             purpose="Detect distribution shifts across all symbols and broadcast drift alerts",
             domain="monitoring",
             capabilities={
-                "drift_detection", "adwin_monitoring", "feature_drift",
-                "performance_drift", "broadcast_alerts",
+                "drift_detection",
+                "adwin_monitoring",
+                "feature_drift",
+                "performance_drift",
+                "broadcast_alerts",
             },
             tick_interval=10.0,
             consciousness_level=ConsciousnessLevel.REFLECTIVE,
@@ -30,6 +33,7 @@ class DriftAgent(BaseAgent):
     async def _on_start(self):
         from data.data_manager import SYMBOLS
         from rts_ai_fx.drift_detector import DriftMonitor
+
         self._symbols = SYMBOLS
         for sym in SYMBOLS:
             self._drift_monitors[sym] = DriftMonitor()
@@ -40,7 +44,10 @@ class DriftAgent(BaseAgent):
         for sym, monitor in self._drift_monitors.items():
             if monitor.retrain_triggered:
                 drifted_symbols.append(sym)
-        return {"drifted_symbols": drifted_symbols, "total_monitored": len(self._drift_monitors)}
+        return {
+            "drifted_symbols": drifted_symbols,
+            "total_monitored": len(self._drift_monitors),
+        }
 
     async def reason(self, perception: Dict[str, Any]) -> Dict[str, Any]:
         actions = {}
@@ -57,8 +64,12 @@ class DriftAgent(BaseAgent):
                 self._drift_monitors[sym].reset()
             await self.send(
                 MessageType.MODEL_UPDATE,
-                payload={"action": "drift_detected", "symbols": symbols,
-                         "count": len(symbols), "timestamp": time.time()},
+                payload={
+                    "action": "drift_detected",
+                    "symbols": symbols,
+                    "count": len(symbols),
+                    "timestamp": time.time(),
+                },
                 priority=MessagePriority.HIGH,
             )
 
@@ -81,8 +92,14 @@ class DriftAgent(BaseAgent):
         elif message.msg_type == MessageType.DIAGNOSTIC_REQUEST:
             await self.send(
                 MessageType.DIAGNOSTIC_RESULT,
-                payload={"agent": self.name,
-                         "drifted": [s for s, m in self._drift_monitors.items() if m.retrain_triggered],
-                         "total": len(self._drift_monitors)},
+                payload={
+                    "agent": self.name,
+                    "drifted": [
+                        s
+                        for s, m in self._drift_monitors.items()
+                        if m.retrain_triggered
+                    ],
+                    "total": len(self._drift_monitors),
+                },
                 target=message.source_agent,
             )

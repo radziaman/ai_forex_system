@@ -15,8 +15,10 @@ class CircuitBreakerAgent(BaseAgent):
             purpose="Independently monitor market stress and halt trading",
             domain="risk",
             capabilities={
-                "flash_crash_detection", "liquidity_monitoring",
-                "volatility_spike_detection", "degradation_mode",
+                "flash_crash_detection",
+                "liquidity_monitoring",
+                "volatility_spike_detection",
+                "degradation_mode",
                 "graceful_recovery",
             },
             tick_interval=2.0,
@@ -26,6 +28,7 @@ class CircuitBreakerAgent(BaseAgent):
 
     async def _on_start(self):
         from risk.circuit_breaker import CircuitBreaker
+
         self._breaker = CircuitBreaker()
         self.log_state("Circuit breaker active — monitoring all symbols")
 
@@ -35,6 +38,7 @@ class CircuitBreakerAgent(BaseAgent):
         halted_symbols = []
         market_healthy = True
         from data.data_manager import SYMBOLS
+
         for sym in SYMBOLS:
             bid = self.get_world(f"data.bid.{sym}", 0)
             ask = self.get_world(f"data.ask.{sym}", 0)
@@ -42,7 +46,9 @@ class CircuitBreakerAgent(BaseAgent):
                 if bid <= 0 or ask <= 0:
                     continue
                 tick = {"bid": bid, "ask": ask, "price": (bid + ask) / 2.0, "volume": 0}
-                should_halt, reason, snapshot = self._breaker.check_market_health(sym, tick)
+                should_halt, reason, snapshot = self._breaker.check_market_health(
+                    sym, tick
+                )
                 if should_halt:
                     halted_symbols.append(sym)
                     market_healthy = False
@@ -56,7 +62,9 @@ class CircuitBreakerAgent(BaseAgent):
         actions = {}
         if perception.get("halted_symbols"):
             actions["halted"] = perception["halted_symbols"]
-        if not perception.get("market_healthy") and not perception.get("halted_symbols"):
+        if not perception.get("market_healthy") and not perception.get(
+            "halted_symbols"
+        ):
             actions["recovery_check"] = True
         return actions
 
@@ -66,9 +74,11 @@ class CircuitBreakerAgent(BaseAgent):
             self.set_world("risk.circuit_breaker_active", True)
             await self.send(
                 MessageType.CIRCUIT_BREAKER,
-                payload={"halted_symbols": decision["halted"],
-                         "timestamp": time.time(),
-                         "degradation": self._breaker.current_degradation_mode.value},
+                payload={
+                    "halted_symbols": decision["halted"],
+                    "timestamp": time.time(),
+                    "degradation": self._breaker.current_degradation_mode.value,
+                },
                 priority=MessagePriority.CRITICAL,
             )
         elif decision.get("recovery_check"):
@@ -84,9 +94,19 @@ class CircuitBreakerAgent(BaseAgent):
             summary = self._breaker.get_stress_summary() if self._breaker else {}
             await self.send(
                 MessageType.DIAGNOSTIC_RESULT,
-                payload={"agent": self.name,
-                         "degradation": self._breaker.current_degradation_mode.value if self._breaker else "unknown",
-                         "halted": list(self._breaker.last_halt_time.keys()) if self._breaker else [],
-                         "summary": summary},
+                payload={
+                    "agent": self.name,
+                    "degradation": (
+                        self._breaker.current_degradation_mode.value
+                        if self._breaker
+                        else "unknown"
+                    ),
+                    "halted": (
+                        list(self._breaker.last_halt_time.keys())
+                        if self._breaker
+                        else []
+                    ),
+                    "summary": summary,
+                },
                 target=message.source_agent,
             )

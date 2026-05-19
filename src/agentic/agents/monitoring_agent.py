@@ -12,9 +12,13 @@ from datetime import datetime, timezone
 from loguru import logger
 
 from agentic.core.base_agent import BaseAgent
-from agentic.core.agent_message import MessageType, MessagePriority, AgentIntention
+from agentic.core.agent_message import (
+    AgentMessage,
+    MessageType,
+    MessagePriority,
+    AgentIntention,
+)
 from agentic.core.agent_consciousness import ConsciousnessLevel
-
 
 # ── Alert severity levels ──
 ALERT_CRITICAL = "CRITICAL"
@@ -48,9 +52,12 @@ class MonitoringAgent(BaseAgent):
             purpose="Best-practice alerting: structured, aggregated, rate-limited, escalated",
             domain="monitoring",
             capabilities={
-                "telegram_notifications", "alert_aggregation",
-                "rate_limiting", "structured_formatting",
-                "daily_summaries", "uptime_tracking",
+                "telegram_notifications",
+                "alert_aggregation",
+                "rate_limiting",
+                "structured_formatting",
+                "daily_summaries",
+                "uptime_tracking",
             },
             tick_interval=15.0,
             consciousness_level=ConsciousnessLevel.REFLECTIVE,
@@ -63,7 +70,8 @@ class MonitoringAgent(BaseAgent):
 
         # ── Rate limiting: category -> [(timestamp, message)] ──
         self._rate_limit_buckets: Dict[str, deque] = defaultdict(
-            lambda: deque(maxlen=100))
+            lambda: deque(maxlen=100)
+        )
         self._rate_limits = {
             CATEGORY_TRADE: {"max_per_hour": 20},
             CATEGORY_RISK: {"max_per_hour": 10},
@@ -98,16 +106,20 @@ class MonitoringAgent(BaseAgent):
         if self.secrets:
             try:
                 from notifications.telegram import TelegramNotifier
+
                 self.notifier = TelegramNotifier(
-                    bot_token=getattr(self.secrets, 'telegram_bot_token', ''),
-                    chat_id=getattr(self.secrets, 'telegram_chat_id', ''),
-                    send_trade_alerts=True, send_daily_summary=True,
+                    bot_token=getattr(self.secrets, "telegram_bot_token", ""),
+                    chat_id=getattr(self.secrets, "telegram_chat_id", ""),
+                    send_trade_alerts=True,
+                    send_daily_summary=True,
                     send_risk_alerts=True,
                 )
                 self._safe_telegram(
                     "\U0001f916 Agentic Moneybot System Elite — online\n"
                     f"Mode: {self.get_world('config.mode', 'paper')}",
-                    ALERT_LOW, CATEGORY_SYSTEM)
+                    ALERT_LOW,
+                    CATEGORY_SYSTEM,
+                )
             except Exception as e:
                 self.log_state(f"Telegram not available: {e}", "warning")
                 self._telegram_health = "unconfigured"
@@ -122,8 +134,13 @@ class MonitoringAgent(BaseAgent):
         now = datetime.now(timezone.utc)
         new_day = now.day != self._last_summary_date
 
-        return {"health": health, "performance": perf, "regime": regime,
-                "new_day": new_day, "hour": now.hour}
+        return {
+            "health": health,
+            "performance": perf,
+            "regime": regime,
+            "new_day": new_day,
+            "hour": now.hour,
+        }
 
     async def reason(self, perception: Dict[str, Any]) -> Dict[str, Any]:
         actions = []
@@ -158,12 +175,16 @@ class MonitoringAgent(BaseAgent):
                 self._send_alert("Health degraded", ALERT_HIGH, CATEGORY_SYSTEM)
             elif action.startswith("sharpe_critical"):
                 s = action.split(":")[1]
-                self._send_alert(f"Sharpe ratio {s} — review strategy",
-                                 ALERT_CRITICAL, CATEGORY_PERFORMANCE)
+                self._send_alert(
+                    f"Sharpe ratio {s} — review strategy",
+                    ALERT_CRITICAL,
+                    CATEGORY_PERFORMANCE,
+                )
             elif action.startswith("sharpe_low"):
                 s = action.split(":")[1]
-                self._send_alert(f"Sharpe ratio {s} below 0.5",
-                                 ALERT_HIGH, CATEGORY_PERFORMANCE)
+                self._send_alert(
+                    f"Sharpe ratio {s} below 0.5", ALERT_HIGH, CATEGORY_PERFORMANCE
+                )
 
     async def reflect(self, outcome: Dict[str, Any]):
         pass
@@ -171,17 +192,21 @@ class MonitoringAgent(BaseAgent):
     # ── Message handling ────────────────────────────────────────
 
     async def on_message(self, message: AgentMessage):
-        self._event_log.append({
-            "t": time.time(), "type": message.msg_type.name,
-            "src": message.source_agent,
-        })
+        self._event_log.append(
+            {
+                "t": time.time(),
+                "type": message.msg_type.name,
+                "src": message.source_agent,
+            }
+        )
 
         payload = message.payload if isinstance(message.payload, dict) else {}
 
         if message.msg_type == MessageType.POSITION_OPENED:
             self._daily_trades.append(payload)
-            self._send_alert(self._fmt_trade_opened(payload),
-                             ALERT_MEDIUM, CATEGORY_TRADE)
+            self._send_alert(
+                self._fmt_trade_opened(payload), ALERT_MEDIUM, CATEGORY_TRADE
+            )
 
         elif message.msg_type == MessageType.POSITION_CLOSED:
             pnl = payload.get("pnl", 0)
@@ -193,7 +218,9 @@ class MonitoringAgent(BaseAgent):
             level = ALERT_MEDIUM if pnl >= 0 else ALERT_HIGH
             self._send_alert(
                 self._fmt_trade_closed(symbol, direction, pnl, reason, entries),
-                level, CATEGORY_TRADE)
+                level,
+                CATEGORY_TRADE,
+            )
 
         elif message.msg_type == MessageType.RISK_ALERT:
             self._daily_alerts.append(str(payload))
@@ -201,14 +228,21 @@ class MonitoringAgent(BaseAgent):
             reason = payload.get("reason", "?")
             self._send_alert(
                 self._fmt_risk_alert(alert_type, reason, payload),
-                ALERT_CRITICAL, CATEGORY_RISK)
+                ALERT_CRITICAL,
+                CATEGORY_RISK,
+            )
 
         elif message.msg_type == MessageType.DIAGNOSTIC_REQUEST:
-            await self.send(MessageType.DIAGNOSTIC_RESULT, payload={
-                "agent": self.name, "events_logged": len(self._event_log),
-                "telegram_health": self._telegram_health,
-                "uptime": time.time() - self.consciousness.started_at,
-            }, target=message.source_agent)
+            await self.send(
+                MessageType.DIAGNOSTIC_RESULT,
+                payload={
+                    "agent": self.name,
+                    "events_logged": len(self._event_log),
+                    "telegram_health": self._telegram_health,
+                    "uptime": time.time() - self.consciousness.started_at,
+                },
+                target=message.source_agent,
+            )
 
     # ── Alert sending with aggregation + rate limiting ──────────
 
@@ -231,7 +265,10 @@ class MonitoringAgent(BaseAgent):
                 text = f"{text} (x{entry['count']})"
         else:
             self._recent_alerts[dedup_key] = {
-                "count": 1, "first_ts": now, "last_ts": now}
+                "count": 1,
+                "first_ts": now,
+                "last_ts": now,
+            }
 
         # Rate limiting: max per hour per category
         bucket = self._rate_limit_buckets[category]
@@ -244,9 +281,13 @@ class MonitoringAgent(BaseAgent):
             return
 
         # Structured formatting
-        icon = ICON.get(level, "")
-        emoji_level = {ALERT_CRITICAL: "\u26a0\ufe0f", ALERT_HIGH: "\u26a1",
-                       ALERT_MEDIUM: "\u2139\ufe0f", ALERT_LOW: "\u2705"}.get(level, "")
+        _ = ICON.get(level, "")
+        emoji_level = {
+            ALERT_CRITICAL: "\u26a0\ufe0f",
+            ALERT_HIGH: "\u26a1",
+            ALERT_MEDIUM: "\u2139\ufe0f",
+            ALERT_LOW: "\u2705",
+        }.get(level, "")
         header = f"{emoji_level} [{level}]"
         regime = self.get_world("regime.current", "?")
         positions = self.get_world("account.open_positions", 0)
@@ -264,16 +305,19 @@ class MonitoringAgent(BaseAgent):
         return (
             f"\U0001f4c8 *{p.get('direction', '?')}* {p.get('symbol', '?')}\n"
             f"Volume: {p.get('volume', 0):.2f} lots\n"
-            f"Entry: {float(p.get('entry', 0)):.5f}")
+            f"Entry: {float(p.get('entry', 0)):.5f}"
+        )
 
-    def _fmt_trade_closed(self, symbol: str, direction: str,
-                          pnl: float, reason: str, entry: float) -> str:
+    def _fmt_trade_closed(
+        self, symbol: str, direction: str, pnl: float, reason: str, entry: float
+    ) -> str:
         emoji = "\U0001f4b0" if pnl >= 0 else "\U0001f4a5"
         return (
             f"{emoji} *{direction} {symbol}* closed\n"
             f"PnL: *${pnl:+.2f}*\n"
             f"Reason: {reason}\n"
-            f"Entry: {float(entry):.5f}")
+            f"Entry: {float(entry):.5f}"
+        )
 
     def _fmt_risk_alert(self, alert_type: str, reason: str, payload: Dict) -> str:
         text = f"\u26a0\ufe0f *Risk Alert: {alert_type}*\n{reason}"
@@ -300,7 +344,8 @@ class MonitoringAgent(BaseAgent):
             f"PnL: *${pnl:+.2f}*\n"
             f"Sharpe: {perf.get('sharpe', 0):.2f}\n"
             f"Best symbol: {perf.get('best_symbol', '-')}\n"
-            f"Worst symbol: {perf.get('worst_symbol', '-')}")
+            f"Worst symbol: {perf.get('worst_symbol', '-')}"
+        )
 
     def _send_daily_summary(self):
         self._last_summary_date = datetime.now(timezone.utc).day
@@ -312,8 +357,13 @@ class MonitoringAgent(BaseAgent):
 
     # ── Telegram delivery ──────────────────────────────────────
 
-    def _safe_telegram(self, text: str, level: str = "info",
-                       category: str = "system", max_retries: int = 2):
+    def _safe_telegram(
+        self,
+        text: str,
+        level: str = "info",
+        category: str = "system",
+        max_retries: int = 2,
+    ):
         if not self.notifier:
             return
         for attempt in range(max_retries):

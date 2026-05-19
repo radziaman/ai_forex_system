@@ -13,7 +13,12 @@ from typing import Dict, List, Optional, Any, Set
 from loguru import logger
 
 from agentic.core.base_agent import BaseAgent
-from agentic.core.agent_message import MessageType, MessagePriority, AgentIntention
+from agentic.core.agent_message import (
+    AgentMessage,
+    MessageType,
+    MessagePriority,
+    AgentIntention,
+)
 from agentic.core.agent_consciousness import ConsciousnessLevel
 
 
@@ -36,8 +41,10 @@ class ConnectionAgent(BaseAgent):
             purpose="Maintain persistent, healthy connection to the broker at all times",
             domain="connectivity",
             capabilities={
-                "connection_monitoring", "auto_reconnect",
-                "exponential_backoff", "api_health_tracking",
+                "connection_monitoring",
+                "auto_reconnect",
+                "exponential_backoff",
+                "api_health_tracking",
                 "market_data_subscription",
             },
             tick_interval=5.0,
@@ -58,7 +65,9 @@ class ConnectionAgent(BaseAgent):
         self._connected = self.get_world("execution.connected", False)
         self.set_world("connection.status", "checking")
         self.set_world("connection.connected", self._connected)
-        self.log_state(f"Connection status: {'CONNECTED' if self._connected else 'DISCONNECTED'}")
+        self.log_state(
+            f"Connection status: {'CONNECTED' if self._connected else 'DISCONNECTED'}"
+        )
 
     async def perceive(self) -> Dict[str, Any]:
         was_connected = self._connected
@@ -111,9 +120,11 @@ class ConnectionAgent(BaseAgent):
             )
 
         if decision.get("reconnect_attempt"):
-            delay = min(self._base_delay * (2 ** self._retries), self._max_delay)
+            delay = min(self._base_delay * (2**self._retries), self._max_delay)
             self._retries += 1
-            self.log_state(f"Reconnect attempt {self._retries}/{self._max_retries} in {delay:.0f}s")
+            self.log_state(
+                f"Reconnect attempt {self._retries}/{self._max_retries} in {delay:.0f}s"
+            )
             await asyncio.sleep(delay)
 
             self._connected = self.get_world("execution.connected", False)
@@ -128,7 +139,10 @@ class ConnectionAgent(BaseAgent):
                 )
 
         if decision.get("give_up"):
-            self.log_state(f"Max retries ({self._max_retries}) reached. Manual intervention needed.", "critical")
+            self.log_state(
+                f"Max retries ({self._max_retries}) reached. Manual intervention needed.",
+                "critical",
+            )
             self.set_world("connection.gave_up", True)
             await self.send(
                 MessageType.RISK_ALERT,
@@ -167,15 +181,21 @@ class ConnectionAgent(BaseAgent):
 
     async def _do_resubscribe(self):
         from api.symbol_map import get_symbol_id
+
         connected = self.get_world("execution.connected", False)
         if not connected:
             return
         for sym in self._symbols:
             try:
                 sid = get_symbol_id(sym)
-                await self.send(MessageType.AGENT_DIRECTIVE, payload={
-                    "target": "execution_agent", "action": "subscribe_depth",
-                    "symbol_id": sid, "reason": "resubscribe_after_reconnect",
-                })
+                await self.send(
+                    MessageType.AGENT_DIRECTIVE,
+                    payload={
+                        "target": "execution_agent",
+                        "action": "subscribe_depth",
+                        "symbol_id": sid,
+                        "reason": "resubscribe_after_reconnect",
+                    },
+                )
             except Exception:
                 pass

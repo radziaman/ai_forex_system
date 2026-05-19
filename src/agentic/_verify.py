@@ -1,10 +1,14 @@
 """Verify all agentic modules import and wire correctly."""
-import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
+import sys
+import os
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 errors = []
 successes = []
+
 
 def check(name, fn):
     try:
@@ -12,6 +16,7 @@ def check(name, fn):
         successes.append(name)
     except Exception as e:
         errors.append((name, str(e)))
+
 
 # Core framework
 check("agent_message", lambda: __import__("agentic.core.agent_message"))

@@ -79,15 +79,22 @@ class WorldState:
                 sv._recompute_checksum()
             else:
                 self._state[key] = StateVariable(
-                    key=key, value=value, version=self._global_version,
-                    updated_by=updated_by, ttl_seconds=ttl,
+                    key=key,
+                    value=value,
+                    version=self._global_version,
+                    updated_by=updated_by,
+                    ttl_seconds=ttl,
                 )
-            self._update_history.append({
-                "key": key, "version": self._global_version,
-                "timestamp": time.time(), "updated_by": updated_by,
-            })
+            self._update_history.append(
+                {
+                    "key": key,
+                    "version": self._global_version,
+                    "timestamp": time.time(),
+                    "updated_by": updated_by,
+                }
+            )
             if len(self._update_history) > self._max_history:
-                self._update_history = self._update_history[-self._max_history:]
+                self._update_history = self._update_history[-self._max_history :]
 
             for cb in self._observers.get(key, []):
                 try:
@@ -126,8 +133,10 @@ class WorldState:
             sv._recompute_checksum()
             if old_checksum and old_checksum != sv.checksum:
                 self._integrity_errors += 1
-                logger.warning(f"WorldState integrity error for '{key}': "
-                               f"{old_checksum} != {sv.checksum}")
+                logger.warning(
+                    f"WorldState integrity error for '{key}': "
+                    f"{old_checksum} != {sv.checksum}"
+                )
                 return False
             return True
 
@@ -140,15 +149,21 @@ class WorldState:
 
     def snapshot(self) -> Dict[str, Any]:
         with self._lock:
-            return {k: sv.value for k, sv in self._state.items()
-                    if not sv.is_expired}
+            return {k: sv.value for k, sv in self._state.items() if not sv.is_expired}
 
     def version_snapshot(self) -> Dict[str, Any]:
         with self._lock:
-            return {k: {"value": sv.value, "version": sv.version,
-                        "updated_at": sv.updated_at, "updated_by": sv.updated_by,
-                        "checksum": sv.checksum}
-                    for k, sv in self._state.items() if not sv.is_expired}
+            return {
+                k: {
+                    "value": sv.value,
+                    "version": sv.version,
+                    "updated_at": sv.updated_at,
+                    "updated_by": sv.updated_by,
+                    "checksum": sv.checksum,
+                }
+                for k, sv in self._state.items()
+                if not sv.is_expired
+            }
 
     def get_version(self, key: str) -> int:
         with self._lock:
@@ -156,8 +171,7 @@ class WorldState:
             return sv.version if sv else 0
 
     def get_domain_state(self, prefix: str) -> Dict[str, Any]:
-        return {k: v for k, v in self.snapshot().items()
-                if k.startswith(prefix)}
+        return {k: v for k, v in self.snapshot().items() if k.startswith(prefix)}
 
     def summary(self) -> Dict:
         return {

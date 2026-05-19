@@ -3,6 +3,7 @@ Data Agent — G1: handles TICK_RECEIVED messages from execution_agent.
 """
 
 from __future__ import annotations
+import os
 import time
 import asyncio
 from typing import Dict, List, Optional, Any, Set
@@ -24,6 +25,7 @@ from data.data_manager import DataManager, SYMBOLS, DUKASCOPE_SYMBOLS, BASE_PRIC
 # Merge with existing SYMBOLS to ensure backward compatibility.
 try:
     from agentic.agents.screener_agent import INSTRUMENT_UNIVERSE as SCREENER_UNIVERSE
+
     SCREENER_SYMBOLS = list(set(SYMBOLS) | set(SCREENER_UNIVERSE.keys()))
 except ImportError:
     SCREENER_SYMBOLS = SYMBOLS
@@ -70,6 +72,16 @@ class DataAgent(BaseAgent):
         self.set_world("data.freshness", fresh)
         self.set_world("data.symbols", SCREENER_SYMBOLS)
         self.set_world("data.status", "ready")
+
+        # G18: In simulation mode, emit features immediately from historical data
+        # so signal_agent can run ensemble inference without waiting for live bar closures.
+        if self.consciousness.simulation_mode or self.get_world(
+            "agentic.simulation_mode"
+        ):
+            self.log_state(
+                "Simulation mode detected — emitting synthetic features from historical data"
+            )
+            await self._emit_simulation_features()
 
     async def perceive(self) -> Dict[str, Any]:
         result = {
@@ -184,7 +196,9 @@ class DataAgent(BaseAgent):
             self.set_world("data.ohlcv", self.dm.ohlcv, ttl=120)
             # Publish primary symbol for agents that need a default
             self.set_world(
-                "data.primary_symbol", SCREENER_SYMBOLS[0] if SCREENER_SYMBOLS else "EURUSD", ttl=120
+                "data.primary_symbol",
+                SCREENER_SYMBOLS[0] if SCREENER_SYMBOLS else "EURUSD",
+                ttl=120,
             )
 
             # Publish ATR for all symbols (needed by risk_agent, position_agent)
@@ -253,20 +267,102 @@ class DataAgent(BaseAgent):
             logger.debug(f"Feature computation failed for {symbol}: {e}")
             return None
 
+    async def _emit_simulation_features(self):
+        """Emit FEATURES_READY for all symbols with loaded data.
+
+        Called once during startup in simulation mode to kick-start the
+        signal pipeline without waiting for live bar closures.
+        """
+        emitted = 0
+        for sym in SCREENER_SYMBOLS:
+            features = self._get_features(sym)
+            if features is not None:
+                df = self.dm.get_ohlcv(sym, "1h")
+                price = self.dm.get_price(sym, "1h")
+                await self.send(
+                    MessageType.FEATURES_READY,
+                    payload={
+                        "symbol": sym,
+                        "timeframe": "1h",
+                        "features": features,
+                        "ohlcv": df,
+                        "price": price,
+                        "timestamp": time.time(),
+                    },
+                    intention=AgentIntention(
+                        primary_goal=f"emit synthetic features for {sym}",
+                        reasoning="simulation mode: features generated from historical data",
+                        expected_outcome="signal agent processes features",
+                        confidence=0.9,
+                    ),
+                )
+                self._features_dirty[sym] = False
+                emitted += 1
+        self.log_state(
+            f"Simulation bootstrap: emitted features for {emitted}/{len(SCREENER_SYMBOLS)} symbols"
+        )
+
     def _check_freshness(self) -> Dict:
         fresh = sum(1 for sym in SCREENER_SYMBOLS if self._last_bar_ts.get(sym, 0) > 0)
-        return {"fresh": fresh, "total": len(SCREENER_SYMBOLS), "stale": len(SCREENER_SYMBOLS) - fresh}
+        return {
+            "fresh": fresh,
+            "total": len(SCREENER_SYMBOLS),
+            "stale": len(SCREENER_SYMBOLS) - fresh,
+        }
 
     async def _load_historical_data(self):
         self.consciousness.current_intention = "loading historical data"
+        import pandas as pd  # noqa: F811
+
+        # Ensure DataManager has entries for all SCREENER_SYMBOLS (including non-FX)
         for sym in SCREENER_SYMBOLS:
-            self.dm.try_alternative_source(sym, "1h", days=60)
-        self.dm.load_from_dukascopy_cache(max_hours=168)
+            if sym not in self.dm.ohlcv:
+                self.dm.ohlcv[sym] = {}
+                for tf in self.config.features.timeframes:
+                    self.dm.ohlcv[sym][tf] = pd.DataFrame(
+                        columns=[
+                            "timestamp",
+                            "open",
+                            "high",
+                            "low",
+                            "close",
+                            "volume",
+                        ]
+                    )
+
+        # Phase 1: Try local CSV cache first (fastest)
+        csv_loaded = 0
+        for sym in SCREENER_SYMBOLS:
+            csv_path = os.path.join(self.dm.historical_path, f"{sym}_1h.csv")
+            if os.path.exists(csv_path):
+                try:
+                    df = pd.read_csv(csv_path)
+                    if df is not None and len(df) >= 50:
+                        self.dm.ohlcv[sym]["1h"] = df
+                        self.dm.freshness[sym].last_source = "csv"
+                        self.dm.freshness[sym].bar_count["1h"] = len(df)
+                        csv_loaded += 1
+                        continue
+                except Exception as e:
+                    logger.debug(f"CSV load failed for {sym}: {e}")
+
+        self.log_state(
+            f"CSV cache: loaded {csv_loaded}/{len(SCREENER_SYMBOLS)} symbols"
+        )
+
+        # Phase 2: For symbols still without data, try yFinance
         for sym in SCREENER_SYMBOLS:
             df = self.dm.get_ohlcv(sym, "1h")
-            if df is None or (hasattr(df, "empty") and df.empty) or len(df) < 50:
-                if not self.dm.try_alternative_source(sym, "1h", days=60):
+            if df is None or df.empty or len(df) < 50:
+                if self.dm.try_alternative_source(sym, "1h", days=60):
+                    logger.info(f"{sym}: loaded from yFinance")
+                else:
                     logger.warning(f"No real data for {sym}")
+
+        # Phase 3: Dukascopy BI5 cache (for FX symbols that still need data)
+        self.dm.load_from_dukascopy_cache(max_hours=168)
+
+        # Resample to additional timeframes from 1h base
         for tf in [tf for tf in self.config.features.timeframes if tf != "1h"]:
             for sym in SCREENER_SYMBOLS:
                 df = self.dm.get_ohlcv(sym, "1h")
@@ -277,6 +373,8 @@ class DataAgent(BaseAgent):
                     and len(df) >= 30
                 ):
                     self._resample_timeframe(sym, tf, df)
+
+        # Persist any newly loaded data to CSV for future boots
         self.dm.save_all_ohlcv()
         total_bars = 0
         for sym in SCREENER_SYMBOLS:
@@ -288,7 +386,8 @@ class DataAgent(BaseAgent):
         )
 
     def _resample_timeframe(self, symbol, tf, df_1h):
-        import numpy as np, pandas as pd
+        import numpy as np
+        import pandas as pd
 
         if tf == "4h":
             res = df_1h.copy()

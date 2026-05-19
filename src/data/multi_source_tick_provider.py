@@ -33,6 +33,7 @@ if _src not in sys.path:
 @dataclass
 class PriceTick:
     """Unified tick format for all sources."""
+
     symbol: str
     bid: float
     ask: float
@@ -43,6 +44,7 @@ class PriceTick:
 
 
 # ─── cTrader Read-Only Data Listener ──────────────────────────────────────
+
 
 class CtradeDataOnly:
     """Wrapper around ctrader_client — read-only data, no trading capability.
@@ -133,6 +135,7 @@ class CtradeDataOnly:
 
 # ─── Yahoo Finance 1-Minute Data Provider ─────────────────────────────────
 
+
 class YahooFuturesProvider:
     """Provides 1-minute futures data from Yahoo Finance.
 
@@ -146,14 +149,14 @@ class YahooFuturesProvider:
     )
 
     SUPPORTED_SYMBOLS = {
-        'HO=F': 'Heating Oil Futures',
-        'CL=F': 'Crude Oil Futures',
-        'RB=F': 'Gasoline Futures',
-        'NG=F': 'Natural Gas Futures',
-        'GC=F': 'Gold Futures',
-        'SI=F': 'Silver Futures',
-        'ES=F': 'S&P 500 Futures',
-        'NQ=F': 'Nasdaq Futures',
+        "HO=F": "Heating Oil Futures",
+        "CL=F": "Crude Oil Futures",
+        "RB=F": "Gasoline Futures",
+        "NG=F": "Natural Gas Futures",
+        "GC=F": "Gold Futures",
+        "SI=F": "Silver Futures",
+        "ES=F": "S&P 500 Futures",
+        "NQ=F": "Nasdaq Futures",
     }
 
     def __init__(self):
@@ -165,7 +168,9 @@ class YahooFuturesProvider:
     def is_supported(self, symbol: str) -> bool:
         return symbol in self.SUPPORTED_SYMBOLS
 
-    async def download_1m_data(self, symbol: str, days: int = 7) -> Optional[pd.DataFrame]:
+    async def download_1m_data(
+        self, symbol: str, days: int = 7
+    ) -> Optional[pd.DataFrame]:
         """Download 1-minute OHLCV data from Yahoo Finance.
 
         Args:
@@ -199,7 +204,9 @@ class YahooFuturesProvider:
             df = ticker.history(period=f"{days}d", interval="1m")
 
             if df is None or df.empty or len(df) < 10:
-                logger.warning(f"Insufficient 1m data for {symbol}: {len(df) if df is not None else 0} bars")
+                logger.warning(
+                    f"Insufficient 1m data for {symbol}: {len(df) if df is not None else 0} bars"
+                )
                 return None
 
             df.to_csv(cache_file)
@@ -211,21 +218,30 @@ class YahooFuturesProvider:
             logger.error(f"Failed to download {symbol}: {e}")
             return None
 
-    def generate_ticks_from_bars(self, df: pd.DataFrame, symbol: str,
-                                   ticks_per_bar: int = 10) -> List[PriceTick]:
+    def generate_ticks_from_bars(
+        self, df: pd.DataFrame, symbol: str, ticks_per_bar: int = 10
+    ) -> List[PriceTick]:
         """Generate realistic ticks from 1-minute OHLCV bars.
 
         Distributes tick prices within each bar's [low, high] range,
         weighted towards the open/close to simulate realistic price paths.
         """
         ticks = []
-        base_price = df['Close'].iloc[-1] if 'Close' in df.columns else df.iloc[:, 0].iloc[-1]
+        base_price = (
+            df["Close"].iloc[-1] if "Close" in df.columns else df.iloc[:, 0].iloc[-1]
+        )
         pip_size = 0.0001 if base_price < 10 else 0.01 if base_price < 1000 else 0.1
 
         for idx, (_, row) in enumerate(df.iterrows()):
             # Extract OHLC
-            if 'Close' in row:
-                o, h, l, c, v = row['Open'], row['High'], row['Low'], row['Close'], row.get('Volume', 0)
+            if "Close" in row:
+                o, h, l, c, v = (
+                    row["Open"],
+                    row["High"],
+                    row["Low"],
+                    row["Close"],
+                    row.get("Volume", 0),
+                )
             else:
                 o = h = l = c = row.iloc[0]
                 v = 0
@@ -233,7 +249,7 @@ class YahooFuturesProvider:
             if pd.isna(o) or pd.isna(h) or pd.isna(l) or pd.isna(c):
                 continue
 
-            ts = row.name.timestamp() if hasattr(row.name, 'timestamp') else time.time()
+            ts = row.name.timestamp() if hasattr(row.name, "timestamp") else time.time()
 
             # Generate ticks within this bar
             for _ in range(ticks_per_bar):
@@ -242,7 +258,11 @@ class YahooFuturesProvider:
                 if t < 0.3:
                     price = o + random.random() * (c - o)
                 elif t < 0.7:
-                    price = c + random.random() * (h - c) if random.random() > 0.5 else c - random.random() * (c - l)
+                    price = (
+                        c + random.random() * (h - c)
+                        if random.random() > 0.5
+                        else c - random.random() * (c - l)
+                    )
                 else:
                     price = random.uniform(l, h)
 
@@ -250,19 +270,23 @@ class YahooFuturesProvider:
                 spread = pip_size * random.uniform(0.5, 2.0)
                 tick_ts = ts + random.uniform(0, 60)  # Spread within the minute
 
-                ticks.append(PriceTick(
-                    symbol=symbol,
-                    bid=round(price - spread/2, 6),
-                    ask=round(price + spread/2, 6),
-                    mid=price,
-                    timestamp=tick_ts,
-                    volume=random.uniform(0.1, 10),
-                    source="yfinance",
-                ))
+                ticks.append(
+                    PriceTick(
+                        symbol=symbol,
+                        bid=round(price - spread / 2, 6),
+                        ask=round(price + spread / 2, 6),
+                        mid=price,
+                        timestamp=tick_ts,
+                        volume=random.uniform(0.1, 10),
+                        source="yfinance",
+                    )
+                )
 
         ticks.sort(key=lambda t: t.timestamp)
-        logger.info(f"Generated {len(ticks)} synthetic ticks for {symbol} "
-                    f"({df.index[0]} to {df.index[-1]})")
+        logger.info(
+            f"Generated {len(ticks)} synthetic ticks for {symbol} "
+            f"({df.index[0]} to {df.index[-1]})"
+        )
         return ticks
 
     async def get_ticks(self, symbol: str, days: int = 7) -> Optional[List[PriceTick]]:
@@ -281,6 +305,7 @@ class YahooFuturesProvider:
 
 
 # ─── Multi-Source Provider ────────────────────────────────────────────────
+
 
 class MultiSourceTickProvider:
     """Unified tick provider — streams from Dukascopy (FX) + Yahoo (futures).
@@ -305,14 +330,23 @@ class MultiSourceTickProvider:
         self._replay_pos: Dict[str, int] = {}
         self._last_tick_time: Dict[str, float] = {}
         self._ctrader_symbols = {
-            'EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD',
-            'USDCHF', 'NZDUSD', 'XAUUSD', 'XTIUSD', 'US500', 'BTCUSD',
+            "EURUSD",
+            "GBPUSD",
+            "USDJPY",
+            "AUDUSD",
+            "USDCAD",
+            "USDCHF",
+            "NZDUSD",
+            "XAUUSD",
+            "XTIUSD",
+            "US500",
+            "BTCUSD",
         }
         self._dukascopy_symbols = self._ctrader_symbols.copy()
 
     def is_futures_symbol(self, symbol: str) -> bool:
         """Check if a symbol is a futures/ETF (needs Yahoo data)."""
-        return symbol.upper() not in self._dukascopy_symbols and '=' in symbol
+        return symbol.upper() not in self._dukascopy_symbols and "=" in symbol
 
     async def stream_prices(self, symbols: List[str], callback: Callable):
         """Start streaming prices for all symbols.
@@ -335,10 +369,12 @@ class MultiSourceTickProvider:
             self._ctrader = CtradeDataOnly()
             ctrader_available = await self._ctrader.connect()
             if ctrader_available:
+
                 def ctrader_bridge(quote):
                     tick = self._ctrader.convert_quote(quote)
                     if tick:
                         self._dispatch_tick(tick)
+
                 await self._ctrader.subscribe(native_syms, ctrader_bridge)
                 logger.info(f"  cTrader streaming {len(native_syms)} symbols")
 
@@ -355,26 +391,37 @@ class MultiSourceTickProvider:
 
         n_sources = len(native_syms) + len(futures_syms)
         source_label = "cTrader" if ctrader_available else "Dukascopy"
-        logger.info(f"MultiSource streaming {n_sources} symbols "
-                    f"({len(native_syms)} {source_label}, {len(futures_syms)} Yahoo)")
+        logger.info(
+            f"MultiSource streaming {n_sources} symbols "
+            f"({len(native_syms)} {source_label}, {len(futures_syms)} Yahoo)"
+        )
 
     async def _start_dukascopy(self, symbols: List[str]):
         """Start Dukascopy tick streaming for FX symbols."""
         try:
             from data.dukascopy_realtime import DukascopyProvider
+
             self._dukascopy = DukascopyProvider(poll_interval=self.poll_interval)
 
             def dukascopy_callback(tick):
                 """Bridge Dukascopy ticks to our subscribers."""
-                symbol = tick.symbol if hasattr(tick, 'symbol') else symbols[0]
-                bid = tick.bid if hasattr(tick, 'bid') else 0
-                ask = tick.ask if hasattr(tick, 'ask') else 0
-                mid = (bid + ask) / 2 if bid and ask else (tick.mid if hasattr(tick, 'mid') else 0)
-                ts = tick.timestamp if hasattr(tick, 'timestamp') else time.time()
+                symbol = tick.symbol if hasattr(tick, "symbol") else symbols[0]
+                bid = tick.bid if hasattr(tick, "bid") else 0
+                ask = tick.ask if hasattr(tick, "ask") else 0
+                mid = (
+                    (bid + ask) / 2
+                    if bid and ask
+                    else (tick.mid if hasattr(tick, "mid") else 0)
+                )
+                ts = tick.timestamp if hasattr(tick, "timestamp") else time.time()
 
                 our_tick = PriceTick(
-                    symbol=symbol, bid=bid, ask=ask, mid=mid,
-                    timestamp=ts, source="dukascopy",
+                    symbol=symbol,
+                    bid=bid,
+                    ask=ask,
+                    mid=mid,
+                    timestamp=ts,
+                    source="dukascopy",
                 )
                 self._dispatch_tick(our_tick)
 
@@ -393,7 +440,9 @@ class MultiSourceTickProvider:
             self._replay_pos[symbol] = 0
 
         ticks = self._replay_data[symbol]
-        rate = len(ticks) / (7 * 24 * 3600) if len(ticks) > 0 else 1.0  # ticks/sec to replay in 7 days
+        rate = (
+            len(ticks) / (7 * 24 * 3600) if len(ticks) > 0 else 1.0
+        )  # ticks/sec to replay in 7 days
         # Speed up for simulation: replay at 60x real-time (1 hour of data = 1 minute)
         speedup = 60.0
 

@@ -16,13 +16,13 @@ from loguru import logger
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
-import numpy as np
-import pandas as pd
-import tensorflow as tf
-from rts_ai_fx.model import LSTMCNNHybrid, ProfitabilityClassifier
-from rts_ai_fx.features_unified import FeaturePipeline
-from training.regime_trainer import RegimeTrainer
-from training.distributed_trainer import DistributedTrainer, TrialConfig
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+import tensorflow as tf  # noqa: E402
+from rts_ai_fx.model import LSTMCNNHybrid, ProfitabilityClassifier  # noqa: E402
+from rts_ai_fx.features_unified import FeaturePipeline  # noqa: E402
+from training.regime_trainer import RegimeTrainer  # noqa: E402
+from training.distributed_trainer import DistributedTrainer, TrialConfig  # noqa: E402
 
 
 async def load_training_data(
@@ -42,13 +42,15 @@ async def load_training_data(
         provider = DukascopyDataProvider(cache=True)
         dfs = {}
         end = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        start = (datetime.now(timezone.utc) - timedelta(days=int(years * 365))).strftime("%Y-%m-%d")
-        for tf in timeframes:
+        start = (
+            datetime.now(timezone.utc) - timedelta(days=int(years * 365))
+        ).strftime("%Y-%m-%d")
+        for tf_name in timeframes:
             interval_map = {"1h": "1h", "4h": "4h", "1d": "1d"}
-            interval = interval_map.get(tf, "1h")
+            interval = interval_map.get(tf_name, "1h")
             ohlcv = await provider.fetch_ohlcv(symbol, interval, start=start, end=end)
             if not ohlcv or len(ohlcv) < 100:
-                raise ValueError(f"Insufficient Dukascopy data for {symbol} {tf}")
+                raise ValueError(f"Insufficient Dukascopy data for {symbol} {tf_name}")
             df = pd.DataFrame(
                 [
                     {
@@ -211,4 +213,5 @@ async def main():
 
 if __name__ == "__main__":
     import asyncio
+
     asyncio.run(main())

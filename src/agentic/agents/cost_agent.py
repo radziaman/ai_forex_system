@@ -16,8 +16,10 @@ class CostAgent(BaseAgent):
             purpose="Track live spreads, optimal execution times, and cost efficiency",
             domain="execution",
             capabilities={
-                "live_spread_tracking", "cost_estimation",
-                "optimal_execution", "spread_alerting",
+                "live_spread_tracking",
+                "cost_estimation",
+                "optimal_execution",
+                "spread_alerting",
             },
             tick_interval=5.0,
             consciousness_level=ConsciousnessLevel.REFLECTIVE,
@@ -33,6 +35,7 @@ class CostAgent(BaseAgent):
         if not self._cost_model:
             return {"skip": True}
         from data.data_manager import SYMBOLS
+
         warnings = {}
         for sym in SYMBOLS:
             bid = self.get_world(f"data.bid.{sym}", 0)
@@ -54,25 +57,41 @@ class CostAgent(BaseAgent):
     async def act(self, decision: Dict[str, Any]):
         if decision.get("alert_wides"):
             for sym, spread in decision["alert_wides"].items():
-                if sym not in self._spread_warnings or abs(self._spread_warnings[sym] - spread) > 0.5:
+                if (
+                    sym not in self._spread_warnings
+                    or abs(self._spread_warnings[sym] - spread) > 0.5
+                ):
                     self._spread_warnings[sym] = spread
                     await self.send(
                         MessageType.RISK_ALERT,
-                        payload={"type": "wide_spread", "symbol": sym,
-                                 "spread_pips": spread, "timestamp": time.time(),
-                                 "reason": f"wide_spread_{sym}_{spread:.1f}pips"},
+                        payload={
+                            "type": "wide_spread",
+                            "symbol": sym,
+                            "spread_pips": spread,
+                            "timestamp": time.time(),
+                            "reason": f"wide_spread_{sym}_{spread:.1f}pips",
+                        },
                         priority=MessagePriority.LOW,
                     )
 
-    async def estimate_cost(self, symbol: str, direction: str, volume: float,
-                            price: float, atr: float = 0.0) -> Optional[Any]:
+    async def estimate_cost(
+        self, symbol: str, direction: str, volume: float, price: float, atr: float = 0.0
+    ) -> Optional[Any]:
         if not self._cost_model:
             return None
         bid = self.get_world(f"data.bid.{symbol}", 0)
         ask = self.get_world(f"data.ask.{symbol}", 0)
-        actual_spread = (ask - bid) / CostModel.pip_to_price(symbol) if bid > 0 and ask > 0 else None
+        actual_spread = (
+            (ask - bid) / CostModel.pip_to_price(symbol)
+            if bid > 0 and ask > 0
+            else None
+        )
         return self._cost_model.calculate(
-            symbol, direction, volume, price, atr,
+            symbol,
+            direction,
+            volume,
+            price,
+            atr,
             actual_spread_pips=actual_spread,
         )
 
@@ -83,8 +102,10 @@ class CostAgent(BaseAgent):
         if message.msg_type == MessageType.DIAGNOSTIC_REQUEST:
             await self.send(
                 MessageType.DIAGNOSTIC_RESULT,
-                payload={"agent": self.name,
-                         "spread_warnings": len(self._spread_warnings),
-                         "symbols": list(self._spread_warnings.keys())},
+                payload={
+                    "agent": self.name,
+                    "spread_warnings": len(self._spread_warnings),
+                    "symbols": list(self._spread_warnings.keys()),
+                },
                 target=message.source_agent,
             )

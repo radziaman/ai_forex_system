@@ -6,8 +6,8 @@ from dataclasses import dataclass, field
 
 VERSION = "4.0"
 
-from infrastructure.config_v2 import AppConfig
-from data.data_manager import SYMBOLS
+from infrastructure.config_v2 import AppConfig  # noqa: E402
+from data.data_manager import SYMBOLS  # noqa: E402
 
 
 @dataclass
@@ -64,8 +64,8 @@ class SystemReport:
             for ad in self.alternative_data:
                 lines.append(f"    {ad}")
         lines.append("")
-        lines.append(f"  Log file: data/logs/moneybot_v2.log")
-        lines.append(f"  Dashboard: http://0.0.0.0:8000")
+        lines.append("  Log file: data/logs/moneybot_v2.log")
+        lines.append("  Dashboard: http://0.0.0.0:8000")
         lines.append("=" * w)
         return "\n".join(lines)
 

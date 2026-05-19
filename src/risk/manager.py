@@ -97,7 +97,9 @@ class RiskManager:
                 # Correct R-multiple: PnL / (entry-SL distance * volume)
                 # SL distance represents risk per unit, times notional
                 risk_distance = abs(t.entry_price - sl_price)
-                entry_pct_risk = risk_distance / t.entry_price if t.entry_price > 0 else 0.01
+                entry_pct_risk = (
+                    risk_distance / t.entry_price if t.entry_price > 0 else 0.01
+                )
                 notional_risk = entry_pct_risk * t.entry_price * t.volume
                 if notional_risk > 0 and t.pnl != 0:
                     r_multiples.append(t.pnl / notional_risk)
@@ -188,11 +190,15 @@ class RiskManager:
 
     def _get_price_series(self, symbol: str = None) -> List[float]:
         """Get price history for VaR computation.
-        
-        Uses per-symbol price history (Fix 2). Falls back to any available 
+
+        Uses per-symbol price history (Fix 2). Falls back to any available
         series if symbol not specified.
         """
-        key = symbol or list(self._price_history.keys())[0] if self._price_history else None
+        key = (
+            symbol or list(self._price_history.keys())[0]
+            if self._price_history
+            else None
+        )
         if key and key in self._price_history:
             return self._price_history[key]
         # Return first available series as fallback

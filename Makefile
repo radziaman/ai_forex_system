@@ -12,25 +12,25 @@ help:
 
 setup:
 	python3 -m venv venv
-	. venv/bin/activate && pip install --upgrade pip
-	. venv/bin/activate && pip install -r requirements.txt
-	. venv/bin/activate && pip install -e .
+	. .venv/bin/activate && pip install --upgrade pip
+	. .venv/bin/activate && pip install -r requirements.txt
+	. .venv/bin/activate && pip install -e .
 
 install: setup
 	@echo "Installation complete"
 
 test:
-	. venv/bin/activate && pytest tests/ -v -W ignore::urllib3.exceptions.NotOpenSSLWarning
+	. .venv/bin/activate && pytest tests/ -v -W ignore::urllib3.exceptions.NotOpenSSLWarning
 
 lint:
-	. venv/bin/activate && flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-	. venv/bin/activate && flake8 . --count --exit-zero --max-complexity=10 --max-line-length=88 --statistics
+	. .venv/bin/activate && flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics --exclude=.venv,venv,build,dist
+	. .venv/bin/activate && flake8 . --count --exit-zero --max-complexity=10 --max-line-length=88 --statistics --exclude=.venv,venv,build,dist
 
 format:
-	. venv/bin/activate && black .
+	. .venv/bin/activate && black .
 
 type-check:
-	. venv/bin/activate && mypy .
+	. .venv/bin/activate && mypy src/ tests/
 
 check: lint type-check test
 

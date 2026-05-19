@@ -55,6 +55,7 @@ class ExecutionAgent(BaseAgent):
 
         # Active symbols: starts with defaults, dynamically updated by screener
         from data.data_manager import SYMBOLS
+
         self._active_symbols = list(SYMBOLS)
 
     async def _on_start(self):
@@ -162,7 +163,9 @@ class ExecutionAgent(BaseAgent):
                         await raw.subscribe_depth(sid)
                     except Exception as e:
                         logger.debug(f"Depth subscribe failed for {sym}: {e}")
-                self.log_state(f"Subscribed to depth quotes for {len(self._active_symbols)} active symbols")
+                self.log_state(
+                    f"Subscribed to depth quotes for {len(self._active_symbols)} active symbols"
+                )
         else:
             self.log_state(f"Running in {engine_mode} mode (simulation)", "warning")
             self.set_world("execution.connected", False)
@@ -284,7 +287,9 @@ class ExecutionAgent(BaseAgent):
             payload = message.payload if isinstance(message.payload, dict) else {}
             tradeable = payload.get("tradeable", [])
             if tradeable:
-                new_symbols = [t.get("ticker", "") for t in tradeable if t.get("ticker")]
+                new_symbols = [
+                    t.get("ticker", "") for t in tradeable if t.get("ticker")
+                ]
                 if new_symbols:
                     old_count = len(self._active_symbols)
                     self._active_symbols = new_symbols

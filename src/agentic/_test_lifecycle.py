@@ -1,20 +1,25 @@
 """
 End-to-end lifecycle test: boots minimal agents, verifies communication.
 """
-import sys, os, asyncio, time
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
-from infrastructure.config_v2 import AppConfig
-from agentic.core.agent_bus import get_agent_bus
-from agentic.core.agent_registry import get_agent_registry
-from agentic.core.world_state import get_world_state
-from agentic.core.agent_message import MessageType
+import sys
+import os
+import asyncio
+import time
 
-from agentic.agents.master_agent import MasterAgent
-from agentic.agents.performance_agent import PerformanceAgent
-from agentic.agents.memory_agent import MemoryAgent
-from agentic.agents.monitoring_agent import MonitoringAgent
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+
+from infrastructure.config_v2 import AppConfig  # noqa: E402
+from agentic.core.agent_bus import get_agent_bus  # noqa: E402
+from agentic.core.agent_registry import get_agent_registry  # noqa: E402
+from agentic.core.world_state import get_world_state  # noqa: E402
+from agentic.core.agent_message import MessageType  # noqa: E402
+
+from agentic.agents.master_agent import MasterAgent  # noqa: E402
+from agentic.agents.performance_agent import PerformanceAgent  # noqa: E402
+from agentic.agents.memory_agent import MemoryAgent  # noqa: E402
+from agentic.agents.monitoring_agent import MonitoringAgent  # noqa: E402
 
 
 async def test():
@@ -22,10 +27,8 @@ async def test():
     print("Agentic Lifecycle Test")
     print("=" * 60)
 
-    config = AppConfig.from_yaml("config.yaml")
     bus = get_agent_bus()
     registry = get_agent_registry()
-    ws = get_world_state()
 
     await bus.start()
 
@@ -60,7 +63,9 @@ async def test():
     # Check consciousness
     for a in agents:
         c = a.consciousness.summary()
-        print(f"  [{c['agent']}] state={c['state']} cycles={c['cycles']} health={c['health']}")
+        print(
+            f"  [{c['agent']}] state={c['state']} cycles={c['cycles']} health={c['health']}"
+        )
 
     # Stop all
     for a in reversed(agents):
@@ -69,8 +74,8 @@ async def test():
     await bus.stop()
 
     # Summary
-    total = health['total']
-    alive = health['alive']
+    total = health["total"]
+    alive = health["alive"]
     print(f"\n  RESULT: {alive}/{total} agents completed lifecycle")
     passed = total > 0 and alive == total
     print(f"  {'PASS' if passed else 'FAIL'}")

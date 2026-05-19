@@ -69,10 +69,13 @@ class SignalAgent(BaseAgent):
         self.subscribe(MessageType.MODEL_UPDATE)
         self.subscribe(MessageType.EXECUTION_RESULT)  # G8: learn from outcomes
         self.subscribe(MessageType.DIAGNOSTIC_REQUEST)
-        self.subscribe(MessageType.INSTRUMENTS_UPDATED)  # Dynamic symbol selection from screener
+        self.subscribe(
+            MessageType.INSTRUMENTS_UPDATED
+        )  # Dynamic symbol selection from screener
 
         # Active symbols: starts with default set, dynamically updated by screener
         from data.data_manager import SYMBOLS
+
         self._active_symbols = list(SYMBOLS)
 
     async def _on_start(self):
@@ -122,7 +125,9 @@ class SignalAgent(BaseAgent):
             payload = message.payload if isinstance(message.payload, dict) else {}
             tradeable = payload.get("tradeable", [])
             if tradeable:
-                new_symbols = [t.get("ticker", "") for t in tradeable if t.get("ticker")]
+                new_symbols = [
+                    t.get("ticker", "") for t in tradeable if t.get("ticker")
+                ]
                 if new_symbols:
                     self.log_state(
                         f"Screener updated: {len(new_symbols)} tradeable instruments "
@@ -241,9 +246,7 @@ class SignalAgent(BaseAgent):
         if not payload.get("success"):
             return
 
-        signal_msg = message.causal_parent_id
         expert_outputs = payload.get("signal", {}).get("expert_outputs", {})
-        out_timestamp = payload.get("timestamp", time.time())
 
         # Update Elo ratings based on outcome
         if self.ensemble and payload.get("filled_price") and expert_outputs:
@@ -463,7 +466,7 @@ class SignalAgent(BaseAgent):
         """Fix 4: Sanity-check a model prediction for NaN, Inf, and realistic bounds."""
         if value is None or (hasattr(value, "__len__") and len(value) == 0):
             self.memory.remember(
-                f"{label}_prediction_invalid", f"None/empty prediction", importance=0.3
+                f"{label}_prediction_invalid", "None/empty prediction", importance=0.3
             )
             return 0.0
         v = float(value) if hasattr(value, "__float__") else 0.0

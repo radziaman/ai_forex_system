@@ -93,8 +93,13 @@ class LoggingConfig:
 class SymbolsConfig:
     forex: List[str] = field(
         default_factory=lambda: [
-            "EURUSD", "GBPUSD", "USDJPY", "AUDUSD",
-            "USDCAD", "USDCHF", "NZDUSD",
+            "EURUSD",
+            "GBPUSD",
+            "USDJPY",
+            "AUDUSD",
+            "USDCAD",
+            "USDCHF",
+            "NZDUSD",
         ]
     )
     metals: List[str] = field(default_factory=lambda: ["XAUUSD"])

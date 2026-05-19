@@ -707,7 +707,7 @@ class CtraderClient:
     @staticmethod
     def _price_divisor(symbol: str, raw: float) -> float:
         """Determine the correct divisor for cTrader depth price scaling.
-        
+
         Uses per-symbol thresholds since raw values from cTrader can vary
         in scale between connections and market data sessions.
         """

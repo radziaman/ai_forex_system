@@ -46,14 +46,20 @@ class AgentState(Enum):
 @dataclass
 class EmotionalState:
     """G15: Multi-dimensional emotional model."""
-    fatigue: float = 0.0       # 0=fresh, 1=exhausted (increases with cycles)
-    stress: float = 0.0         # 0=calm, 1=panicked (increases with errors)
-    engagement: float = 0.5    # 0=bored, 1=hyperfocused (increases with activity)
-    confidence: float = 1.0    # 0=uncertain, 1=certain (decreases with errors)
-    curiosity: float = 0.5     # 0=complacent, 1=exploratory (decreases over time)
 
-    def update(self, cycle_success: bool, consecutive_errors: int,
-               cycles_since_meaningful: int, active: bool):
+    fatigue: float = 0.0  # 0=fresh, 1=exhausted (increases with cycles)
+    stress: float = 0.0  # 0=calm, 1=panicked (increases with errors)
+    engagement: float = 0.5  # 0=bored, 1=hyperfocused (increases with activity)
+    confidence: float = 1.0  # 0=uncertain, 1=certain (decreases with errors)
+    curiosity: float = 0.5  # 0=complacent, 1=exploratory (decreases over time)
+
+    def update(
+        self,
+        cycle_success: bool,
+        consecutive_errors: int,
+        cycles_since_meaningful: int,
+        active: bool,
+    ):
         # Fatigue: increases with cycles, resets on meaningful action
         self.fatigue = min(1.0, self.fatigue + 0.001)
         if active:
@@ -83,15 +89,23 @@ class EmotionalState:
     @property
     def overall(self) -> float:
         """Composite emotional health."""
-        return (self.engagement * 0.3 + self.confidence * 0.4
-                + (1.0 - self.fatigue) * 0.1 + (1.0 - self.stress) * 0.1
-                + self.curiosity * 0.1)
+        return (
+            self.engagement * 0.3
+            + self.confidence * 0.4
+            + (1.0 - self.fatigue) * 0.1
+            + (1.0 - self.stress) * 0.1
+            + self.curiosity * 0.1
+        )
 
     @property
     def dominant(self) -> str:
-        names = {self.fatigue: "fatigued", self.stress: "stressed",
-                 self.engagement: "engaged", self.confidence: "confident",
-                 self.curiosity: "curious"}
+        names = {
+            self.fatigue: "fatigued",
+            self.stress: "stressed",
+            self.engagement: "engaged",
+            self.confidence: "confident",
+            self.curiosity: "curious",
+        }
         return names[max(names, key=names.get)]
 
     def summary(self) -> Dict[str, float]:
@@ -109,6 +123,7 @@ class EmotionalState:
 @dataclass
 class AgentIdentity:
     """Who the agent is — immutable."""
+
     name: str
     role: str
     purpose: str
@@ -118,7 +133,7 @@ class AgentIdentity:
     domain: str = ""
 
     def describe(self) -> str:
-        return (f"[{self.name}] {self.role} — {self.purpose}")
+        return f"[{self.name}] {self.role} — {self.purpose}"
 
 
 @dataclass
@@ -216,16 +231,18 @@ class AgentConsciousness:
         metrics.total_ms = (time.time() - self.cycle_start) * 1000
         self.cycle_history.append(metrics)
         if len(self.cycle_history) > self.max_cycle_history:
-            self.cycle_history = self.cycle_history[-self.max_cycle_history:]
+            self.cycle_history = self.cycle_history[-self.max_cycle_history :]
 
-        self.current_state = AgentState.IDLE if not self.is_halted else AgentState.HALTED
+        self.current_state = (
+            AgentState.IDLE if not self.is_halted else AgentState.HALTED
+        )
         self.last_active_at = time.time()
         self.uptime_seconds = self.last_active_at - self.started_at
 
         # G11: Track cycle times
         self.cycle_times_ms.append(metrics.total_ms)
         if len(self.cycle_times_ms) > self.max_cycle_times:
-            self.cycle_times_ms = self.cycle_times_ms[-self.max_cycle_times:]
+            self.cycle_times_ms = self.cycle_times_ms[-self.max_cycle_times :]
 
         # G25: Check for overrun
         if metrics.total_ms > self.cycle_budget_ms:
@@ -257,7 +274,7 @@ class AgentConsciousness:
     def record_error(self, error: str):
         self.error_history.append((time.time(), error))
         if len(self.error_history) > self.max_error_history:
-            self.error_history = self.error_history[-self.max_error_history:]
+            self.error_history = self.error_history[-self.max_error_history :]
         self.last_error_time = time.time()
 
     def halt(self, reason: str):

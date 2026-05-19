@@ -101,9 +101,14 @@ class AgentMemory:
         emotion: str = "neutral",
     ) -> EpisodicMemoryEntry:
         entry = EpisodicMemoryEntry(
-            timestamp=time.time(), cycle_id=0, agent_name=self.agent_name,
-            event_type=event_type, description=description, data=data or {},
-            importance=importance, emotion=emotion,
+            timestamp=time.time(),
+            cycle_id=0,
+            agent_name=self.agent_name,
+            event_type=event_type,
+            description=description,
+            data=data or {},
+            importance=importance,
+            emotion=emotion,
         )
         self._episodic.append(entry)
         self._episodic_count += 1
@@ -139,11 +144,20 @@ class AgentMemory:
     # Semantic Memory
     # ------------------------------------------------------------------
 
-    def know(self, key: str, value: Any, confidence: float = 1.0, source: str = "",
-             ttl: float = 86400):
+    def know(
+        self,
+        key: str,
+        value: Any,
+        confidence: float = 1.0,
+        source: str = "",
+        ttl: float = 86400,
+    ):
         self._semantic[key] = SemanticMemoryEntry(
-            key=key, value=value, confidence=confidence,
-            source=source, ttl_seconds=ttl,
+            key=key,
+            value=value,
+            confidence=confidence,
+            source=source,
+            ttl_seconds=ttl,
         )
 
     def recall_knowledge(self, key: str, default: Any = None) -> Any:
@@ -162,19 +176,35 @@ class AgentMemory:
 
         # Search episodic
         for entry in self._episodic:
-            if query_lower in entry.event_type.lower() or query_lower in entry.description.lower():
-                results.append({"type": "episodic", "data": entry.to_dict(),
-                                "score": entry.importance})
+            if (
+                query_lower in entry.event_type.lower()
+                or query_lower in entry.description.lower()
+            ):
+                results.append(
+                    {
+                        "type": "episodic",
+                        "data": entry.to_dict(),
+                        "score": entry.importance,
+                    }
+                )
                 if len(results) >= top_k:
                     break
 
         # Search semantic
         for key, entry in self._semantic.items():
             if query_lower in key.lower():
-                results.append({"type": "semantic", "data": {
-                    "key": key, "value": str(entry.value)[:200],
-                    "confidence": entry.confidence, "source": entry.source,
-                }, "score": entry.confidence})
+                results.append(
+                    {
+                        "type": "semantic",
+                        "data": {
+                            "key": key,
+                            "value": str(entry.value)[:200],
+                            "confidence": entry.confidence,
+                            "source": entry.source,
+                        },
+                        "score": entry.confidence,
+                    }
+                )
                 if len(results) >= top_k:
                     break
 
@@ -218,7 +248,8 @@ class AgentMemory:
             existing.confidence = min(1.0, existing.confidence + 0.1)
         else:
             self._semantic[key] = SemanticMemoryEntry(
-                key=key, value=entry.to_dict(),
+                key=key,
+                value=entry.to_dict(),
                 confidence=entry.importance,
                 source="episodic_consolidation",
             )
@@ -229,11 +260,15 @@ class AgentMemory:
         if len(recent) < 10:
             return
         from collections import Counter
+
         type_counts = Counter(e.event_type for e in recent)
         for event_type, count in type_counts.most_common(5):
             if count >= 5:
-                avg_importance = float(np.mean([e.importance for e in recent
-                                                if e.event_type == event_type]))
+                avg_importance = float(
+                    np.mean(
+                        [e.importance for e in recent if e.event_type == event_type]
+                    )
+                )
                 self.know(
                     key=f"pattern:{event_type}",
                     value={"count": count, "avg_importance": round(avg_importance, 3)},
@@ -247,7 +282,8 @@ class AgentMemory:
         return {
             k: {"value": v.value, "confidence": v.confidence}
             for k, v in self._semantic.items()
-            if v.confidence > 0.7 and not k.startswith("memory:")  # share only learned facts
+            if v.confidence > 0.7
+            and not k.startswith("memory:")  # share only learned facts
         }
 
     # ------------------------------------------------------------------
@@ -261,9 +297,15 @@ class AgentMemory:
             self.persist_path.parent.mkdir(parents=True, exist_ok=True)
             state = {
                 "episodic": [e.to_dict() for e in self._episodic],
-                "semantic": {k: {"value": v.value, "confidence": v.confidence,
-                                  "source": v.source, "updated_at": v.updated_at}
-                             for k, v in self._semantic.items()},
+                "semantic": {
+                    k: {
+                        "value": v.value,
+                        "confidence": v.confidence,
+                        "source": v.source,
+                        "updated_at": v.updated_at,
+                    }
+                    for k, v in self._semantic.items()
+                },
                 "external": {k: dict(v) for k, v in self._external_knowledge.items()},
             }
             with open(self.persist_path.with_suffix(".mem.json"), "w") as f:
@@ -289,7 +331,8 @@ class AgentMemory:
                 )
             for key, data in state.get("semantic", {}).items():
                 self._semantic[key] = SemanticMemoryEntry(
-                    key=key, value=data["value"],
+                    key=key,
+                    value=data["value"],
                     confidence=data["confidence"],
                     source=data.get("source", ""),
                     updated_at=data.get("updated_at", time.time()),

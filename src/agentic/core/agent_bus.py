@@ -87,11 +87,13 @@ class AgentBus:
         if not valid:
             self._stats.validation_errors += 1
             logger.warning(f"AgentBus: schema validation failed: {error}")
-            self._dead_letter_queue.append({
-                "reason": f"schema_error: {error}",
-                "message": str(message),
-                "timestamp": time.time(),
-            })
+            self._dead_letter_queue.append(
+                {
+                    "reason": f"schema_error: {error}",
+                    "message": str(message),
+                    "timestamp": time.time(),
+                }
+            )
             return
 
         # G6: Resolve capability routing
@@ -100,10 +102,14 @@ class AgentBus:
             if agents:
                 message.target_agent = agents[0].name
                 self._stats.routing_count += 1
-                logger.debug(f"AgentBus: routed {message.msg_type.name} via capability "
-                             f"'{message.target_capability}' → {message.target_agent}")
+                logger.debug(
+                    f"AgentBus: routed {message.msg_type.name} via capability "
+                    f"'{message.target_capability}' → {message.target_agent}"
+                )
             else:
-                logger.warning(f"AgentBus: no agent with capability '{message.target_capability}'")
+                logger.warning(
+                    f"AgentBus: no agent with capability '{message.target_capability}'"
+                )
 
         # G4: Queue by priority
         queue = self._queues.get(message.priority, self._queues[MessagePriority.NORMAL])
@@ -122,11 +128,13 @@ class AgentBus:
             await asyncio.wait_for(event.wait(), timeout=timeout)
             return True
         except asyncio.TimeoutError:
-            self._dead_letter_queue.append({
-                "reason": "ack_timeout",
-                "message": str(message),
-                "timestamp": time.time(),
-            })
+            self._dead_letter_queue.append(
+                {
+                    "reason": "ack_timeout",
+                    "message": str(message),
+                    "timestamp": time.time(),
+                }
+            )
             return False
         finally:
             self._pending_acks.pop(message.msg_id, None)
@@ -150,15 +158,19 @@ class AgentBus:
                 await task
             except asyncio.CancelledError:
                 pass
-        logger.info(f"AgentBus stopped ({self._stats.total_messages} messages processed, "
-                    f"{self._stats.ack_count} acks, {self._stats.routing_count} route)")
+        logger.info(
+            f"AgentBus stopped ({self._stats.total_messages} messages processed, "
+            f"{self._stats.ack_count} acks, {self._stats.routing_count} route)"
+        )
 
     async def _process_loop(self, worker_id: int):
         while self._running:
             try:
                 # G4: Process higher priority queues first
                 message = None
-                for priority in sorted(MessagePriority, key=lambda p: p.value, reverse=True):
+                for priority in sorted(
+                    MessagePriority, key=lambda p: p.value, reverse=True
+                ):
                     try:
                         message = await asyncio.wait_for(
                             self._queues[priority].get(), timeout=0.05
@@ -180,10 +192,14 @@ class AgentBus:
 
     async def _dispatch(self, message: AgentMessage, worker_id: int):
         if message.is_expired:
-            self._dead_letter_queue.append({
-                "reason": "expired", "message": str(message),
-                "timestamp": time.time(), "worker": worker_id,
-            })
+            self._dead_letter_queue.append(
+                {
+                    "reason": "expired",
+                    "message": str(message),
+                    "timestamp": time.time(),
+                    "worker": worker_id,
+                }
+            )
             self._stats.messages_dropped += 1
             return
 
@@ -216,7 +232,11 @@ class AgentBus:
 
         # G5: Handle incoming ACK
         if message.msg_type == MessageType.MESSAGE_ACK:
-            ack_for = message.payload.get("ack_for", "") if isinstance(message.payload, dict) else ""
+            ack_for = (
+                message.payload.get("ack_for", "")
+                if isinstance(message.payload, dict)
+                else ""
+            )
             if ack_for in self._pending_acks:
                 self._pending_acks[ack_for].set()
 
@@ -225,27 +245,32 @@ class AgentBus:
 
         latency = (time.time() - start) * 1000
         self._latency_samples.append(latency)
-        self._stats.avg_latency_ms = (
-            sum(self._latency_samples) / len(self._latency_samples)
+        self._stats.avg_latency_ms = sum(self._latency_samples) / len(
+            self._latency_samples
         )
         for p, q in self._queues.items():
             self._stats.queue_sizes[p.name] = q.qsize()
 
-    async def _safe_dispatch_async(self, cb: Callable, message: AgentMessage, worker_id: int):
+    async def _safe_dispatch_async(
+        self, cb: Callable, message: AgentMessage, worker_id: int
+    ):
         try:
             await cb(message)
         except Exception as e:
             logger.warning(f"AgentBus async dispatch error: {e}")
-            self._dead_letter_queue.append({
-                "reason": str(e), "message": str(message),
-                "timestamp": time.time(), "worker": worker_id,
-            })
+            self._dead_letter_queue.append(
+                {
+                    "reason": str(e),
+                    "message": str(message),
+                    "timestamp": time.time(),
+                    "worker": worker_id,
+                }
+            )
 
     def get_stats(self) -> Dict:
-        self._stats.active_subscribers = (
-            sum(len(v) for v in self._subscribers.values())
-            + sum(len(v) for v in self._async_subscribers.values())
-        )
+        self._stats.active_subscribers = sum(
+            len(v) for v in self._subscribers.values()
+        ) + sum(len(v) for v in self._async_subscribers.values())
         return {
             "total_messages": self._stats.total_messages,
             "messages_by_type": dict(self._stats.messages_by_type),
@@ -266,8 +291,11 @@ class AgentBus:
         self, msg_type: Optional[MessageType] = None, n: int = 20
     ) -> List[AgentMessage]:
         if msg_type:
-            return [m for m in list(self._message_history)[-n*5:]
-                    if m.msg_type == msg_type][-n:]
+            return [
+                m
+                for m in list(self._message_history)[-n * 5 :]
+                if m.msg_type == msg_type
+            ][-n:]
         return list(self._message_history)[-n:]
 
     def get_dead_letters(self) -> List[Dict]:

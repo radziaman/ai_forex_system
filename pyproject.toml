@@ -47,6 +47,14 @@ ignore = ["E203", "W503"]
 python_version = "3.9"
 warn_return_any = true
 warn_unused_configs = true
+show_error_codes = true
+exclude = "(.venv|venv|build|\\.eggs|\\.git)"
+disable_error_code = ["import-untyped", "import-not-found", "annotation-unchecked"]
+
+# Suppress unused-coroutine in agent files (they use self.run() pattern)
+[[tool.mypy.overrides]]
+module = ["agentic.agents.*"]
+disable_error_code = ["unused-coroutine"]
 
 [tool.pytest.ini_options]
 filterwarnings = [

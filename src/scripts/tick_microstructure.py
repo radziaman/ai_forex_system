@@ -9,7 +9,11 @@ Usage:
     python -m src.scripts.tick_microstructure --symbol EURUSD --analyze-all
 """
 
-import os, sys, struct, lzma, glob
+import os
+import sys
+import struct
+import lzma
+import glob
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -21,7 +25,7 @@ _src = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _src not in sys.path:
     sys.path.insert(0, _src)
 
-from loguru import logger
+from loguru import logger  # noqa: E402
 
 CACHE_DIR = Path("data/dukascopy_cache")
 TICK_RECORD_SIZE = 20
@@ -40,7 +44,7 @@ def load_bi5_file(path: str) -> List[Tuple[float, float, float, float, float]]:
       - 4 bytes: ask volume (big-endian float)
       - 4 bytes: bid volume (big-endian float)
     """
-    with open(path, 'rb') as f:
+    with open(path, "rb") as f:
         data = f.read()
     try:
         decompressed = lzma.decompress(data)
@@ -49,7 +53,7 @@ def load_bi5_file(path: str) -> List[Tuple[float, float, float, float, float]]:
 
     ticks = []
     for i in range(0, len(decompressed), TICK_RECORD_SIZE):
-        chunk = decompressed[i:i + TICK_RECORD_SIZE]
+        chunk = decompressed[i : i + TICK_RECORD_SIZE]
         if len(chunk) < TICK_RECORD_SIZE:
             break
         ms_offset = struct.unpack(">I", chunk[0:4])[0]
@@ -58,13 +62,15 @@ def load_bi5_file(path: str) -> List[Tuple[float, float, float, float, float]]:
         ask_vol = struct.unpack(">f", chunk[12:16])[0]
         bid_vol = struct.unpack(">f", chunk[16:20])[0]
 
-        ticks.append((
-            ms_offset / 1000.0,           # seconds within hour
-            bid_raw / PRICE_SCALE,         # bid price
-            ask_raw / PRICE_SCALE,         # ask price
-            bid_vol,                       # bid volume
-            ask_vol,                       # ask volume
-        ))
+        ticks.append(
+            (
+                ms_offset / 1000.0,  # seconds within hour
+                bid_raw / PRICE_SCALE,  # bid price
+                ask_raw / PRICE_SCALE,  # ask price
+                bid_vol,  # bid volume
+                ask_vol,  # ask volume
+            )
+        )
     return ticks
 
 
@@ -100,7 +106,9 @@ def load_tick_day(symbol: str, date: str) -> pd.DataFrame:
     if not all_ticks:
         return pd.DataFrame()
 
-    df = pd.DataFrame(all_ticks, columns=["timestamp", "bid", "ask", "bid_vol", "ask_vol"])
+    df = pd.DataFrame(
+        all_ticks, columns=["timestamp", "bid", "ask", "bid_vol", "ask_vol"]
+    )
     df = df.set_index("timestamp").sort_index()
     df["mid"] = (df["bid"] + df["ask"]) / 2.0
     df["spread"] = df["ask"] - df["bid"]
@@ -114,9 +122,9 @@ def load_tick_day(symbol: str, date: str) -> pd.DataFrame:
     return df
 
 
-def compute_microstructure_features(df: pd.DataFrame, 
-                                      tick_window: int = 100,
-                                      second_window: int = 60) -> pd.DataFrame:
+def compute_microstructure_features(
+    df: pd.DataFrame, tick_window: int = 100, second_window: int = 60
+) -> pd.DataFrame:
     """Compute market microstructure features from tick data.
 
     Features computed:
@@ -136,7 +144,9 @@ def compute_microstructure_features(df: pd.DataFrame,
     ft["ofi"] = (ft["ask_vol"] - ft["bid_vol"]) / (ft["total_vol"] + 1e-10)
 
     # Microprice: volume-weighted mid (more weight to the side with more volume)
-    ft["microprice"] = (ft["bid"] * ft["ask_vol"] + ft["ask"] * ft["bid_vol"]) / (ft["total_vol"] + 1e-10)
+    ft["microprice"] = (ft["bid"] * ft["ask_vol"] + ft["ask"] * ft["bid_vol"]) / (
+        ft["total_vol"] + 1e-10
+    )
 
     # Order book pressure: microprice vs mid (positive = selling pressure, negative = buying)
     ft["order_pressure"] = ft["microprice"] - ft["mid"]
@@ -155,25 +165,43 @@ def compute_microstructure_features(df: pd.DataFrame,
     ft["cum_delta"] = ft["ofi"].rolling(tick_window).sum()
 
     # Volume-weighted OFI (larger trades matter more)
-    ft["vol_weighted_ofi"] = (ft["ask_vol"] - ft["bid_vol"]) * ft["mid"] / (ft["total_vol"] + 1e-10)
+    ft["vol_weighted_ofi"] = (
+        (ft["ask_vol"] - ft["bid_vol"]) * ft["mid"] / (ft["total_vol"] + 1e-10)
+    )
 
     # Resample to 1-second bars for second-level features
-    second_bars = ft.resample("1S").agg({
-        "mid": "last", "bid": "last", "ask": "last",
-        "spread_bps": "mean", "total_vol": "sum",
-        "bid_vol": "sum", "ask_vol": "sum",
-        "ofi": "mean", "microprice": "last", "order_pressure": "mean",
-    }).dropna()
+    second_bars = (
+        ft.resample("1S")
+        .agg(
+            {
+                "mid": "last",
+                "bid": "last",
+                "ask": "last",
+                "spread_bps": "mean",
+                "total_vol": "sum",
+                "bid_vol": "sum",
+                "ask_vol": "sum",
+                "ofi": "mean",
+                "microprice": "last",
+                "order_pressure": "mean",
+            }
+        )
+        .dropna()
+    )
 
     # Second-level features
     second_bars["tick_count"] = ft.resample("1S").size()
     second_bars["mid_return"] = second_bars["mid"].pct_change()
-    second_bars["ofi_1s"] = (second_bars["ask_vol"] - second_bars["bid_vol"]) / (second_bars["total_vol"] + 1e-10)
+    second_bars["ofi_1s"] = (second_bars["ask_vol"] - second_bars["bid_vol"]) / (
+        second_bars["total_vol"] + 1e-10
+    )
     second_bars["spread_change"] = second_bars["spread_bps"].diff()
 
     # Microprice analysis on second bars
-    second_bars["microprice_1s"] = (second_bars["bid"] * second_bars["ask_vol"] + 
-                                     second_bars["ask"] * second_bars["bid_vol"]) / (second_bars["total_vol"] + 1e-10)
+    second_bars["microprice_1s"] = (
+        second_bars["bid"] * second_bars["ask_vol"]
+        + second_bars["ask"] * second_bars["bid_vol"]
+    ) / (second_bars["total_vol"] + 1e-10)
     second_bars["pressure_1s"] = second_bars["microprice_1s"] - second_bars["mid"]
     second_bars["next_mid_return"] = second_bars["mid"].shift(-1).pct_change()
 
@@ -187,7 +215,9 @@ def compute_microstructure_features(df: pd.DataFrame,
 
     second_bars = second_bars.dropna()
 
-    logger.info(f"Computed microstructure features: {len(second_bars):,} second-bars x {len(second_bars.columns)} features")
+    logger.info(
+        f"Computed microstructure features: {len(second_bars):,} second-bars x {len(second_bars.columns)} features"
+    )
 
     return second_bars
 
@@ -201,9 +231,23 @@ def test_predictive_power(features: pd.DataFrame) -> Dict:
     from scipy import stats
 
     # Features to test (exclude price and return columns)
-    exclude = {"mid", "bid", "ask", "mid_return", "microprice", "microprice_1s",
-               "next_mid_return", "mid_change", "mid_change_next", "timestamp"}
-    feature_cols = [c for c in features.columns if c not in exclude and features[c].dtype in (np.float64, np.float32, np.int64)]
+    exclude = {
+        "mid",
+        "bid",
+        "ask",
+        "mid_return",
+        "microprice",
+        "microprice_1s",
+        "next_mid_return",
+        "mid_change",
+        "mid_change_next",
+        "timestamp",
+    }
+    feature_cols = [
+        c
+        for c in features.columns
+        if c not in exclude and features[c].dtype in (np.float64, np.float32, np.int64)
+    ]
 
     results = []
     target = features["next_mid_return"].values
@@ -230,14 +274,16 @@ def test_predictive_power(features: pd.DataFrame) -> Dict:
         # Long when feature > 0, short when < 0
         trade_return = np.mean(np.abs(y_clean)) * (dir_acc - 0.5) * 2
 
-        results.append({
-            "feature": col,
-            "corr": r,
-            "p_value": p,
-            "dir_acc": dir_acc,
-            "trade_return": trade_return,
-            "n_samples": len(x_clean),
-        })
+        results.append(
+            {
+                "feature": col,
+                "corr": r,
+                "p_value": p,
+                "dir_acc": dir_acc,
+                "trade_return": trade_return,
+                "n_samples": len(x_clean),
+            }
+        )
 
     df_results = pd.DataFrame(results)
     df_results = df_results.sort_values("corr", key=abs, ascending=False)
@@ -263,8 +309,12 @@ def microprice_signal(
     """
     signals = np.zeros(len(features), dtype=int)
 
-    ofi = features.get("ofi_60s", features.get("ofi_1s", pd.Series([0] * len(features)))).values
-    pressure = features.get("pressure_15s", features.get("pressure_1s", pd.Series([0] * len(features)))).values
+    ofi = features.get(
+        "ofi_60s", features.get("ofi_1s", pd.Series([0] * len(features)))
+    ).values
+    pressure = features.get(
+        "pressure_15s", features.get("pressure_1s", pd.Series([0] * len(features)))
+    ).values
 
     for i in range(1, len(signals)):
         # Strong buying pressure
@@ -323,8 +373,12 @@ def backtest_microstructure(features: pd.DataFrame, signals: np.ndarray) -> Dict
 
     wins = tp[tp > 0]
     losses = tp[tp < 0]
-    sharpe = np.mean(tp) / np.std(tp) * np.sqrt(252 * 6.5 * 3600) if np.std(tp) > 1e-10 else 0
-    pf = np.sum(wins) / abs(np.sum(losses)) if np.sum(losses) != 0 else float('inf')
+    sharpe = (
+        np.mean(tp) / np.std(tp) * np.sqrt(252 * 6.5 * 3600)
+        if np.std(tp) > 1e-10
+        else 0
+    )
+    pf = np.sum(wins) / abs(np.sum(losses)) if np.sum(losses) != 0 else float("inf")
 
     return {
         "sharpe": sharpe,
@@ -377,20 +431,29 @@ def analyze_all(symbol: str):
         bt_result = backtest_microstructure(features, signals)
         all_trades.append(bt_result)
 
-        logger.info(f"  Top feature: {top_features.iloc[0]['feature']} "
-                    f"corr={top_features.iloc[0]['corr']:.4f} "
-                    f"dir_acc={top_features.iloc[0]['dir_acc']:.1%}")
-        logger.info(f"  Backtest: Sharpe={bt_result['sharpe']:.3f} "
-                    f"PF={bt_result['pf']:.2f} "
-                    f"Trades={bt_result['trades']} "
-                    f"PnL={bt_result['pnl']:+.4f}")
+        logger.info(
+            f"  Top feature: {top_features.iloc[0]['feature']} "
+            f"corr={top_features.iloc[0]['corr']:.4f} "
+            f"dir_acc={top_features.iloc[0]['dir_acc']:.1%}"
+        )
+        logger.info(
+            f"  Backtest: Sharpe={bt_result['sharpe']:.3f} "
+            f"PF={bt_result['pf']:.2f} "
+            f"Trades={bt_result['trades']} "
+            f"PnL={bt_result['pnl']:+.4f}"
+        )
 
     # Combined results
     if all_predictions:
         combined_pred = pd.concat(all_predictions)
-        top_overall = combined_pred.groupby("feature")["corr"].mean().sort_values(key=abs, ascending=False).head(10)
+        top_overall = (
+            combined_pred.groupby("feature")["corr"]
+            .mean()
+            .sort_values(key=abs, ascending=False)
+            .head(10)
+        )
         logger.info(f"\n{'='*60}")
-        logger.info(f"TOP PREDICTIVE FEATURES across all dates:")
+        logger.info("TOP PREDICTIVE FEATURES across all dates:")
         for feat, corr in top_overall.items():
             logger.info(f"  {feat}: avg corr={corr:.4f}")
 
@@ -407,11 +470,11 @@ def analyze_all(symbol: str):
         logger.info(f"  Total PnL:   {total_pnl:+.4f}")
 
         if avg_sharpe > 0.5:
-            logger.info(f"  ✅ Microstructure signal is VIABLE!")
+            logger.info("  ✅ Microstructure signal is VIABLE!")
         elif avg_sharpe > 0:
-            logger.info(f"  ⚠️  Marginal edge detected")
+            logger.info("  ⚠️  Marginal edge detected")
         else:
-            logger.info(f"  ❌ No microstructure edge found")
+            logger.info("  ❌ No microstructure edge found")
 
     return all_predictions, all_trades
 
@@ -422,7 +485,9 @@ def main():
     parser = argparse.ArgumentParser(description="Tick-Level Microstructure Analysis")
     parser.add_argument("--symbol", default="EURUSD", help="Symbol to analyze")
     parser.add_argument("--date", default=None, help="Specific date (YYYY-MM-DD)")
-    parser.add_argument("--analyze-all", action="store_true", help="Analyze all available dates")
+    parser.add_argument(
+        "--analyze-all", action="store_true", help="Analyze all available dates"
+    )
     args = parser.parse_args()
 
     if args.analyze_all or not args.date:
@@ -431,32 +496,34 @@ def main():
         logger.info(f"Loading {args.symbol} tick data for {args.date}")
         df = load_tick_day(args.symbol, args.date)
         if len(df) == 0:
-            logger.error(f"No tick data found")
+            logger.error("No tick data found")
             return
 
-        logger.info(f"\nComputing microstructure features...")
+        logger.info("\nComputing microstructure features...")
         features = compute_microstructure_features(df)
 
-        logger.info(f"\nTesting predictive power...")
+        logger.info("\nTesting predictive power...")
         pred_results = test_predictive_power(features)
         print("\n=== TOP PREDICTIVE FEATURES (next-second return) ===")
         print(f"{'Feature':<30s} {'Corr':>8s} {'p-val':>8s} {'Dir%':>8s}")
         print("-" * 54)
         for _, row in pred_results.head(15).iterrows():
-            print(f"{row['feature']:<30s} {row['corr']:>+8.4f} {row['p_value']:>8.4f} {row['dir_acc']:>7.1%}")
+            print(
+                f"{row['feature']:<30s} {row['corr']:>+8.4f} {row['p_value']:>8.4f} {row['dir_acc']:>7.1%}"
+            )
 
-        print(f"\n=== MICROSTRUCTURE BACKTEST ===")
+        print("\n=== MICROSTRUCTURE BACKTEST ===")
         signals = microprice_signal(features)
         result = backtest_microstructure(features, signals)
         for k, v in result.items():
             print(f"  {k}: {v}")
 
         if result["sharpe"] > 1.0:
-            print(f"\n  ✅ Strong microstructure edge!")
+            print("\n  ✅ Strong microstructure edge!")
         elif result["sharpe"] > 0.5:
-            print(f"\n  ⚠️  Moderate microstructure edge")
+            print("\n  ⚠️  Moderate microstructure edge")
         else:
-            print(f"\n  ❌ No significant edge")
+            print("\n  ❌ No significant edge")
 
 
 if __name__ == "__main__":

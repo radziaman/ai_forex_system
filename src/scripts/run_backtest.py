@@ -25,12 +25,15 @@ _src = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _src not in sys.path:
     sys.path.insert(0, _src)
 
-from loguru import logger
-from rts_ai_fx.features_unified import compute_features
-from rts_ai_fx.regime_detector import HMMRegimeDetector
-from backtest.vectorized_backtester import VectorizedBacktester, BacktestResult
-from validation.walk_forward import PurgedWalkForward, WFResult
-from validation.monte_carlo import MonteCarloSigTest, SigTestResult
+from loguru import logger  # noqa: E402
+from rts_ai_fx.features_unified import compute_features  # noqa: E402
+from rts_ai_fx.regime_detector import HMMRegimeDetector  # noqa: E402
+from backtest.vectorized_backtester import (
+    VectorizedBacktester,
+    BacktestResult,
+)  # noqa: E402
+from validation.walk_forward import PurgedWalkForward, WFResult  # noqa: E402
+from validation.monte_carlo import MonteCarloSigTest, SigTestResult  # noqa: E402
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 DEFAULT_DATA_PATH = os.path.join(
@@ -68,10 +71,10 @@ THRESHOLDS = {
     "min_total_trades": 20,
 }
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # Section A: Data Loading
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 def load_and_prepare_data(path: str) -> Tuple[np.ndarray, pd.DataFrame, pd.DataFrame]:
     """Load OHLCV CSV, parse timestamps, sort chronologically, compute features.
@@ -88,7 +91,9 @@ def load_and_prepare_data(path: str) -> Tuple[np.ndarray, pd.DataFrame, pd.DataF
     prices = df["close"].values.astype(float)
 
     logger.info(f"Loaded {len(prices)} bars from {path}")
-    logger.info(f"  Date range: {df['timestamp'].iloc[0]} to {df['timestamp'].iloc[-1]}")
+    logger.info(
+        f"  Date range: {df['timestamp'].iloc[0]} to {df['timestamp'].iloc[-1]}"
+    )
 
     df_features = compute_features(df)
     logger.info(f"  Features computed: {df_features.shape[1]} columns")
@@ -99,6 +104,7 @@ def load_and_prepare_data(path: str) -> Tuple[np.ndarray, pd.DataFrame, pd.DataF
 # ═══════════════════════════════════════════════════════════════════════════════
 # Section B: Regime Detection
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 def compute_regimes(
     df: pd.DataFrame,
@@ -152,7 +158,7 @@ def compute_regimes(
 
     except Exception as e:
         logger.warning(f"HMM regime detection failed ({e}), using fallback")
-        n = len(df)
+
         prices = df["close"].values.astype(float)
         returns = np.abs(np.diff(prices) / (prices[:-1] + 1e-10))
         vol = pd.Series(prices).rolling(20).std().values[1:]
@@ -165,11 +171,15 @@ def compute_regimes(
 
         fallback_labels = np.zeros(len(returns), dtype=int)
         fallback_labels[vol_percentile > 0.95] = 3  # trending (highest vol)
-        fallback_labels[(vol_percentile > 0.70) & (vol_percentile <= 0.95)] = 2  # volatile
-        fallback_labels[(vol_percentile > 0.30) & (vol_percentile <= 0.70)] = 1  # ranging
+        fallback_labels[(vol_percentile > 0.70) & (vol_percentile <= 0.95)] = (
+            2  # volatile
+        )
+        fallback_labels[(vol_percentile > 0.30) & (vol_percentile <= 0.70)] = (
+            1  # ranging
+        )
 
         regime_labels = np.concatenate([[0], fallback_labels])
-        regime_names = np.array([REGIME_NAMES[int(l)] for l in regime_labels])
+        regime_names = np.array([REGIME_NAMES[int(label)] for label in regime_labels])
 
         dummy_detector = HMMRegimeDetector(n_regimes=n_regimes)
         dummy_detector.fit(df)
@@ -179,6 +189,7 @@ def compute_regimes(
 # ═══════════════════════════════════════════════════════════════════════════════
 # Section C: Signal Function Factory
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 def make_signal_function(
     regime_names: np.ndarray,
@@ -254,6 +265,7 @@ def make_signal_function(
 # Section D: Main Backtest
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 def run_main_backtest(
     prices: np.ndarray,
     signal_fn: Callable,
@@ -276,7 +288,8 @@ def run_main_backtest(
         slippage_model="moderate",
     )
     base_result = bt.run(
-        prices, signal_fn,
+        prices,
+        signal_fn,
         features=features_np,
         atr=atr_np,
         regimes=regime_names,
@@ -301,7 +314,8 @@ def run_main_backtest(
                 slippage_model=slip,
             )
             r = bt_sens.run(
-                prices, signal_fn,
+                prices,
+                signal_fn,
                 features=features_np,
                 atr=atr_np,
                 regimes=regime_names,
@@ -339,6 +353,7 @@ def run_main_backtest(
 # Section E: Walk-Forward Strategy Factory
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 def predict_regimes_hmm(
     prices: np.ndarray,
     n_regimes: int = 4,
@@ -352,18 +367,9 @@ def predict_regimes_hmm(
         # Fallback: return all as "ranging"
         return np.full(len(prices), "ranging", dtype=object), detector
 
-    returns = np.diff(prices) / (prices[:-1] + 1e-10)
-    returns = np.clip(returns, -0.1, 0.1)
-    vol = pd.Series(prices).rolling(14).std().values
-    vol_ratio = np.ones_like(returns)
-    valid_vol = vol[1:] > 0
-    vol_ratio[valid_vol] = vol[1:][valid_vol] / (np.mean(vol[-min(60, len(vol)):]) + 1e-10)
-    vol_ratio = np.clip(vol_ratio, 0.1, 10.0)
-
-    hmm_feat = np.column_stack([returns, vol_ratio, np.abs(returns)])
-    hmm_feat = np.nan_to_num(hmm_feat, nan=0.0, posinf=5.0, neginf=-5.0)
-    hmm_feat = np.clip(hmm_feat, -5, 5)
-    hmm_feat = (hmm_feat - hmm_feat.mean(axis=0)) / (hmm_feat.std(axis=0) + 1e-8)
+    hmm_feat = detector._extract_features(df_temp)
+    if len(hmm_feat) < 5:
+        return np.full(len(prices), "ranging", dtype=object), detector
 
     hidden_states = detector.model.predict(hmm_feat)
     mean_ret = detector.model.means_[:, 0]
@@ -406,8 +412,9 @@ def make_walk_forward_strategy(
         if test_feat is not None and len(column_index) > 0:
             cols = list(column_index.keys())
             n_cols = min(test_feat.shape[1], len(cols))
-            test_feat_df = pd.DataFrame(test_feat[:len(test_prices), :n_cols],
-                                        columns=cols[:n_cols])
+            test_feat_df = pd.DataFrame(
+                test_feat[: len(test_prices), :n_cols], columns=cols[:n_cols]
+            )
         else:
             test_feat_df = pd.DataFrame({"close": test_prices})
 
@@ -417,7 +424,7 @@ def make_walk_forward_strategy(
         # 4. Extract ATR from test features
         atr_col = column_index.get("atr_14")
         if atr_col is not None and test_feat is not None:
-            test_atr = test_feat[:len(test_prices), atr_col].copy()
+            test_atr = test_feat[: len(test_prices), atr_col].copy()
             test_atr = np.nan_to_num(test_atr, nan=0.001)
         else:
             test_atr = np.full(len(test_prices), 0.001)
@@ -429,8 +436,9 @@ def make_walk_forward_strategy(
             slippage_model="moderate",
         )
         result = bt.run(
-            test_prices, sig_fn,
-            features=test_feat[:len(test_prices)] if test_feat is not None else None,
+            test_prices,
+            sig_fn,
+            features=test_feat[: len(test_prices)] if test_feat is not None else None,
             atr=test_atr,
             regimes=test_regimes,
             sl_atr=sl_atr,
@@ -445,6 +453,7 @@ def make_walk_forward_strategy(
 # ═══════════════════════════════════════════════════════════════════════════════
 # Section F: Monte Carlo Analysis
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 def run_monte_carlo_analysis(
     trades: List[Dict],
@@ -468,6 +477,7 @@ def run_monte_carlo_analysis(
 # ═══════════════════════════════════════════════════════════════════════════════
 # Section G: Report
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 def compute_trade_level_metrics(trade_pnls: np.ndarray) -> Dict:
     """Compute proper metrics directly from trade PnLs, not from equity curve.
@@ -529,7 +539,7 @@ def evaluate_verdict(
     fails = []
 
     # Trade-level Sharpe (bypasses equity curve unitization artifacts)
-    sharpe_val = trade_metrics['sharpe']
+    sharpe_val = trade_metrics["sharpe"]
     if sharpe_val >= THRESHOLDS["min_sharpe"]:
         passes.append(f"Trade Sharpe >= {THRESHOLDS['min_sharpe']}: {sharpe_val:.3f}")
     else:
@@ -541,9 +551,13 @@ def evaluate_verdict(
         if wf_sharpes:
             avg_wf_sharpe = float(np.mean(wf_sharpes))
             if avg_wf_sharpe >= THRESHOLDS["min_wf_avg_sharpe"]:
-                passes.append(f"WF Avg Sharpe >= {THRESHOLDS['min_wf_avg_sharpe']}: {avg_wf_sharpe:.3f}")
+                passes.append(
+                    f"WF Avg Sharpe >= {THRESHOLDS['min_wf_avg_sharpe']}: {avg_wf_sharpe:.3f}"
+                )
             else:
-                fails.append(f"WF Avg Sharpe < {THRESHOLDS['min_wf_avg_sharpe']}: {avg_wf_sharpe:.3f}")
+                fails.append(
+                    f"WF Avg Sharpe < {THRESHOLDS['min_wf_avg_sharpe']}: {avg_wf_sharpe:.3f}"
+                )
     else:
         fails.append("Walk-forward: No results")
 
@@ -562,11 +576,11 @@ def evaluate_verdict(
         cum_pnl = np.cumsum(base.trade_pnls)
         peak = np.maximum.accumulate(cum_pnl)
         dd = peak - cum_pnl
-        max_dd_pnl = float(np.max(dd)) if len(dd) > 0 else 0.0
+        _ = float(np.max(dd)) if len(dd) > 0 else 0.0
     else:
-        max_dd_pnl = 0.0
+        pass
 
-    net_pnl = trade_metrics['total_return']
+    net_pnl = trade_metrics["total_return"]
     is_profitable = net_pnl > 0
     if is_profitable:
         passes.append(f"Net PnL positive: {net_pnl:+.2f}")
@@ -574,14 +588,16 @@ def evaluate_verdict(
         fails.append(f"Net PnL negative: {net_pnl:.2f} (strategy is losing money)")
 
     # Profit factor (from trade-level metrics)
-    pf_val = trade_metrics['profit_factor']
+    pf_val = trade_metrics["profit_factor"]
     if pf_val >= THRESHOLDS["min_profit_factor"]:
-        passes.append(f"Profit Factor >= {THRESHOLDS['min_profit_factor']}: {pf_val:.2f}")
+        passes.append(
+            f"Profit Factor >= {THRESHOLDS['min_profit_factor']}: {pf_val:.2f}"
+        )
     else:
         fails.append(f"Profit Factor < {THRESHOLDS['min_profit_factor']}: {pf_val:.2f}")
 
     # Total trades
-    n_trades = trade_metrics['total_trades']
+    n_trades = trade_metrics["total_trades"]
     if n_trades >= THRESHOLDS["min_total_trades"]:
         passes.append(f"Trades >= {THRESHOLDS['min_total_trades']}: {n_trades}")
     else:
@@ -611,7 +627,9 @@ def print_report(
     # ── Section 1: Backtest Metrics ──
     print("=" * 70)
     print("  [1] BACKTEST METRICS")
-    print(f"      ({SPREAD_PIPS} pip spread, ${COMMISSION_PER_LOT}/lot, moderate slippage)")
+    print(
+        f"      ({SPREAD_PIPS} pip spread, ${COMMISSION_PER_LOT}/lot, moderate slippage)"
+    )
     print("=" * 70)
     print(f"  Total Trades:            {trade_metrics['total_trades']}")
     print(f"  Win Rate:                {trade_metrics['win_rate']:.1%}")
@@ -629,13 +647,17 @@ def print_report(
     print("=" * 70)
     print("  [2] SENSITIVITY ANALYSIS")
     print("=" * 70)
-    print(f"  {'Scenario':<24s} {'Sharpe':>8s} {'Return':>8s} {'DD':>8s} {'Trades':>8s}")
+    print(
+        f"  {'Scenario':<24s} {'Sharpe':>8s} {'Return':>8s} {'DD':>8s} {'Trades':>8s}"
+    )
     print(f"  {'-'*24} {'-'*8} {'-'*8} {'-'*8} {'-'*8}")
     sens = backtest_result["sensitivity"]
     for key in sorted(sens.keys()):
         r = sens[key]
-        print(f"  {key:<24s} {r.sharpe:>8.3f} {r.total_return_pct:>+7.2f}% "
-              f"{r.max_drawdown_pct:>7.2f}% {r.total_trades:>8d}")
+        print(
+            f"  {key:<24s} {r.sharpe:>8.3f} {r.total_return_pct:>+7.2f}% "
+            f"{r.max_drawdown_pct:>7.2f}% {r.total_trades:>8d}"
+        )
     print()
 
     # ── Section 3: Regime Breakdown ──
@@ -647,14 +669,18 @@ def print_report(
     rb = backtest_result["regime_breakdown"]
     for reg in sorted(rb.keys()):
         info = rb[reg]
-        print(f"  {reg:<16s} {info['trades']:>8d} {info['win_rate']:>9.1%} "
-              f"{info['total_return']:>+11.2f}")
+        print(
+            f"  {reg:<16s} {info['trades']:>8d} {info['win_rate']:>9.1%} "
+            f"{info['total_return']:>+11.2f}"
+        )
     print()
 
     # ── Section 4: Walk-Forward ──
     print("=" * 70)
-    print(f"  [4] WALK-FORWARD VALIDATION")
-    print(f"      ({WF_N_FOLDS} folds, {WF_TEST_WINDOW}-bar test window, {WF_EMBARGO}-bar embargo)")
+    print("  [4] WALK-FORWARD VALIDATION")
+    print(
+        f"      ({WF_N_FOLDS} folds, {WF_TEST_WINDOW}-bar test window, {WF_EMBARGO}-bar embargo)"
+    )
     print("=" * 70)
     if wf_results:
         print(f"  {'Metric':<20s} {'Avg':>8s} {'Std':>8s} {'Min':>8s} {'Max':>8s}")
@@ -667,37 +693,55 @@ def print_report(
         pfs = [r.profit_factor for r in wf_results if r.n_trades > 0]
 
         if sharpes:
-            print(f"  {'Sharpe':<20s} {np.mean(sharpes):>8.3f} {np.std(sharpes):>8.3f} "
-                  f"{np.min(sharpes):>8.3f} {np.max(sharpes):>8.3f}")
+            print(
+                f"  {'Sharpe':<20s} {np.mean(sharpes):>8.3f} {np.std(sharpes):>8.3f} "
+                f"{np.min(sharpes):>8.3f} {np.max(sharpes):>8.3f}"
+            )
         if returns:
-            print(f"  {'Return %':<20s} {np.mean(returns):>+7.2f}% {np.std(returns):>7.2f}% "
-                  f"{np.min(returns):>+7.2f}% {np.max(returns):>+7.2f}%")
+            print(
+                f"  {'Return %':<20s} {np.mean(returns):>+7.2f}% {np.std(returns):>7.2f}% "
+                f"{np.min(returns):>+7.2f}% {np.max(returns):>+7.2f}%"
+            )
         if dds:
-            print(f"  {'Max DD %':<20s} {np.mean(dds):>7.2f}% {np.std(dds):>7.2f}% "
-                  f"{np.min(dds):>7.2f}% {np.max(dds):>7.2f}%")
+            print(
+                f"  {'Max DD %':<20s} {np.mean(dds):>7.2f}% {np.std(dds):>7.2f}% "
+                f"{np.min(dds):>7.2f}% {np.max(dds):>7.2f}%"
+            )
         if wrs:
-            print(f"  {'Win Rate':<20s} {np.mean(wrs):>7.1%} {np.std(wrs):>7.1%} "
-                  f"{np.min(wrs):>7.1%} {np.max(wrs):>7.1%}")
+            print(
+                f"  {'Win Rate':<20s} {np.mean(wrs):>7.1%} {np.std(wrs):>7.1%} "
+                f"{np.min(wrs):>7.1%} {np.max(wrs):>7.1%}"
+            )
         if pfs:
-            print(f"  {'Profit Factor':<20s} {np.mean(pfs):>8.3f} {np.std(pfs):>8.3f} "
-                  f"{np.min(pfs):>8.3f} {np.max(pfs):>8.3f}")
+            print(
+                f"  {'Profit Factor':<20s} {np.mean(pfs):>8.3f} {np.std(pfs):>8.3f} "
+                f"{np.min(pfs):>8.3f} {np.max(pfs):>8.3f}"
+            )
     else:
         print("  (no walk-forward results)")
     print()
 
     # ── Section 5: Monte Carlo ──
     print("=" * 70)
-    print(f"  [5] MONTE CARLO SIGNIFICANCE")
+    print("  [5] MONTE CARLO SIGNIFICANCE")
     print(f"      ({MC_N_PERMUTATIONS} permutations, alpha={MC_ALPHA})")
     print("=" * 70)
     mc_overall = mc_results.get("overall") if mc_results else None
     if mc_overall:
-        sig_sharpe = "SIGNIFICANT" if mc_overall.is_significant_sharpe else "NOT significant"
-        sig_ret = "SIGNIFICANT" if mc_overall.is_significant_return else "NOT significant"
-        print(f"  Actual Sharpe:           {mc_overall.actual_sharpe:.3f}  "
-              f"(p={mc_overall.p_value_sharpe:.4f}) [{sig_sharpe}]")
-        print(f"  Actual Return:           {mc_overall.actual_return_pct:+.2f}  "
-              f"(p={mc_overall.p_value_return:.4f}) [{sig_ret}]")
+        sig_sharpe = (
+            "SIGNIFICANT" if mc_overall.is_significant_sharpe else "NOT significant"
+        )
+        sig_ret = (
+            "SIGNIFICANT" if mc_overall.is_significant_return else "NOT significant"
+        )
+        print(
+            f"  Actual Sharpe:           {mc_overall.actual_sharpe:.3f}  "
+            f"(p={mc_overall.p_value_sharpe:.4f}) [{sig_sharpe}]"
+        )
+        print(
+            f"  Actual Return:           {mc_overall.actual_return_pct:+.2f}  "
+            f"(p={mc_overall.p_value_return:.4f}) [{sig_ret}]"
+        )
         print(f"  Sharpe Percentile:       {mc_overall.sharpe_percentile:.1%}")
         print(f"  Return Percentile:       {mc_overall.return_percentile:.1%}")
     else:
@@ -709,7 +753,8 @@ def print_report(
     print("  [6] VERDICT")
     print("=" * 70)
     passed, passes, fails = evaluate_verdict(
-        backtest_result, wf_results,
+        backtest_result,
+        wf_results,
         mc_results.get("overall") if mc_results else None,
     )
     for p in passes:
@@ -719,10 +764,12 @@ def print_report(
 
     if passed:
         print()
-        print(f"  ✅  ALL CHECKS PASSED — Strategy is viable for paper trading")
+        print("  ✅  ALL CHECKS PASSED — Strategy is viable for paper trading")
     else:
         print()
-        print(f"  ❌  SOME CHECKS FAILED — Strategy needs improvement before paper trading")
+        print(
+            "  ❌  SOME CHECKS FAILED — Strategy needs improvement before paper trading"
+        )
     print()
     print("=" * 70)
     print()
@@ -732,18 +779,22 @@ def print_report(
 # Main
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 def main():
     parser = argparse.ArgumentParser(description="RTS AI Forex Backtest Suite")
     parser.add_argument(
-        "--data", default=DEFAULT_DATA_PATH,
+        "--data",
+        default=DEFAULT_DATA_PATH,
         help=f"Path to OHLCV CSV (default: {DEFAULT_DATA_PATH})",
     )
     parser.add_argument(
-        "--no-walk-forward", action="store_true",
+        "--no-walk-forward",
+        action="store_true",
         help="Skip walk-forward validation (faster)",
     )
     parser.add_argument(
-        "--no-monte-carlo", action="store_true",
+        "--no-monte-carlo",
+        action="store_true",
         help="Skip Monte Carlo significance test (faster)",
     )
     args = parser.parse_args()
@@ -759,7 +810,9 @@ def main():
     logger.info("─" * 60)
     logger.info("STEP 2/5: Detecting market regimes (HMM with enriched features)")
     regime_labels, regime_names, detector = compute_regimes(
-        df_raw, df_features=df_features, n_regimes=N_REGIMES,
+        df_raw,
+        df_features=df_features,
+        n_regimes=N_REGIMES,
     )
 
     # ── 3. Prepare feature arrays ──
@@ -790,14 +843,20 @@ def main():
     n_long = int(np.sum(signals == 1))
     n_short = int(np.sum(signals == -1))
     n_neutral = int(np.sum(signals == 0))
-    logger.info(f"  Signals: {n_long} long, {n_short} short, {n_neutral} neutral "
-                f"({n_long + n_short} total entries)")
+    logger.info(
+        f"  Signals: {n_long} long, {n_short} short, {n_neutral} neutral "
+        f"({n_long + n_short} total entries)"
+    )
 
     # ── 5. Main Backtest ──
     logger.info("─" * 60)
     logger.info("STEP 5/5: Running backtest")
     bt_results = run_main_backtest(
-        prices, sig_fn, features_np, atr_series, regime_names,
+        prices,
+        sig_fn,
+        features_np,
+        atr_series,
+        regime_names,
     )
 
     # ── 6. Walk-Forward Validation ──
@@ -832,7 +891,8 @@ def main():
         if base_result.total_trades >= 10:
             trades = [{"pnl": float(p)} for p in base_result.trade_pnls]
             mc_results = run_monte_carlo_analysis(
-                trades, bt_results.get("regime_breakdown", {}),
+                trades,
+                bt_results.get("regime_breakdown", {}),
             )
         else:
             logger.warning("Too few trades for Monte Carlo significance test")

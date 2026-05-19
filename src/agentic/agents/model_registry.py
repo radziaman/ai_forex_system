@@ -4,8 +4,11 @@ Symbol-Specific Model Registry — tracks which trained models exist per symbol.
 Currently only EURUSD models exist. Other symbols fall back to EURUSD.
 When new models are trained for other symbols, they register here automatically.
 """
+
 from __future__ import annotations
-import os, re, glob
+import os
+import re
+import glob
 from typing import Dict, Optional, Any
 from dataclasses import dataclass, field
 from loguru import logger
@@ -24,7 +27,7 @@ class ModelEntry:
 class SymbolModelRegistry:
     """
     Maps symbols to their best available trained models.
-    
+
     Convention: files named like `lstm_cnn_SYMBOL.keras` or `classifier_SYMBOL.keras`
     are automatically discovered. Symbols without dedicated models use EURUSD as fallback.
     """
@@ -47,7 +50,7 @@ class SymbolModelRegistry:
             match = re.match(pattern, fname)
             if match:
                 model_type = match.group(1)  # lstm_cnn or classifier
-                symbol = match.group(2)      # EURUSD, GBPUSD, etc.
+                symbol = match.group(2)  # EURUSD, GBPUSD, etc.
                 size_kb = os.path.getsize(fpath) / 1024
                 entry = ModelEntry(
                     symbol=symbol,
@@ -67,7 +70,7 @@ class SymbolModelRegistry:
             try:
                 # Check what symbol it was last saved from
                 import tensorflow as tf
-                model = tf.keras.models.load_model(generic_path, compile=False)
+
                 size_kb = os.path.getsize(generic_path) / 1024
                 # We know this was EURUSD
                 entry = ModelEntry(
@@ -81,8 +84,10 @@ class SymbolModelRegistry:
             except Exception:
                 pass
 
-        logger.info(f"Model registry: {len(self._lstm_models)} LSTM, "
-                     f"{len(self._classifier_models)} classifier models found")
+        logger.info(
+            f"Model registry: {len(self._lstm_models)} LSTM, "
+            f"{len(self._classifier_models)} classifier models found"
+        )
 
     def get_lstm(self, symbol: str) -> ModelEntry:
         """Get the best LSTM model for a symbol. Falls back to EURUSD."""
@@ -96,10 +101,18 @@ class SymbolModelRegistry:
             entry = self._lstm_models["EURUSD"]
             entry.is_fallback = True
             entry.source_symbol = "EURUSD"
-            logger.debug(f"[model_registry] No LSTM model for {symbol}, falling back to EURUSD")
+            logger.debug(
+                f"[model_registry] No LSTM model for {symbol}, falling back to EURUSD"
+            )
             return entry
-        return ModelEntry(symbol=symbol, model_type="lstm_cnn", file_path="",
-                          file_size_kb=0, is_fallback=True, source_symbol="none")
+        return ModelEntry(
+            symbol=symbol,
+            model_type="lstm_cnn",
+            file_path="",
+            file_size_kb=0,
+            is_fallback=True,
+            source_symbol="none",
+        )
 
     def get_classifier(self, symbol: str) -> ModelEntry:
         """Get the best classifier for a symbol. Falls back to EURUSD."""
@@ -113,8 +126,14 @@ class SymbolModelRegistry:
             entry.is_fallback = True
             entry.source_symbol = "EURUSD"
             return entry
-        return ModelEntry(symbol=symbol, model_type="classifier", file_path="",
-                          file_size_kb=0, is_fallback=True, source_symbol="none")
+        return ModelEntry(
+            symbol=symbol,
+            model_type="classifier",
+            file_path="",
+            file_size_kb=0,
+            is_fallback=True,
+            source_symbol="none",
+        )
 
     def has_dedicated_lstm(self, symbol: str) -> bool:
         return symbol.upper() in self._lstm_models
@@ -131,7 +150,9 @@ class SymbolModelRegistry:
     def summary(self) -> str:
         lstm_syms = self.symbols_with_lstm()
         clf_syms = self.symbols_with_classifier()
-        return (f"LSTM models: {len(lstm_syms)} symbols ({', '.join(lstm_syms[:5])}"
-                f"{'...' if len(lstm_syms) > 5 else ''}) | "
-                f"Classifiers: {len(clf_syms)} symbols ({', '.join(clf_syms[:5])}"
-                f"{'...' if len(clf_syms) > 5 else ''})")
+        return (
+            f"LSTM models: {len(lstm_syms)} symbols ({', '.join(lstm_syms[:5])}"
+            f"{'...' if len(lstm_syms) > 5 else ''}) | "
+            f"Classifiers: {len(clf_syms)} symbols ({', '.join(clf_syms[:5])}"
+            f"{'...' if len(clf_syms) > 5 else ''})"
+        )

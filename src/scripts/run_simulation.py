@@ -11,7 +11,11 @@ Usage:
     python -m src.scripts.run_simulation --ticks-only      # Just stream ticks
 """
 
-import os, sys, asyncio, time, json, signal
+import os
+import sys
+import asyncio
+import time
+import json
 import numpy as np
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
@@ -22,12 +26,13 @@ _src = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _src not in sys.path:
     sys.path.insert(0, _src)
 
-from loguru import logger
+from loguru import logger  # noqa: E402
 
 
 @dataclass
 class VirtualPosition:
     """A position managed locally — never sent to any broker."""
+
     symbol: str
     direction: str  # LONG or SHORT
     entry_price: float
@@ -47,6 +52,7 @@ class VirtualPosition:
 @dataclass
 class SimulationLog:
     """Complete log of simulation activity."""
+
     timestamp: float = 0.0
     event_type: str = ""  # TICK, SIGNAL, OPEN, CLOSE, PNL, SCREEN
     symbol: str = ""
@@ -112,7 +118,7 @@ class OffSiteSimulation:
         self._log: List[SimulationLog] = []
         self._session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-        logger.info(f"Off-Site Simulation initialized")
+        logger.info("Off-Site Simulation initialized")
         logger.info(f"  Balance: ${initial_balance:,.0f}")
         logger.info(f"  Tick symbols: {self.tick_symbols}")
         logger.info(f"  Trade symbols: {self.trade_symbols}")
@@ -129,21 +135,38 @@ class OffSiteSimulation:
         ask = tick.ask if hasattr(tick, "ask") else price
 
         # Log tick
-        self._log_event(SimulationLog(
-            timestamp=ts, event_type="TICK", symbol=symbol,
-            price=price, detail=f"bid={bid:.5f} ask={ask:.5f} spread={(ask-bid)*10000:.1f}bp"
-        ))
+        self._log_event(
+            SimulationLog(
+                timestamp=ts,
+                event_type="TICK",
+                symbol=symbol,
+                price=price,
+                detail=f"bid={bid:.5f} ask={ask:.5f} spread={(ask-bid)*10000:.1f}bp",
+            )
+        )
 
         # Update 1-second bar
         bar_key = int(ts)
         if symbol not in self._second_bars:
-            self._second_bars[symbol] = {"open": price, "high": price, "low": price, "close": price, "ts": bar_key}
+            self._second_bars[symbol] = {
+                "open": price,
+                "high": price,
+                "low": price,
+                "close": price,
+                "ts": bar_key,
+            }
         else:
             bar = self._second_bars[symbol]
             if bar["ts"] != bar_key:
                 # Bar closed — process it
                 await self._on_bar_close(symbol, bar)
-                self._second_bars[symbol] = {"open": price, "high": price, "low": price, "close": price, "ts": bar_key}
+                self._second_bars[symbol] = {
+                    "open": price,
+                    "high": price,
+                    "low": price,
+                    "close": price,
+                    "ts": bar_key,
+                }
             else:
                 bar["high"] = max(bar["high"], price)
                 bar["low"] = min(bar["low"], price)
@@ -153,17 +176,22 @@ class OffSiteSimulation:
         if symbol in self.positions:
             pos = self.positions[symbol]
             pos.current_price = price
-            pos.unrealized_pnl = (price - pos.entry_price) * pos.volume * 100000 if pos.direction == "LONG" \
+            pos.unrealized_pnl = (
+                (price - pos.entry_price) * pos.volume * 100000
+                if pos.direction == "LONG"
                 else (pos.entry_price - price) * pos.volume * 100000
+            )
 
             # Check SL/TP
             if pos.sl_price > 0:
-                if (pos.direction == "LONG" and price <= pos.sl_price) or \
-                   (pos.direction == "SHORT" and price >= pos.sl_price):
+                if (pos.direction == "LONG" and price <= pos.sl_price) or (
+                    pos.direction == "SHORT" and price >= pos.sl_price
+                ):
                     await self._close_position(symbol, price, "SL_HIT")
             if pos.tp_price > 0:
-                if (pos.direction == "LONG" and price >= pos.tp_price) or \
-                   (pos.direction == "SHORT" and price <= pos.tp_price):
+                if (pos.direction == "LONG" and price >= pos.tp_price) or (
+                    pos.direction == "SHORT" and price <= pos.tp_price
+                ):
                     await self._close_position(symbol, price, "TP_HIT")
 
     async def _on_bar_close(self, symbol: str, bar: Dict):
@@ -173,7 +201,9 @@ class OffSiteSimulation:
             return
 
         price = bar["close"]
-        signal = 1 if bar["close"] > bar["open"] else -1 if bar["close"] < bar["open"] else 0
+        signal = (
+            1 if bar["close"] > bar["open"] else -1 if bar["close"] < bar["open"] else 0
+        )
 
         if signal != 0:
             state = self._signal_state[symbol]
@@ -189,37 +219,63 @@ class OffSiteSimulation:
                 direction = "LONG" if signal == 1 else "SHORT"
                 atr_est = price * 0.0005  # ~5 pip ATR estimate
                 await self._open_position(
-                    symbol=symbol, direction=direction,
-                    entry_price=price, volume=0.01,
-                    sl_price=price - 2 * atr_est if direction == "LONG" else price + 2 * atr_est,
-                    tp_price=price + 4 * atr_est if direction == "LONG" else price - 4 * atr_est,
+                    symbol=symbol,
+                    direction=direction,
+                    entry_price=price,
+                    volume=0.01,
+                    sl_price=(
+                        price - 2 * atr_est
+                        if direction == "LONG"
+                        else price + 2 * atr_est
+                    ),
+                    tp_price=(
+                        price + 4 * atr_est
+                        if direction == "LONG"
+                        else price - 4 * atr_est
+                    ),
                 )
 
     # ─── Position Management ─────────────────────────────────────────────
 
     async def _open_position(
-        self, symbol: str, direction: str, entry_price: float,
-        volume: float = 0.01, sl_price: float = 0.0, tp_price: float = 0.0,
+        self,
+        symbol: str,
+        direction: str,
+        entry_price: float,
+        volume: float = 0.01,
+        sl_price: float = 0.0,
+        tp_price: float = 0.0,
     ):
         """Open a virtual position — no broker interaction."""
         pos = VirtualPosition(
-            symbol=symbol, direction=direction,
-            entry_price=entry_price, entry_time=time.time(),
-            volume=volume, sl_price=sl_price, tp_price=tp_price,
+            symbol=symbol,
+            direction=direction,
+            entry_price=entry_price,
+            entry_time=time.time(),
+            volume=volume,
+            sl_price=sl_price,
+            tp_price=tp_price,
             current_price=entry_price,
         )
         self.positions[symbol] = pos
         self.total_trades += 1
 
-        self._log_event(SimulationLog(
-            timestamp=time.time(), event_type="OPEN", symbol=symbol,
-            price=entry_price, detail=f"{direction} {volume} lots @ {entry_price:.5f}"
-            f"{' SL=' + str(round(sl_price,5)) if sl_price else ''}"
-            f"{' TP=' + str(round(tp_price,5)) if tp_price else ''}"
-        ))
+        self._log_event(
+            SimulationLog(
+                timestamp=time.time(),
+                event_type="OPEN",
+                symbol=symbol,
+                price=entry_price,
+                detail=f"{direction} {volume} lots @ {entry_price:.5f}"
+                f"{' SL=' + str(round(sl_price,5)) if sl_price else ''}"
+                f"{' TP=' + str(round(tp_price,5)) if tp_price else ''}",
+            )
+        )
         logger.info(f"[OPEN] {symbol} {direction} {volume} lots @ {entry_price:.5f}")
 
-    async def _close_position(self, symbol: str, exit_price: float, reason: str = "SIGNAL"):
+    async def _close_position(
+        self, symbol: str, exit_price: float, reason: str = "SIGNAL"
+    ):
         """Close a virtual position — calculate PnL locally."""
         if symbol not in self.positions:
             return
@@ -242,43 +298,63 @@ class OffSiteSimulation:
 
         self.trade_history.append(pos)
 
-        self._log_event(SimulationLog(
-            timestamp=time.time(), event_type="CLOSE", symbol=symbol,
-            price=exit_price, pnl=pos.realized_pnl,
-            detail=f"{reason} PnL=${pos.realized_pnl:.2f}"
-        ))
-        logger.info(f"[CLOSE] {symbol} {reason} @ {exit_price:.5f} | PnL=${pos.realized_pnl:.2f}")
+        self._log_event(
+            SimulationLog(
+                timestamp=time.time(),
+                event_type="CLOSE",
+                symbol=symbol,
+                price=exit_price,
+                pnl=pos.realized_pnl,
+                detail=f"{reason} PnL=${pos.realized_pnl:.2f}",
+            )
+        )
+        logger.info(
+            f"[CLOSE] {symbol} {reason} @ {exit_price:.5f} | PnL=${pos.realized_pnl:.2f}"
+        )
 
     # ─── Screener Integration ─────────────────────────────────────────────
 
     async def run_screener(self):
         """Run the autonomous screener to update tradeable symbols."""
         try:
-            from agentic.agents.screener_agent import InstrumentScreenerAgent, INSTRUMENT_UNIVERSE
+            from agentic.agents.screener_agent import (
+                InstrumentScreenerAgent,
+                INSTRUMENT_UNIVERSE,
+            )
+
             screener = InstrumentScreenerAgent(scan_interval_hours=24)
 
             logger.info("Running autonomous screener...")
             tradeable = []
 
             # Screen HO=F (Heating Oil) — the current best candidate
-            if 'HO=F' in INSTRUMENT_UNIVERSE:
-                score = screener._screen_instrument('HO=F', INSTRUMENT_UNIVERSE['HO=F'])
+            if "HO=F" in INSTRUMENT_UNIVERSE:
+                score = screener._screen_instrument("HO=F", INSTRUMENT_UNIVERSE["HO=F"])
                 if score and score.edge_detected:
                     tradeable.append(score.ticker)
-                    logger.info(f"  ✅ HO=F tradeable: Sharpe={score.mom5_sharpe:.2f} PF={score.mom5_pf:.2f}")
+                    logger.info(
+                        f"  ✅ HO=F tradeable: Sharpe={score.mom5_sharpe:.2f} PF={score.mom5_pf:.2f}"
+                    )
 
             # Screen EURUSD for tick-level simulation
-            if 'EURUSD=X' in INSTRUMENT_UNIVERSE:
-                score = screener._screen_instrument('EURUSD=X', INSTRUMENT_UNIVERSE['EURUSD=X'])
+            if "EURUSD=X" in INSTRUMENT_UNIVERSE:
+                score = screener._screen_instrument(
+                    "EURUSD=X", INSTRUMENT_UNIVERSE["EURUSD=X"]
+                )
                 if score:
-                    logger.info(f"  EURUSD: Sharpe={score.mom5_sharpe:.2f} -> {score.recommendation}")
+                    logger.info(
+                        f"  EURUSD: Sharpe={score.mom5_sharpe:.2f} -> {score.recommendation}"
+                    )
 
             self.trade_symbols = tradeable
-            self._log_event(SimulationLog(
-                timestamp=time.time(), event_type="SCREEN",
-                symbol=", ".join(tradeable) if tradeable else "none",
-                detail=f"Tradeable instruments: {tradeable}"
-            ))
+            self._log_event(
+                SimulationLog(
+                    timestamp=time.time(),
+                    event_type="SCREEN",
+                    symbol=", ".join(tradeable) if tradeable else "none",
+                    detail=f"Tradeable instruments: {tradeable}",
+                )
+            )
 
         except Exception as e:
             logger.warning(f"Screener failed: {e}")
@@ -295,7 +371,7 @@ class OffSiteSimulation:
         """Print current simulation status."""
         print()
         print("=" * 70)
-        print(f"  OFF-SITE SIMULATION STATUS")
+        print("  OFF-SITE SIMULATION STATUS")
         print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print("=" * 70)
         print(f"  Balance:     ${self.balance:>10,.2f}")
@@ -303,8 +379,10 @@ class OffSiteSimulation:
         print(f"  Total PnL:   ${self.balance - self.initial_balance:>+10,.2f}")
         print(f"  Open Positions: {len(self.positions)}")
         for sym, pos in self.positions.items():
-            print(f"    {sym}: {pos.direction} {pos.volume} lots @ {pos.entry_price:.5f} "
-                  f"UPnL=${pos.unrealized_pnl:.2f}")
+            print(
+                f"    {sym}: {pos.direction} {pos.volume} lots @ {pos.entry_price:.5f} "
+                f"UPnL=${pos.unrealized_pnl:.2f}"
+            )
         print(f"  Closed Trades: {len(self.trade_history)}")
         if self.trade_history:
             win_rate = self.winning_trades / len(self.trade_history) * 100
@@ -319,17 +397,22 @@ class OffSiteSimulation:
     def save_log(self):
         """Save simulation log to disk."""
         log_path = os.path.join(self.log_dir, f"simulation_{self._session_id}.json")
-        with open(log_path, 'w') as f:
-            json.dump({
-                "session_id": self._session_id,
-                "timestamp": time.time(),
-                "initial_balance": self.initial_balance,
-                "final_balance": self.balance,
-                "total_trades": self.total_trades,
-                "winning_trades": self.winning_trades,
-                "trade_history": [asdict(t) for t in self.trade_history],
-                "events": [asdict(e) for e in self._log[-1000:]],
-            }, f, indent=2, default=str)
+        with open(log_path, "w") as f:
+            json.dump(
+                {
+                    "session_id": self._session_id,
+                    "timestamp": time.time(),
+                    "initial_balance": self.initial_balance,
+                    "final_balance": self.balance,
+                    "total_trades": self.total_trades,
+                    "winning_trades": self.winning_trades,
+                    "trade_history": [asdict(t) for t in self.trade_history],
+                    "events": [asdict(e) for e in self._log[-1000:]],
+                },
+                f,
+                indent=2,
+                default=str,
+            )
         logger.info(f"Simulation log saved: {log_path}")
 
     # ─── Main Loop ────────────────────────────────────────────────────────
@@ -361,6 +444,7 @@ class OffSiteSimulation:
         except Exception as e:
             logger.error(f"Failed to start tick stream: {e}")
             import traceback
+
             traceback.print_exc()
             return
 
@@ -414,13 +498,21 @@ class OffSiteSimulation:
 
 def main():
     import argparse
+
     parser = argparse.ArgumentParser(description="Off-Site Simulation Runner")
     parser.add_argument("--duration", type=int, default=5, help="Duration in minutes")
     parser.add_argument("--balance", type=float, default=100000, help="Initial balance")
-    parser.add_argument("--tick-symbols", nargs="+", default=["EURUSD", "GBPUSD"],
-                        help="Symbols for tick streaming")
-    parser.add_argument("--no-screener", action="store_true",
-                        help="Skip screener scan (uses default trade symbols)")
+    parser.add_argument(
+        "--tick-symbols",
+        nargs="+",
+        default=["EURUSD", "GBPUSD"],
+        help="Symbols for tick streaming",
+    )
+    parser.add_argument(
+        "--no-screener",
+        action="store_true",
+        help="Skip screener scan (uses default trade symbols)",
+    )
     args = parser.parse_args()
 
     sim = OffSiteSimulation(

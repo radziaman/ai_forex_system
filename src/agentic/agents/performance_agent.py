@@ -14,7 +14,12 @@ from collections import defaultdict, deque
 from loguru import logger
 
 from agentic.core.base_agent import BaseAgent
-from agentic.core.agent_message import MessageType, MessagePriority, AgentIntention
+from agentic.core.agent_message import (
+    AgentMessage,
+    MessageType,
+    MessagePriority,
+    AgentIntention,
+)
 from agentic.core.agent_consciousness import ConsciousnessLevel
 
 
@@ -37,9 +42,13 @@ class PerformanceAgent(BaseAgent):
             purpose="Track, analyze, and report system trading performance across all dimensions",
             domain="performance",
             capabilities={
-                "trade_tracking", "sharpe_ratio", "profit_factor",
-                "win_rate_analysis", "per_symbol_analytics",
-                "per_regime_analytics", "performance_degradation_detection",
+                "trade_tracking",
+                "sharpe_ratio",
+                "profit_factor",
+                "win_rate_analysis",
+                "per_symbol_analytics",
+                "per_regime_analytics",
+                "performance_degradation_detection",
                 "rolling_statistics",
             },
             tick_interval=5.0,
@@ -49,13 +58,17 @@ class PerformanceAgent(BaseAgent):
         self._max_trades = 1000
         self._pnl_series: deque = deque(maxlen=500)
         self._by_symbol: Dict[str, Dict] = defaultdict(
-            lambda: {"trades": 0, "wins": 0, "pnl": 0.0})
+            lambda: {"trades": 0, "wins": 0, "pnl": 0.0}
+        )
         self._by_regime: Dict[str, Dict] = defaultdict(
-            lambda: {"trades": 0, "wins": 0, "pnl": 0.0})
+            lambda: {"trades": 0, "wins": 0, "pnl": 0.0}
+        )
         self._by_dow: Dict[int, Dict] = defaultdict(
-            lambda: {"trades": 0, "wins": 0, "pnl": 0.0})
+            lambda: {"trades": 0, "wins": 0, "pnl": 0.0}
+        )
         self._by_hour: Dict[int, Dict] = defaultdict(
-            lambda: {"trades": 0, "wins": 0, "pnl": 0.0})
+            lambda: {"trades": 0, "wins": 0, "pnl": 0.0}
+        )
 
         self.subscribe(MessageType.EXECUTION_RESULT)
         self.subscribe(MessageType.POSITION_CLOSED)
@@ -69,7 +82,9 @@ class PerformanceAgent(BaseAgent):
         return {"trade_count": len(self._trades)}
 
     async def reason(self, perception: Dict[str, Any]) -> Dict[str, Any]:
-        needs_report = self.consciousness.cycle_count % 20 == 0 and len(self._trades) > 0
+        needs_report = (
+            self.consciousness.cycle_count % 20 == 0 and len(self._trades) > 0
+        )
         return {"compute_report": needs_report}
 
     async def act(self, decision: Dict[str, Any]):
@@ -124,7 +139,7 @@ class PerformanceAgent(BaseAgent):
         self._pnl_series.append(pnl)
         self._trades.append(trade_data)
         if len(self._trades) > self._max_trades:
-            self._trades = self._trades[-self._max_trades:]
+            self._trades = self._trades[-self._max_trades :]
 
         self._by_symbol[symbol]["trades"] += 1
         self._by_symbol[symbol]["pnl"] += pnl
@@ -148,8 +163,13 @@ class PerformanceAgent(BaseAgent):
     def _compute_stats(self) -> Dict:
         pnls = np.array(self._pnl_series) if self._pnl_series else np.array([0])
         if len(pnls) < 2:
-            return {"total_trades": len(self._trades), "total_pnl": 0,
-                    "sharpe": 0, "win_rate": 0, "profit_factor": 0}
+            return {
+                "total_trades": len(self._trades),
+                "total_pnl": 0,
+                "sharpe": 0,
+                "win_rate": 0,
+                "profit_factor": 0,
+            }
 
         sharpe = self._sharpe(pnls)
         wins = pnls[pnls > 0]
@@ -171,12 +191,20 @@ class PerformanceAgent(BaseAgent):
             "worst_symbol": self._worst_key(self._by_symbol),
             "best_regime": self._best_key(self._by_regime),
             "worst_regime": self._worst_key(self._by_regime),
-            "per_symbol": {s: {"trades": d["trades"], "pnl": round(d["pnl"], 2),
-                               "win_rate": round(d["wins"] / max(d["trades"], 1), 3)}
-                           for s, d in sorted(self._by_symbol.items(),
-                                              key=lambda x: x[1]["pnl"], reverse=True)[:5]},
-            "per_regime": {r: {"trades": d["trades"], "pnl": round(d["pnl"], 2)}
-                           for r, d in self._by_regime.items()},
+            "per_symbol": {
+                s: {
+                    "trades": d["trades"],
+                    "pnl": round(d["pnl"], 2),
+                    "win_rate": round(d["wins"] / max(d["trades"], 1), 3),
+                }
+                for s, d in sorted(
+                    self._by_symbol.items(), key=lambda x: x[1]["pnl"], reverse=True
+                )[:5]
+            },
+            "per_regime": {
+                r: {"trades": d["trades"], "pnl": round(d["pnl"], 2)}
+                for r, d in self._by_regime.items()
+            },
         }
 
     def _detect_degradation(self) -> Optional[Dict]:
@@ -190,7 +218,12 @@ class PerformanceAgent(BaseAgent):
         older_wr = sum(1 for t in older if t.get("pnl", 0) > 0) / max(len(older), 1)
         drop = older_wr - recent_wr
         if drop > 0.15:
-            return {"window": 20, "drop": drop, "recent_wr": recent_wr, "older_wr": older_wr}
+            return {
+                "window": 20,
+                "drop": drop,
+                "recent_wr": recent_wr,
+                "older_wr": older_wr,
+            }
         return None
 
     @staticmethod

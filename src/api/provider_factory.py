@@ -48,7 +48,7 @@ class CtraderExecutionAdapter(ExecutionProvider):
                     volume=depth.volume,
                 )
             )
-            if hasattr(result, '__await__'):
+            if hasattr(result, "__await__"):
                 await result
 
     @property
@@ -118,6 +118,7 @@ class CtraderExecutionAdapter(ExecutionProvider):
                 )
         except Exception as e:
             import logging
+
             logging.getLogger(__name__).warning(f"close_position failed: {e}")
         return OrderResult(order_id="0", position_id=position_id, status="FILLED")
 

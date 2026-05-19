@@ -58,8 +58,11 @@ class AgentRegistry:
             logger.warning(f"AgentRegistry: {name} already registered")
             return False
         self._agents[name] = AgentRegistration(
-            name=name, role=role, domain=domain,
-            capabilities=capabilities, dependencies=dependencies or [],
+            name=name,
+            role=role,
+            domain=domain,
+            capabilities=capabilities,
+            dependencies=dependencies or [],
             supervisor=supervisor,
         )
         self._domain_index.setdefault(domain, []).append(name)
@@ -67,8 +70,10 @@ class AgentRegistry:
             self._capability_index.setdefault(cap, []).append(name)
         if supervisor:
             self._supervisor_index.setdefault(supervisor, []).append(name)
-        logger.info(f"AgentRegistry: registered [{name}] {role} ({domain})"
-                    + (f" supervisor={supervisor}" if supervisor else ""))
+        logger.info(
+            f"AgentRegistry: registered [{name}] {role} ({domain})"
+            + (f" supervisor={supervisor}" if supervisor else "")
+        )
         return True
 
     def unregister(self, name: str):
@@ -76,7 +81,10 @@ class AgentRegistry:
             reg = self._agents[name]
             self._domain_index.get(reg.domain, []).remove(name)
             for cap in reg.capabilities:
-                if cap in self._capability_index and name in self._capability_index[cap]:
+                if (
+                    cap in self._capability_index
+                    and name in self._capability_index[cap]
+                ):
                     self._capability_index[cap].remove(name)
             old_supervisor = reg.supervisor
             if old_supervisor and old_supervisor in self._supervisor_index:
@@ -94,17 +102,24 @@ class AgentRegistry:
         return self._agents.get(name)
 
     def find_by_role(self, role: str) -> List[AgentRegistration]:
-        return [self._agents[n] for n in self._role_index.get(role, [])
-                if n in self._agents]
+        return [
+            self._agents[n] for n in self._role_index.get(role, []) if n in self._agents
+        ]
 
     def find_by_domain(self, domain: str) -> List[AgentRegistration]:
-        return [self._agents[n] for n in self._domain_index.get(domain, [])
-                if n in self._agents]
+        return [
+            self._agents[n]
+            for n in self._domain_index.get(domain, [])
+            if n in self._agents
+        ]
 
     # G6: Capability-based discovery
     def find_by_capability(self, capability: str) -> List[AgentRegistration]:
-        return [self._agents[n] for n in self._capability_index.get(capability, [])
-                if n in self._agents]
+        return [
+            self._agents[n]
+            for n in self._capability_index.get(capability, [])
+            if n in self._agents
+        ]
 
     def has_capability(self, name: str, capability: str) -> bool:
         reg = self._agents.get(name)
@@ -112,8 +127,11 @@ class AgentRegistry:
 
     # G17: Hierarchy
     def get_subordinates(self, supervisor_name: str) -> List[AgentRegistration]:
-        return [self._agents[n] for n in self._supervisor_index.get(supervisor_name, [])
-                if n in self._agents]
+        return [
+            self._agents[n]
+            for n in self._supervisor_index.get(supervisor_name, [])
+            if n in self._agents
+        ]
 
     def get_supervisor(self, name: str) -> Optional[AgentRegistration]:
         reg = self._agents.get(name)
@@ -134,7 +152,9 @@ class AgentRegistry:
         for domain, names in self._domain_index.items():
             by_domain[domain] = {
                 "total": len(names),
-                "alive": sum(1 for n in names if n in self._agents and self._agents[n].is_alive),
+                "alive": sum(
+                    1 for n in names if n in self._agents and self._agents[n].is_alive
+                ),
             }
         return {
             "total": len(self._agents),
@@ -144,8 +164,10 @@ class AgentRegistry:
             "by_domain": by_domain,
             "agents": {
                 name: {
-                    "role": reg.role, "domain": reg.domain,
-                    "health": reg.health, "alive": reg.is_alive,
+                    "role": reg.role,
+                    "domain": reg.domain,
+                    "health": reg.health,
+                    "alive": reg.is_alive,
                     "last_heartbeat_age": time.time() - reg.last_heartbeat,
                     "cycles": reg.cycle_count,
                     "supervisor": reg.supervisor,

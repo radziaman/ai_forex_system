@@ -163,7 +163,7 @@ class SmartIntegrationTestPipeline:
 
             for i in range(num_bars):
                 # Simulate price movement
-                price = 1.12 + (i * 0.0001)
+
                 # Simulate trading cycle
                 await asyncio.sleep(0.01)  # Fast simulation
                 success_count += 1

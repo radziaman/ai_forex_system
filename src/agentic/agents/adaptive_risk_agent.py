@@ -14,7 +14,12 @@ from collections import deque
 from loguru import logger
 
 from agentic.core.base_agent import BaseAgent
-from agentic.core.agent_message import MessageType, MessagePriority, AgentIntention
+from agentic.core.agent_message import (
+    AgentMessage,
+    MessageType,
+    MessagePriority,
+    AgentIntention,
+)
 from agentic.core.agent_consciousness import ConsciousnessLevel
 
 
@@ -38,8 +43,11 @@ class AdaptiveRiskAgent(BaseAgent):
             purpose="Protect capital by dynamically adjusting risk parameters to market conditions",
             domain="risk",
             capabilities={
-                "dynamic_kelly_adjustment", "volatility_regime_detection",
-                "drawdown_regime_detection", "auto_halt", "auto_recovery",
+                "dynamic_kelly_adjustment",
+                "volatility_regime_detection",
+                "drawdown_regime_detection",
+                "auto_halt",
+                "auto_recovery",
                 "confidence_penalty",
             },
             tick_interval=3.0,
@@ -64,21 +72,26 @@ class AdaptiveRiskAgent(BaseAgent):
         self.set_world("adaptive_risk.kelly", self.effective_kelly)
         self.set_world("adaptive_risk.risk_per_trade", self.effective_risk)
         self.set_world("adaptive_risk.status", "active")
-        self.log_state(f"Active: base_kelly={self.base_kelly}, base_risk={self.base_risk}")
+        self.log_state(
+            f"Active: base_kelly={self.base_kelly}, base_risk={self.base_risk}"
+        )
 
     async def perceive(self) -> Dict[str, Any]:
         balance = self.get_world("account.balance", 0)
         equity = self.get_world("account.equity", 0)
         regime = self.get_world("regime.current", "ranging")
-        atr = self.get_world(f"data.atr.EURUSD", 0.001)
+        atr = self.get_world("data.atr.EURUSD", 0.001)
         price = self.get_world("data.price.EURUSD", 1.12)
 
         if self._equity_high_water == 0:
             self._equity_high_water = max(balance, equity, 100000)
 
         return {
-            "balance": balance, "equity": equity,
-            "regime": regime, "atr": atr, "price": price,
+            "balance": balance,
+            "equity": equity,
+            "regime": regime,
+            "atr": atr,
+            "price": price,
         }
 
     async def reason(self, perception: Dict[str, Any]) -> Dict[str, Any]:
@@ -93,8 +106,11 @@ class AdaptiveRiskAgent(BaseAgent):
 
         if equity > self._equity_high_water:
             self._equity_high_water = equity
-        dd = ((self._equity_high_water - equity) / max(self._equity_high_water, 1)
-              if self._equity_high_water > 0 else 0.0)
+        dd = (
+            (self._equity_high_water - equity) / max(self._equity_high_water, 1)
+            if self._equity_high_water > 0
+            else 0.0
+        )
 
         if dd > 0.10:
             self._drawdown_regime = "critical"
@@ -142,8 +158,11 @@ class AdaptiveRiskAgent(BaseAgent):
             )
             await self.send(
                 MessageType.RISK_ALERT,
-                payload={"type": "halt", "reason": decision["reason"],
-                         "drawdown_regime": self._drawdown_regime},
+                payload={
+                    "type": "halt",
+                    "reason": decision["reason"],
+                    "drawdown_regime": self._drawdown_regime,
+                },
                 priority=MessagePriority.CRITICAL,
             )
             return
@@ -162,8 +181,12 @@ class AdaptiveRiskAgent(BaseAgent):
 
     async def reflect(self, outcome: Dict[str, Any]):
         if self.consciousness.cycle_count % 20 == 0:
-            self.memory.know("adaptive_risk.effective_kelly", self.effective_kelly, ttl=120)
-            self.memory.know("adaptive_risk.drawdown_regime", self._drawdown_regime, ttl=120)
+            self.memory.know(
+                "adaptive_risk.effective_kelly", self.effective_kelly, ttl=120
+            )
+            self.memory.know(
+                "adaptive_risk.drawdown_regime", self._drawdown_regime, ttl=120
+            )
 
     async def on_message(self, message: AgentMessage):
         if message.msg_type == MessageType.REGIME_CHANGED:
@@ -187,8 +210,9 @@ class AdaptiveRiskAgent(BaseAgent):
                 target=message.source_agent,
             )
 
-    def _compute_multiplier(self, dd_regime: str, vol_regime: str,
-                            regime: str) -> float:
+    def _compute_multiplier(
+        self, dd_regime: str, vol_regime: str, regime: str
+    ) -> float:
         mult = 1.0
         if dd_regime == "warning":
             mult *= 0.6

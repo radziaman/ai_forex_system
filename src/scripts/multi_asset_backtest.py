@@ -6,7 +6,10 @@ Usage:
     python -m src.scripts.multi_asset_backtest
 """
 
-import os, sys, numpy as np, pandas as pd
+import os
+import sys
+import numpy as np
+import pandas as pd
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 
@@ -14,12 +17,21 @@ _src = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _src not in sys.path:
     sys.path.insert(0, _src)
 
-from loguru import logger
-from rts_ai_fx.features_unified import compute_features
-from rts_ai_fx.regime_detector import HMMRegimeDetector
-from backtest.vectorized_backtester import VectorizedBacktester
+from loguru import logger  # noqa: E402
+from rts_ai_fx.features_unified import compute_features  # noqa: E402
+from rts_ai_fx.regime_detector import HMMRegimeDetector  # noqa: E402
+from backtest.vectorized_backtester import VectorizedBacktester  # noqa: E402
 
-FX_SYMBOLS = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD", "XAUUSD"]
+FX_SYMBOLS = [
+    "EURUSD",
+    "GBPUSD",
+    "USDJPY",
+    "AUDUSD",
+    "USDCAD",
+    "USDCHF",
+    "NZDUSD",
+    "XAUUSD",
+]
 REGIME_NAMES = ["crisis", "ranging", "volatile", "trending"]
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "historical")
 
@@ -75,23 +87,29 @@ def add_cross_asset_features(
 
         # Align by timestamp — use raw index alignment since both are hourly
         min_len = min(len(target_prices), len(other_prices))
-        other_returns = np.diff(other_prices[:min_len]) / (other_prices[:min_len-1] + 1e-10)
+        other_returns = np.diff(other_prices[:min_len]) / (
+            other_prices[: min_len - 1] + 1e-10
+        )
 
         # Add lagged returns as features (shifted by 1 to avoid look-ahead)
         for lag in range(1, lookback + 1):
             col_name = f"lag_ret_{other_sym}_{lag}h"
-            lagged = np.concatenate([[0.0] * lag, other_returns[:-lag+1] if lag > 1 else other_returns])
+            lagged = np.concatenate(
+                [[0.0] * lag, other_returns[: -lag + 1] if lag > 1 else other_returns]
+            )
             # Pad or truncate to match df_out length
             if len(lagged) < len(df_out):
                 lagged = np.concatenate([np.zeros(len(df_out) - len(lagged)), lagged])
-            lagged = lagged[-len(df_out):]
+            lagged = lagged[-len(df_out) :]
             df_out[col_name] = lagged
 
         # Add rolling volatility of other pair
         other_vol = pd.Series(other_prices).rolling(24).std().values
         if len(other_vol) < len(df_out):
-            other_vol = np.concatenate([np.zeros(len(df_out) - len(other_vol)), other_vol])
-        other_vol = other_vol[-len(df_out):]
+            other_vol = np.concatenate(
+                [np.zeros(len(df_out) - len(other_vol)), other_vol]
+            )
+        other_vol = other_vol[-len(df_out) :]
         df_out[f"vol_{other_sym}_24h"] = other_vol
 
     return df_out
@@ -121,13 +139,25 @@ def simple_momentum_signal(
             continue
 
         # Momentum: direction of last price change
-        mom = np.sign(prices[i] - prices[i-1]) if i > 0 else 0
+        mom = np.sign(prices[i] - prices[i - 1]) if i > 0 else 0
 
         # Cross-asset confirmation: check how many other pairs moved same direction
-        cross_cols = [c for c in features_df.columns if c.startswith("lag_ret_") and c.endswith("_1h")]
+        cross_cols = [
+            c
+            for c in features_df.columns
+            if c.startswith("lag_ret_") and c.endswith("_1h")
+        ]
         if cross_cols:
-            cross_signs = [np.sign(features_df[c].iloc[i]) for c in cross_cols if not np.isnan(features_df[c].iloc[i])]
-            confirm_pct = np.mean([s == mom for s in cross_signs]) if cross_signs and mom != 0 else 0.5
+            cross_signs = [
+                np.sign(features_df[c].iloc[i])
+                for c in cross_cols
+                if not np.isnan(features_df[c].iloc[i])
+            ]
+            confirm_pct = (
+                np.mean([s == mom for s in cross_signs])
+                if cross_signs and mom != 0
+                else 0.5
+            )
         else:
             confirm_pct = 0.5
 
@@ -145,12 +175,22 @@ def simple_momentum_signal(
 def compute_trade_metrics(trade_pnls: np.ndarray) -> Dict:
     """Compute proper metrics from trade PnLs."""
     if len(trade_pnls) == 0:
-        return {"total_return": 0.0, "sharpe": 0.0, "win_rate": 0.0, "profit_factor": 0.0, "total_trades": 0}
+        return {
+            "total_return": 0.0,
+            "sharpe": 0.0,
+            "win_rate": 0.0,
+            "profit_factor": 0.0,
+            "total_trades": 0,
+        }
     wins = trade_pnls[trade_pnls > 0]
     losses = trade_pnls[trade_pnls < 0]
     n = len(trade_pnls)
     win_rate = len(wins) / n if n > 0 else 0.0
-    sharpe = float(np.mean(trade_pnls) / np.std(trade_pnls) * np.sqrt(252)) if np.std(trade_pnls) > 1e-10 else 0.0
+    sharpe = (
+        float(np.mean(trade_pnls) / np.std(trade_pnls) * np.sqrt(252))
+        if np.std(trade_pnls) > 1e-10
+        else 0.0
+    )
     gross_win = float(np.sum(wins)) if len(wins) > 0 else 0.0
     gross_loss = float(abs(np.sum(losses))) if len(losses) > 0 else 1.0
     pf = gross_win / max(gross_loss, 1e-8)
@@ -188,7 +228,16 @@ def run_pair_backtest(symbol: str, all_data: Dict) -> PairResult:
     """Run full backtest for one pair with cross-asset features."""
     prices, df_raw, df_features_base = all_data[symbol]
     if len(prices) < 500:
-        return PairResult(symbol=symbol, sharpe=0, win_rate=0, pf=0, net_pnl=0, trades=0, rd={}, lag1_corr=0)
+        return PairResult(
+            symbol=symbol,
+            sharpe=0,
+            win_rate=0,
+            pf=0,
+            net_pnl=0,
+            trades=0,
+            rd={},
+            lag1_corr=0,
+        )
 
     # Add cross-asset features
     df_features = add_cross_asset_features(symbol, all_data)
@@ -213,10 +262,15 @@ def run_pair_backtest(symbol: str, all_data: Dict) -> PairResult:
         atr_series = np.full(len(prices), 0.001)
 
     # Run backtest
-    bt = VectorizedBacktester(spread_pips=0.5, commission_per_lot=7.0, slippage_model="moderate")
+    bt = VectorizedBacktester(
+        spread_pips=0.5, commission_per_lot=7.0, slippage_model="moderate"
+    )
     result = bt.run(
-        prices, lambda p, f: signals,
-        features=features_np, atr=atr_series, regimes=regime_names,
+        prices,
+        lambda p, f: signals,
+        features=features_np,
+        atr=atr_series,
+        regimes=regime_names,
     )
 
     # Compute metrics
@@ -224,22 +278,26 @@ def run_pair_backtest(symbol: str, all_data: Dict) -> PairResult:
 
     # Lag-1 correlation
     returns = np.diff(prices) / (prices[:-1] + 1e-10)
-    lag1_corr = float(np.corrcoef(returns[1:], returns[:-1])[0, 1]) if len(returns) > 2 else 0.0
+    lag1_corr = (
+        float(np.corrcoef(returns[1:], returns[:-1])[0, 1]) if len(returns) > 2 else 0.0
+    )
 
     # Regime distribution
     rd = pd.Series(regime_names).value_counts().to_dict()
 
-    logger.info(f"{symbol:8s} | Sharpe={tm['sharpe']:.3f} | WR={tm['win_rate']:.1%} | "
-                f"PF={tm['profit_factor']:.2f} | PnL={tm['total_return']:+.0f} | "
-                f"Trades={tm['total_trades']:4d} | Lag1={lag1_corr:.4f}")
+    logger.info(
+        f"{symbol:8s} | Sharpe={tm['sharpe']:.3f} | WR={tm['win_rate']:.1%} | "
+        f"PF={tm['profit_factor']:.2f} | PnL={tm['total_return']:+.0f} | "
+        f"Trades={tm['total_trades']:4d} | Lag1={lag1_corr:.4f}"
+    )
 
     return PairResult(
         symbol=symbol,
-        sharpe=tm['sharpe'],
-        win_rate=tm['win_rate'],
-        profit_factor=tm['profit_factor'],
-        net_pnl=tm['total_return'],
-        total_trades=tm['total_trades'],
+        sharpe=tm["sharpe"],
+        win_rate=tm["win_rate"],
+        profit_factor=tm["profit_factor"],
+        net_pnl=tm["total_return"],
+        total_trades=tm["total_trades"],
         regime_dist=rd,
         lag1_corr=lag1_corr,
     )
@@ -280,33 +338,47 @@ def main():
 
     print()
     print("─" * 100)
-    print(f"  {'Pair':<10s} {'Sharpe':>8s} {'WinRate':>8s} {'ProfFact':>8s} {'NetPnL':>10s} {'Trades':>8s} {'Lag1Corr':>10s}")
+    print(
+        f"  {'Pair':<10s} {'Sharpe':>8s} {'WinRate':>8s} {'ProfFact':>8s} {'NetPnL':>10s} {'Trades':>8s} {'Lag1Corr':>10s}"
+    )
     print("─" * 100)
     for r in results:
-        print(f"  {r.symbol:<10s} {r.sharpe:>8.3f} {r.win_rate:>7.1%} {r.profit_factor:>8.2f} "
-              f"{r.net_pnl:>+9.0f} {r.total_trades:>8d} {r.lag1_corr:>+10.4f}")
+        print(
+            f"  {r.symbol:<10s} {r.sharpe:>8.3f} {r.win_rate:>7.1%} {r.profit_factor:>8.2f} "
+            f"{r.net_pnl:>+9.0f} {r.total_trades:>8d} {r.lag1_corr:>+10.4f}"
+        )
     print("─" * 100)
 
     # Summary
     print()
     best = results[0] if results else None
     if best and best.sharpe > 0:
-        print(f"  ✅ BEST PAIR: {best.symbol} (Sharpe={best.sharpe:.3f}, PF={best.profit_factor:.2f})")
+        print(
+            f"  ✅ BEST PAIR: {best.symbol} (Sharpe={best.sharpe:.3f}, PF={best.profit_factor:.2f})"
+        )
     else:
-        print(f"  ❌ NO PROFITABLE PAIR FOUND")
-        print(f"     Best was {results[0].symbol if results else 'N/A'} with Sharpe={results[0].sharpe:.3f}")
+        print("  ❌ NO PROFITABLE PAIR FOUND")
+        print(
+            f"     Best was {results[0].symbol if results else 'N/A'} with Sharpe={results[0].sharpe:.3f}"
+        )
 
     print()
     print("─" * 70)
     print("  LAG-1 AUTOCORRELATION BY PAIR (predictive power)")
     print("─" * 70)
     for r in sorted(results, key=lambda r: abs(r.lag1_corr), reverse=True):
-        stars = "***" if abs(r.lag1_corr) > 0.05 else "**" if abs(r.lag1_corr) > 0.02 else "*"
+        stars = (
+            "***"
+            if abs(r.lag1_corr) > 0.05
+            else "**" if abs(r.lag1_corr) > 0.02 else "*"
+        )
         print(f"  {r.symbol:<10s} Lag-1 r={r.lag1_corr:+.4f} {stars}")
 
     print()
     if best:
-        print(f"  Recommendation: Trade {best.symbol} with cross-asset momentum strategy")
+        print(
+            f"  Recommendation: Trade {best.symbol} with cross-asset momentum strategy"
+        )
         print(f"                  Sharpe={best.sharpe:.2f} after costs")
     print()
     print("=" * 70)

@@ -49,6 +49,7 @@ from infrastructure.secrets import Secrets
 @dataclass
 class PriceQuote:
     """Real-time price quote from cTrader."""
+
     symbol: str
     symbol_id: int
     bid: float
@@ -92,7 +93,9 @@ class CtradeDataListener:
         self.port = 5035
 
         if not self.app_id:
-            logger.warning("cTrader credentials not configured. Set CTRADER_APP_ID in .env")
+            logger.warning(
+                "cTrader credentials not configured. Set CTRADER_APP_ID in .env"
+            )
 
     async def connect(self) -> bool:
         """Connect to cTrader via SSL/TCP and authenticate."""
@@ -175,7 +178,9 @@ class CtradeDataListener:
             logger.info(f"Got {len(accounts)} cTrader accounts")
             if len(accounts) > 0:
                 self._account_id = accounts[0].ctidTraderAccountId
-                logger.info(f"Using account ID {self._account_id} for data subscription")
+                logger.info(
+                    f"Using account ID {self._account_id} for data subscription"
+                )
 
                 # Account authentication — required to receive spot events
                 acc_auth = ProtoOAAccountAuthReq()
@@ -187,7 +192,9 @@ class CtradeDataListener:
                 if auth_resp:
                     pt, pb = auth_resp
                     if pt == 2103:  # ProtoOAAccountAuthRes
-                        logger.info(f"Account {self._account_id} authenticated for data")
+                        logger.info(
+                            f"Account {self._account_id} authenticated for data"
+                        )
                     else:
                         logger.warning(f"Account auth response type={pt}")
             return True
@@ -306,7 +313,9 @@ class CtradeDataListener:
                 ask=ask,
                 timestamp=time.time(),
                 spread=ask - bid,
-                spread_bps=(ask - bid) / ((bid + ask) / 2) * 10000 if (bid + ask) > 0 else 0,
+                spread_bps=(
+                    (ask - bid) / ((bid + ask) / 2) * 10000 if (bid + ask) > 0 else 0
+                ),
             )
             self._last_quote[symbol] = quote
 

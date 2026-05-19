@@ -15,8 +15,11 @@ class ModelRegistryAgent(BaseAgent):
             purpose="Manage model versions, run A/B tests, auto-promote champions",
             domain="models",
             capabilities={
-                "model_versioning", "ab_testing", "auto_promote",
-                "champion_selection", "rollback",
+                "model_versioning",
+                "ab_testing",
+                "auto_promote",
+                "champion_selection",
+                "rollback",
             },
             tick_interval=15.0,
             consciousness_level=ConsciousnessLevel.REFLECTIVE,
@@ -29,16 +32,22 @@ class ModelRegistryAgent(BaseAgent):
 
     async def _on_start(self):
         from training.model_registry import ModelRegistry
+
         self._registry = ModelRegistry(registry_path="models/registry")
         self.log_state(f"Registry loaded: {len(self._registry._models)} model types")
 
     async def perceive(self) -> Dict[str, Any]:
         if not self._registry:
             return {"skip": True}
-        champion_count = sum(1 for vlist in self._registry._models.values()
-                             for v in vlist if v.is_champion)
-        active_count = sum(1 for vlist in self._registry._models.values()
-                           for v in vlist if v.is_active)
+        champion_count = sum(
+            1
+            for vlist in self._registry._models.values()
+            for v in vlist
+            if v.is_champion
+        )
+        active_count = sum(
+            1 for vlist in self._registry._models.values() for v in vlist if v.is_active
+        )
         return {
             "champion_count": champion_count,
             "active_count": active_count,
@@ -64,8 +73,11 @@ class ModelRegistryAgent(BaseAgent):
                 self.log_state(f"Auto-promoted: {p}")
                 await self.send(
                     MessageType.MODEL_UPDATE,
-                    payload={"action": "model_promoted", "detail": p,
-                             "timestamp": time.time()},
+                    payload={
+                        "action": "model_promoted",
+                        "detail": p,
+                        "timestamp": time.time(),
+                    },
                     priority=MessagePriority.LOW,
                 )
 
@@ -82,12 +94,16 @@ class ModelRegistryAgent(BaseAgent):
                 perf = payload.get("performance", {})
                 if name and path:
                     mv = self._registry.register(name, path, perf)
-                    self.log_state(f"Registered {name} {mv.version}: Sharpe={mv.sharpe:.2f}")
+                    self.log_state(
+                        f"Registered {name} {mv.version}: Sharpe={mv.sharpe:.2f}"
+                    )
         elif message.msg_type == MessageType.DIAGNOSTIC_REQUEST:
             await self.send(
                 MessageType.DIAGNOSTIC_RESULT,
-                payload={"agent": self.name,
-                         "models": len(self._registry._models) if self._registry else 0,
-                         "ab_tests": list(self._ab_tests.keys())},
+                payload={
+                    "agent": self.name,
+                    "models": len(self._registry._models) if self._registry else 0,
+                    "ab_tests": list(self._ab_tests.keys()),
+                },
                 target=message.source_agent,
             )

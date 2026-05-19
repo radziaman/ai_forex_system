@@ -12,7 +12,12 @@ from typing import Dict, List, Optional, Any, Set
 from loguru import logger
 
 from agentic.core.base_agent import BaseAgent
-from agentic.core.agent_message import MessageType, MessagePriority, AgentIntention
+from agentic.core.agent_message import (
+    AgentMessage,
+    MessageType,
+    MessagePriority,
+    AgentIntention,
+)
 from agentic.core.agent_consciousness import ConsciousnessLevel
 
 
@@ -35,8 +40,10 @@ class LearningAgent(BaseAgent):
             purpose="Keep all AI models continuously learning and adapting to market changes",
             domain="learning",
             capabilities={
-                "drift_monitoring", "retraining_management",
-                "online_learning", "model_versioning",
+                "drift_monitoring",
+                "retraining_management",
+                "online_learning",
+                "model_versioning",
                 "warm_start",
             },
             tick_interval=30.0,
@@ -52,6 +59,7 @@ class LearningAgent(BaseAgent):
     async def _on_start(self):
         try:
             from training.model_registry import ModelRegistry
+
             self._model_registry = ModelRegistry(
                 registry_path="models/registry",
             )
@@ -71,12 +79,15 @@ class LearningAgent(BaseAgent):
         models_untrained = self.get_world("models.untrained", False)
         time_since_last = time.time() - self._last_training_time
 
-        needs_retrain = (drift_symbols > 0 or
-                         (n_trades > 20 and sharpe < 0.3) or
-                         (n_trades > 50 and self._retraining_count == 0))
+        needs_retrain = (
+            drift_symbols > 0
+            or (n_trades > 20 and sharpe < 0.3)
+            or (n_trades > 50 and self._retraining_count == 0)
+        )
         needs_bootstrap = models_untrained and self._retraining_count == 0
-        needs_data_retrain = (time_since_last > 3600 and n_trades > 0) or \
-                             (time_since_last > 7200 and self._retraining_count > 0)
+        needs_data_retrain = (time_since_last > 3600 and n_trades > 0) or (
+            time_since_last > 7200 and self._retraining_count > 0
+        )
 
         return {
             "drift_symbols": drift_symbols,
@@ -91,7 +102,10 @@ class LearningAgent(BaseAgent):
     async def reason(self, perception: Dict[str, Any]) -> Dict[str, Any]:
         actions = {}
 
-        if perception.get("needs_retrain") and perception.get("time_since_last_train", 0) > 600:
+        if (
+            perception.get("needs_retrain")
+            and perception.get("time_since_last_train", 0) > 600
+        ):
             actions["retrain"] = True
             reasons = []
             if perception.get("drift_symbols", 0) > 0:
@@ -106,7 +120,10 @@ class LearningAgent(BaseAgent):
         if perception.get("needs_data_retrain"):
             actions["data_retrain"] = True
 
-        if self.consciousness.cycle_count % 10 == 0 and perception.get("n_trades", 0) > 0:
+        if (
+            self.consciousness.cycle_count % 10 == 0
+            and perception.get("n_trades", 0) > 0
+        ):
             actions["check_metrics"] = True
 
         return actions
@@ -119,13 +136,17 @@ class LearningAgent(BaseAgent):
         if decision.get("bootstrap"):
             self._retraining_count += 1
             self._last_training_time = time.time()
-            self.log_state("Bootstrap training: training PPO agents from historical data")
-            self.consciousness.current_intention = "bootstrapping models from historical data"
+            self.log_state(
+                "Bootstrap training: training PPO agents from historical data"
+            )
+            self.consciousness.current_intention = (
+                "bootstrapping models from historical data"
+            )
             self.set_world("learning.status", "training")
             try:
                 from data.data_manager import SYMBOLS
                 from agentic.core.agent_bus import get_agent_bus
-                bus = get_agent_bus()
+
                 for sym in SYMBOLS[:3]:
                     df = self.get_world(f"data.ohlcv.{sym}.1h", None)
                     if df is not None:
@@ -136,7 +157,7 @@ class LearningAgent(BaseAgent):
                         )
                 self.set_world("models.untrained", False)
                 self.set_world("models.ppo_trained", True)
-                self.log_state(f"Bootstrap complete — PPO agents initialized")
+                self.log_state("Bootstrap complete — PPO agents initialized")
             except Exception as e:
                 self.log_state(f"Bootstrap training failed: {e}", "warning")
             self.set_world("learning.status", "idle")
@@ -154,9 +175,12 @@ class LearningAgent(BaseAgent):
 
             await self.send(
                 MessageType.MODEL_UPDATE,
-                payload={"action": "retrain", "reason": reasons,
-                         "retraining_id": self._retraining_count,
-                         "timestamp": time.time()},
+                payload={
+                    "action": "retrain",
+                    "reason": reasons,
+                    "retraining_id": self._retraining_count,
+                    "timestamp": time.time(),
+                },
                 priority=MessagePriority.NORMAL,
                 intention=AgentIntention(
                     primary_goal="retrain models due to drift/performance",
@@ -189,7 +213,9 @@ class LearningAgent(BaseAgent):
             from rts_ai_fx.model import ProfitabilityClassifier
             import numpy as np
 
-            fp = FeaturePipeline(lookback=30, timeframes=["1h", "4h"], use_microstructure=True)
+            fp = FeaturePipeline(
+                lookback=30, timeframes=["1h", "4h"], use_microstructure=True
+            )
             fp.load_normalization()
             trained = 0
             ohlcv_data = self.get_world("data.ohlcv", {})
@@ -197,9 +223,17 @@ class LearningAgent(BaseAgent):
                 try:
                     dfs = {}
                     for tf in ["1h", "4h"]:
-                        symbol_data = ohlcv_data.get(sym, {}) if isinstance(ohlcv_data, dict) else {}
-                        df = symbol_data.get(tf) if isinstance(symbol_data, dict) else None
-                        if df is not None and hasattr(df, '__len__') and len(df) > 100:
+                        symbol_data = (
+                            ohlcv_data.get(sym, {})
+                            if isinstance(ohlcv_data, dict)
+                            else {}
+                        )
+                        df = (
+                            symbol_data.get(tf)
+                            if isinstance(symbol_data, dict)
+                            else None
+                        )
+                        if df is not None and hasattr(df, "__len__") and len(df) > 100:
                             dfs[tf] = df
                     if not dfs:
                         continue
@@ -210,10 +244,16 @@ class LearningAgent(BaseAgent):
                     nf = seqs.shape[-1]
                     clf = ProfitabilityClassifier(lookback=30, n_features=nf)
                     clf.build()
-                    clf.train(seqs[:split], targets[:split], seqs[split:], targets[split:],
-                              epochs=15, batch_size=32)
+                    clf.train(
+                        seqs[:split],
+                        targets[:split],
+                        seqs[split:],
+                        targets[split:],
+                        epochs=15,
+                        batch_size=32,
+                    )
                     clf.save(f"models/{sym}_classifier.keras")
-                    va = clf.model.evaluate(seqs[split:], targets[split:], verbose=0)[1]
+
                     trained += 1
                 except Exception:
                     pass
@@ -226,7 +266,9 @@ class LearningAgent(BaseAgent):
 
     async def reflect(self, outcome: Dict[str, Any]):
         self.memory.know("learning.retraining_count", self._retraining_count, ttl=3600)
-        self.memory.know("learning.last_training_time", self._last_training_time, ttl=3600)
+        self.memory.know(
+            "learning.last_training_time", self._last_training_time, ttl=3600
+        )
 
     async def on_message(self, message: AgentMessage):
         if message.msg_type == MessageType.MODEL_UPDATE:
@@ -236,7 +278,7 @@ class LearningAgent(BaseAgent):
                 self.log_state("Retraining completed successfully")
                 self.memory.remember(
                     event_type="retraining_complete",
-                    description=f"Models updated",
+                    description="Models updated",
                     importance=0.6,
                     emotion="success",
                 )

@@ -33,12 +33,12 @@ _src = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _src not in sys.path:
     sys.path.insert(0, _src)
 
-from loguru import logger
-from rts_ai_fx.features_unified import compute_features
-from rts_ai_fx.regime_detector import HMMRegimeDetector
-from backtest.vectorized_backtester import VectorizedBacktester
-from ai.rl_agent import PPOAgent, TradingEnvironment
-from ai.regime_agents import RegimeSpecialistSystem
+from loguru import logger  # noqa: E402
+from rts_ai_fx.features_unified import compute_features  # noqa: E402
+from rts_ai_fx.regime_detector import HMMRegimeDetector  # noqa: E402
+from backtest.vectorized_backtester import VectorizedBacktester  # noqa: E402
+from ai.rl_agent import PPOAgent, TradingEnvironment  # noqa: E402
+from ai.regime_agents import RegimeSpecialistSystem  # noqa: E402
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 DEFAULT_DATA_PATH = os.path.join(

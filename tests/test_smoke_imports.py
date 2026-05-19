@@ -177,7 +177,11 @@ def test_import_training_online_learner():
 
 
 def test_import_training_distributed():
-    from training.distributed_trainer import DistributedTrainer, TrialConfig, TrialResult
+    from training.distributed_trainer import (
+        DistributedTrainer,
+        TrialConfig,
+        TrialResult,
+    )
 
     assert DistributedTrainer is not None
 

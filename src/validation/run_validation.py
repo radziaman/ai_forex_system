@@ -22,11 +22,11 @@ from loguru import logger
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
-import numpy as np
-import pandas as pd
-from validation.walk_forward import PurgedWalkForward
-from validation.monte_carlo import MonteCarloSigTest
-from backtest.vectorized_backtester import VectorizedBacktester
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+from validation.walk_forward import PurgedWalkForward  # noqa: E402
+from validation.monte_carlo import MonteCarloSigTest  # noqa: E402
+from backtest.vectorized_backtester import VectorizedBacktester  # noqa: E402
 
 
 def load_test_data(symbol: str = "EURUSD", days: int = 365 * 3) -> dict:

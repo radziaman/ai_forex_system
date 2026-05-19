@@ -386,8 +386,11 @@ class FeaturePipeline:
             self._feature_cols = (
                 self._feature_cols.tolist()
                 if hasattr(self._feature_cols, "tolist")
-                else (list(self._feature_cols) if hasattr(self._feature_cols, "__iter__")
-                      else self._feature_cols)
+                else (
+                    list(self._feature_cols)
+                    if hasattr(self._feature_cols, "__iter__")
+                    else self._feature_cols
+                )
             )
             for i in range(n_pairs):
                 key = keys[i] if i < len(keys) else None

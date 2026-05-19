@@ -43,12 +43,16 @@ class BaseAgent(ABC):
     ):
         self.name = name
         self.identity = AgentIdentity(
-            name=name, role=role, purpose=purpose,
-            capabilities=capabilities, dependencies=dependencies or [],
+            name=name,
+            role=role,
+            purpose=purpose,
+            capabilities=capabilities,
+            dependencies=dependencies or [],
             domain=domain,
         )
         self.consciousness = AgentConsciousness(
-            identity=self.identity, level=consciousness_level,
+            identity=self.identity,
+            level=consciousness_level,
             tick_interval=tick_interval,
         )
         self.memory = AgentMemory(
@@ -78,7 +82,8 @@ class BaseAgent(ABC):
         self.consciousness.current_state = AgentState.IDLE
         self.consciousness.started_at = time.time()
         self.registry.register(
-            name=self.name, role=self.identity.role,
+            name=self.name,
+            role=self.identity.role,
             domain=self.identity.domain,
             capabilities=self.identity.capabilities,
             dependencies=self.identity.dependencies,
@@ -89,7 +94,9 @@ class BaseAgent(ABC):
         await self._on_start()
         await self.publish_status("started")
         self._main_task = asyncio.create_task(self._cycle_loop())
-        logger.info(f"[{self.name}] Agent started (interval={self.consciousness.tick_interval}s)")
+        logger.info(
+            f"[{self.name}] Agent started (interval={self.consciousness.tick_interval}s)"
+        )
 
     async def stop(self):
         self._running = False
@@ -105,7 +112,9 @@ class BaseAgent(ABC):
             pass
         self.registry.unregister(self.name)
         self.memory.save()
-        logger.info(f"[{self.name}] Agent stopped ({self.consciousness.total_cycles} cycles)")
+        logger.info(
+            f"[{self.name}] Agent stopped ({self.consciousness.total_cycles} cycles)"
+        )
 
     async def send(
         self,
@@ -118,12 +127,15 @@ class BaseAgent(ABC):
         requires_ack: bool = False,
     ) -> bool:
         msg = AgentMessage(
-            msg_type=msg_type, priority=priority,
-            source_agent=self.name, target_agent=target,
+            msg_type=msg_type,
+            priority=priority,
+            source_agent=self.name,
+            target_agent=target,
             target_capability=target_capability,
             payload=payload,
             requires_ack=requires_ack,
-            intention=intention or AgentIntention(
+            intention=intention
+            or AgentIntention(
                 primary_goal=self.consciousness.current_intention or "autonomous",
                 reasoning="no explicit reasoning provided",
                 expected_outcome="system progress",
@@ -154,20 +166,16 @@ class BaseAgent(ABC):
     # ------------------------------------------------------------------
 
     @abstractmethod
-    async def perceive(self) -> Dict[str, Any]:
-        ...
+    async def perceive(self) -> Dict[str, Any]: ...
 
     @abstractmethod
-    async def reason(self, perception: Dict[str, Any]) -> Dict[str, Any]:
-        ...
+    async def reason(self, perception: Dict[str, Any]) -> Dict[str, Any]: ...
 
     @abstractmethod
-    async def act(self, decision: Dict[str, Any]):
-        ...
+    async def act(self, decision: Dict[str, Any]): ...
 
     @abstractmethod
-    async def reflect(self, outcome: Dict[str, Any]):
-        ...
+    async def reflect(self, outcome: Dict[str, Any]): ...
 
     async def on_message(self, message: AgentMessage):
         self._inbox.put_nowait(message)
@@ -280,21 +288,24 @@ class BaseAgent(ABC):
                 self.consciousness.record_error(str(e))
 
                 # G22: Escalate to master on consecutive errors
-                if (self.consciousness.consecutive_errors >= 2
-                        and time.time() - self._last_escalation_time > 60):
+                if (
+                    self.consciousness.consecutive_errors >= 2
+                    and time.time() - self._last_escalation_time > 60
+                ):
                     self._last_escalation_time = time.time()
                     await self._escalate_error(str(e))
 
             finally:
-                sleep_time = max(0, self.consciousness.tick_interval
-                                 - (time.time() - cycle_start))
+                sleep_time = max(
+                    0, self.consciousness.tick_interval - (time.time() - cycle_start)
+                )
                 await asyncio.sleep(sleep_time)
 
     async def _message_loop(self):
         while self._running:
             try:
                 message = await asyncio.wait_for(self._inbox.get(), timeout=1.0)
-                if message and hasattr(message, 'msg_type'):
+                if message and hasattr(message, "msg_type"):
                     self.memory.remember(
                         event_type=f"msg:{message.msg_type.name}",
                         description=f"Received from {message.source_agent}",
@@ -312,9 +323,12 @@ class BaseAgent(ABC):
     async def _escalate_error(self, error: str):
         await self.send(
             MessageType.AGENT_ERROR,
-            payload={"error": error, "source": self.name,
-                     "consecutive_errors": self.consciousness.consecutive_errors,
-                     "timestamp": time.time()},
+            payload={
+                "error": error,
+                "source": self.name,
+                "consecutive_errors": self.consciousness.consecutive_errors,
+                "timestamp": time.time(),
+            },
             target="master_agent",
             priority=MessagePriority.HIGH,
             intention=AgentIntention(
@@ -346,8 +360,11 @@ class BaseAgent(ABC):
     async def publish_status(self, status: str):
         await self.send(
             MessageType.AGENT_HEARTBEAT,
-            payload={"status": status, "health": self.consciousness.health_score,
-                     "emotion": self.consciousness.emotion.dominant},
+            payload={
+                "status": status,
+                "health": self.consciousness.health_score,
+                "emotion": self.consciousness.emotion.dominant,
+            },
             priority=MessagePriority.LOW,
         )
 
@@ -374,7 +391,8 @@ class BaseAgent(ABC):
 
     def status_summary(self) -> Dict[str, Any]:
         return {
-            "name": self.name, "role": self.identity.role,
+            "name": self.name,
+            "role": self.identity.role,
             "domain": self.identity.domain,
             "consciousness": self.consciousness.summary(),
             "memory": self.memory.summary(),

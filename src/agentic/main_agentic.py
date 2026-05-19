@@ -19,36 +19,36 @@ os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from infrastructure.config_v2 import AppConfig
-from infrastructure.secrets import Secrets
+from infrastructure.config_v2 import AppConfig  # noqa: E402
+from infrastructure.secrets import Secrets  # noqa: E402
 
-from agentic.core.agent_bus import get_agent_bus
-from agentic.core.agent_registry import get_agent_registry
-from agentic.core.world_state import get_world_state
-from agentic.core.agent_consciousness import ConsciousnessLevel
+from agentic.core.agent_bus import get_agent_bus  # noqa: E402
+from agentic.core.agent_registry import get_agent_registry  # noqa: E402
+from agentic.core.world_state import get_world_state  # noqa: E402
+from agentic.core.agent_consciousness import ConsciousnessLevel  # noqa: E402
 
-from agentic.agents.data_agent import DataAgent
-from agentic.agents.feature_agent import FeatureAgent
-from agentic.agents.regime_agent import RegimeAgent
-from agentic.agents.signal_agent import SignalAgent
-from agentic.agents.risk_agent import RiskAgent
-from agentic.agents.execution_agent import ExecutionAgent
-from agentic.agents.position_agent import PositionAgent
-from agentic.agents.performance_agent import PerformanceAgent
-from agentic.agents.adaptive_risk_agent import AdaptiveRiskAgent
-from agentic.agents.master_agent import MasterAgent
-from agentic.agents.validation_agent import ValidationAgent
-from agentic.agents.monitoring_agent import MonitoringAgent
-from agentic.agents.connection_agent import ConnectionAgent
-from agentic.agents.learning_agent import LearningAgent
-from agentic.agents.memory_agent import MemoryAgent
-from agentic.agents.model_registry_agent import ModelRegistryAgent
-from agentic.agents.drift_agent import DriftAgent
-from agentic.agents.circuit_breaker_agent import CircuitBreakerAgent
-from agentic.agents.cost_agent import CostAgent
-from agentic.agents.screener_agent import InstrumentScreenerAgent
+from agentic.agents.data_agent import DataAgent  # noqa: E402
+from agentic.agents.feature_agent import FeatureAgent  # noqa: E402
+from agentic.agents.regime_agent import RegimeAgent  # noqa: E402
+from agentic.agents.signal_agent import SignalAgent  # noqa: E402
+from agentic.agents.risk_agent import RiskAgent  # noqa: E402
+from agentic.agents.execution_agent import ExecutionAgent  # noqa: E402
+from agentic.agents.position_agent import PositionAgent  # noqa: E402
+from agentic.agents.performance_agent import PerformanceAgent  # noqa: E402
+from agentic.agents.adaptive_risk_agent import AdaptiveRiskAgent  # noqa: E402
+from agentic.agents.master_agent import MasterAgent  # noqa: E402
+from agentic.agents.validation_agent import ValidationAgent  # noqa: E402
+from agentic.agents.monitoring_agent import MonitoringAgent  # noqa: E402
+from agentic.agents.connection_agent import ConnectionAgent  # noqa: E402
+from agentic.agents.learning_agent import LearningAgent  # noqa: E402
+from agentic.agents.memory_agent import MemoryAgent  # noqa: E402
+from agentic.agents.model_registry_agent import ModelRegistryAgent  # noqa: E402
+from agentic.agents.drift_agent import DriftAgent  # noqa: E402
+from agentic.agents.circuit_breaker_agent import CircuitBreakerAgent  # noqa: E402
+from agentic.agents.cost_agent import CostAgent  # noqa: E402
+from agentic.agents.screener_agent import InstrumentScreenerAgent  # noqa: E402
 
-from data.data_manager import SYMBOLS
+from data.data_manager import SYMBOLS  # noqa: E402
 
 HELP = """
 Agentic Trading System — Autonomous Mode
@@ -96,6 +96,7 @@ class AgenticOrchestrator:
         self.agents: List = []
         self.running = False
         self.simulation_mode = False  # G18
+        self.timeout = 0  # Auto-shutdown timeout (seconds, 0 = no limit)
 
         logger.info("=" * 60)
         logger.info("  Agentic System Elite — Booting Autonomous Agents")
@@ -277,7 +278,7 @@ class AgenticOrchestrator:
 
         # G18: Enable simulation mode for all agents if flag is set
         if self.simulation_mode:
-            logger.info(f"[orchestrator] SIMULATION MODE — agents will skip real I/O")
+            logger.info("[orchestrator] SIMULATION MODE — agents will skip real I/O")
             for agent in self.agents:
                 agent.enable_simulation()
             self.world.set("agentic.simulation_mode", True)
@@ -292,10 +293,18 @@ class AgenticOrchestrator:
         # 4. Main loop — let agents run, log status periodically
         self._print_agent_table()
         last_log = 0.0
+        boot_time = time.time()
 
         try:
             while self.running:
                 await asyncio.sleep(10)
+
+                # --timeout: auto-shutdown after N seconds
+                if self.timeout > 0 and time.time() - boot_time > self.timeout:
+                    logger.info(
+                        f"[orchestrator] Timeout ({self.timeout}s) reached — shutting down"
+                    )
+                    break
 
                 # Log status every 60s
                 if time.time() - last_log > 60:
@@ -347,6 +356,7 @@ class AgenticOrchestrator:
         self.world.set("data.primary_symbol", SYMBOLS[0] if SYMBOLS else "EURUSD")
         self.world.set("system.mode", self.mode)
         self.world.set("system.boot_time", time.time())
+        self.world.set("system.timeout", self.timeout)
 
     def _list_domains(self) -> str:
         domains = set(a.identity.domain for a in self.agents)
@@ -372,7 +382,7 @@ def cmd_status():
     orch.build_agents()
     orch._print_agent_table()
     logger.info(f"\nTotal agents: {len(orch.agents)}")
-    logger.info(f"System version: 4.0.0-agentic")
+    logger.info("System version: 4.0.0-agentic")
     logger.info(f"World state variables: {len(orch.world.snapshot())}")
 
 
@@ -399,6 +409,12 @@ def main():
         action="store_true",  # G18
         help="Run agents in simulation mode (no real I/O)",
     )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=0,
+        help="Auto-shutdown after N seconds (0 = no limit)",
+    )
 
     args = parser.parse_args()
 
@@ -417,6 +433,7 @@ def main():
         initial_balance=args.capital,
     )
     orch.simulation_mode = args.simulate
+    orch.timeout = args.timeout
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)

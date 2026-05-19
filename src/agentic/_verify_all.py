@@ -1,7 +1,11 @@
 """Verify all 27 G-fixes are applied correctly."""
-import sys, os, ast
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-import pathlib
+
+import sys
+import os
+import ast
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+import pathlib  # noqa: E402
 
 g_fixes = {
     "G1": "execution_agent: tick wiring to data_agent",
@@ -35,14 +39,48 @@ g_fixes = {
 
 # Check each file for key indicators
 file_checks = {
-    "agent_message": ["PAYLOAD_SCHEMAS", "requires_ack", "target_capability", "checksum", "explain"],
-    "agent_bus": ["_queues", "wait_for_ack", "n_workers", "validate_payload", "routing_count"],
-    "agent_consciousness": ["EmotionalState", "cycle_budget_ms", "consecutive_overruns", "error_escalation_level"],
-    "agent_memory": ["query", "learn_from_agent", "recall_external", "consolidate_semantic", "get_knowledge_broadcast"],
-    "base_agent": ["should_skip_cycle", "simulation_mode", "_escalate_error", "target_capability", "requires_ack"],
+    "agent_message": [
+        "PAYLOAD_SCHEMAS",
+        "requires_ack",
+        "target_capability",
+        "checksum",
+        "explain",
+    ],
+    "agent_bus": [
+        "_queues",
+        "wait_for_ack",
+        "n_workers",
+        "validate_payload",
+        "routing_count",
+    ],
+    "agent_consciousness": [
+        "EmotionalState",
+        "cycle_budget_ms",
+        "consecutive_overruns",
+        "error_escalation_level",
+    ],
+    "agent_memory": [
+        "query",
+        "learn_from_agent",
+        "recall_external",
+        "consolidate_semantic",
+        "get_knowledge_broadcast",
+    ],
+    "base_agent": [
+        "should_skip_cycle",
+        "simulation_mode",
+        "_escalate_error",
+        "target_capability",
+        "requires_ack",
+    ],
     "world_state": ["verify_integrity"],
     "agent_registry": ["find_by_capability", "supervisor"],
-    "execution_agent": ["on_price", "TICK_RECEIVED", "execution.open_positions_raw", "requires_ack"],
+    "execution_agent": [
+        "on_price",
+        "TICK_RECEIVED",
+        "execution.open_positions_raw",
+        "requires_ack",
+    ],
     "risk_agent": ["effective_kelly", "human_confirm_halt", "requires_ack"],
     "signal_agent": ["_expert_outcomes", "_confidence_buckets", "_on_execution_result"],
     "master_agent": ["_on_agent_error", "pending_approvals", "human_in_loop_approval"],
@@ -66,18 +104,18 @@ for module_name, indicators in file_checks.items():
         py_file = agentic_dir / "core" / f"{module_name}.py"
     if not py_file.exists():
         py_file = agentic_dir / "agents" / f"{module_name}.py"
-    
+
     if not py_file.exists():
         errors.append(f"{module_name}: FILE NOT FOUND")
         continue
-    
-    text = py_file.read_bytes().decode('utf-8', errors='replace')
-    
+
+    text = py_file.read_bytes().decode("utf-8", errors="replace")
+
     missing = []
     for indicator in indicators:
         if indicator not in text:
             missing.append(indicator)
-    
+
     if missing:
         errors.append(f"{module_name}: missing: {missing}")
     else:

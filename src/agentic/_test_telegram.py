@@ -1,5 +1,7 @@
 """Verify Telegram bot token and send direct test message."""
-import requests, os
+
+import requests
+import os
 
 # Read from .env
 token = ""
@@ -30,8 +32,7 @@ payload = {
     "parse_mode": "HTML",
 }
 resp2 = requests.post(
-    f"https://api.telegram.org/bot{token}/sendMessage",
-    json=payload, timeout=10
+    f"https://api.telegram.org/bot{token}/sendMessage", json=payload, timeout=10
 )
 print(f"Send: HTTP {resp2.status_code}")
 if resp2.status_code == 200:

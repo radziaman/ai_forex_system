@@ -13,11 +13,11 @@ from loguru import logger
 warnings.filterwarnings("ignore")
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
-import numpy as np
-import pandas as pd
-import tensorflow as tf
-from tensorflow.keras import Model, Input
-from tensorflow.keras.layers import (
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+import tensorflow as tf  # noqa: E402
+from tensorflow.keras import Model, Input  # noqa: E402
+from tensorflow.keras.layers import (  # noqa: E402
     LSTM,
     Dense,
     Dropout,
@@ -26,11 +26,11 @@ from tensorflow.keras.layers import (
     Conv1D,
     BatchNormalization,
 )
-from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.optimizers import Adam  # noqa: E402
 
 tf.get_logger().setLevel("ERROR")
 
-from rts_ai_fx.features_unified import FeaturePipeline
+from rts_ai_fx.features_unified import FeaturePipeline  # noqa: E402
 
 
 def _setup_gpu():
@@ -209,7 +209,7 @@ class FastTrainer:
             f"time={elapsed:.0f}s ({elapsed/epochs:.1f}s/epoch)"
         )
 
-        model.save(f"models/base_lstm_cnn.keras")
+        model.save("models/base_lstm_cnn.keras")
         self.base_model = model
         self.base_pair = pair
         return model
@@ -279,7 +279,7 @@ class FastTrainer:
                 ],
                 verbose=1,
             )
-            t1 = time.time()
+            _ = time.time()
 
             # Phase 2: Unfreeze all, fine-tune full model
             for layer in model.layers:
@@ -301,7 +301,7 @@ class FastTrainer:
                 ],
                 verbose=1,
             )
-            t2 = time.time()
+            _ = time.time()
         else:
             # Train from scratch
             model.compile(optimizer=Adam(0.001), loss="mse", metrics=["mae"])
@@ -320,7 +320,6 @@ class FastTrainer:
                 ],
                 verbose=1,
             )
-            t1 = t2 = time.time()
 
         vl = min(h.history["val_loss"])
         vm = min(h.history["val_mae"])
@@ -353,11 +352,11 @@ class FastTrainer:
         logger.info(f"\n{'='*60}")
         logger.info(f"  FAST TRAINING — {len(pairs)} pairs")
         logger.info(f"  Device: {self.device}")
-        logger.info(f"  Strategy: Transfer learning (base + fine-tune)")
+        logger.info("  Strategy: Transfer learning (base + fine-tune)")
         logger.info(f"{'='*60}")
 
         # Step 1: Train base model on EURUSD
-        logger.info(f"\n--- STEP 1: Train base model on EURUSD ---")
+        logger.info("\n--- STEP 1: Train base model on EURUSD ---")
         self.train_base_model(epochs=base_epochs)
 
         # Step 2: Fine-tune remaining pairs
@@ -375,7 +374,7 @@ class FastTrainer:
                 logger.error(f"  {pair} failed: {e}")
 
         logger.info(f"\n{'='*60}")
-        logger.info(f"  FAST TRAINING COMPLETE")
+        logger.info("  FAST TRAINING COMPLETE")
         logger.info(f"{'='*60}")
         for f in sorted(os.listdir("models")):
             if f.endswith("_lstm_cnn.keras"):

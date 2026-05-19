@@ -11,7 +11,12 @@ from pathlib import Path
 from loguru import logger
 
 from agentic.core.base_agent import BaseAgent
-from agentic.core.agent_message import MessageType, MessagePriority, AgentIntention
+from agentic.core.agent_message import (
+    AgentMessage,
+    MessageType,
+    MessagePriority,
+    AgentIntention,
+)
 from agentic.core.agent_consciousness import ConsciousnessLevel
 
 
@@ -23,9 +28,12 @@ class MemoryAgent(BaseAgent):
             purpose="Persist system state with integrity verification for crash recovery",
             domain="persistence",
             capabilities={
-                "state_persistence", "crash_recovery",
-                "checkpoint_management", "audit_trail",
-                "versioned_backups", "integrity_verification",  # G26
+                "state_persistence",
+                "crash_recovery",
+                "checkpoint_management",
+                "audit_trail",
+                "versioned_backups",
+                "integrity_verification",  # G26
             },
             tick_interval=30.0,
             consciousness_level=ConsciousnessLevel.REFLECTIVE,
@@ -51,12 +59,16 @@ class MemoryAgent(BaseAgent):
 
     async def perceive(self) -> Dict[str, Any]:
         time_since_save = time.time() - self._last_save_time
-        return {"should_save": time_since_save >= self._checkpoint_interval,
-                "time_since_save": time_since_save}
+        return {
+            "should_save": time_since_save >= self._checkpoint_interval,
+            "time_since_save": time_since_save,
+        }
 
     async def reason(self, perception: Dict[str, Any]) -> Dict[str, Any]:
-        return {"save": perception.get("should_save", False),
-                "verify": self.consciousness.cycle_count % 10 == 0}
+        return {
+            "save": perception.get("should_save", False),
+            "verify": self.consciousness.cycle_count % 10 == 0,
+        }
 
     async def act(self, decision: Dict[str, Any]):
         if decision.get("save"):
@@ -71,19 +83,27 @@ class MemoryAgent(BaseAgent):
         self.set_world("persistence.integrity_errors", self._integrity_errors)
 
     async def on_message(self, message: AgentMessage):
-        if message.msg_type in (MessageType.POSITION_OPENED, MessageType.POSITION_CLOSED):
+        if message.msg_type in (
+            MessageType.POSITION_OPENED,
+            MessageType.POSITION_CLOSED,
+        ):
             await self._save_checkpoint()
         elif message.msg_type == MessageType.RISK_ALERT:
             payload = message.payload if isinstance(message.payload, dict) else {}
             if payload.get("type") in ("halt", "kill_switch"):
                 await self._save_checkpoint()
         elif message.msg_type == MessageType.DIAGNOSTIC_REQUEST:
-            await self.send(MessageType.DIAGNOSTIC_RESULT, payload={
-                "agent": self.name, "save_count": self._save_count,
-                "last_save": self._last_save_time,
-                "integrity_errors": self._integrity_errors,
-                "path": str(self.base_path),
-            }, target=message.source_agent)
+            await self.send(
+                MessageType.DIAGNOSTIC_RESULT,
+                payload={
+                    "agent": self.name,
+                    "save_count": self._save_count,
+                    "last_save": self._last_save_time,
+                    "integrity_errors": self._integrity_errors,
+                    "path": str(self.base_path),
+                },
+                target=message.source_agent,
+            )
 
     def _compute_checksum(self, data: Dict) -> str:
         """G26: SHA256 checksum of serialized state."""
@@ -100,8 +120,10 @@ class MemoryAgent(BaseAgent):
             computed = self._compute_checksum(data)
             if stored_checksum and stored_checksum != computed:
                 self._integrity_errors += 1
-                logger.warning(f"[{self.name}] INTEGRITY ERROR: {path.name} "
-                               f"({stored_checksum[:8]} != {computed[:8]})")
+                logger.warning(
+                    f"[{self.name}] INTEGRITY ERROR: {path.name} "
+                    f"({stored_checksum[:8]} != {computed[:8]})"
+                )
                 return False
             return True
         except Exception as e:
@@ -119,12 +141,18 @@ class MemoryAgent(BaseAgent):
             if not self._verify_checkpoint(f):
                 bad += 1
         if bad > 0:
-            self.log_state(f"Integrity: {bad}/{len(files)} checkpoints corrupted", "warning")
+            self.log_state(
+                f"Integrity: {bad}/{len(files)} checkpoints corrupted", "warning"
+            )
         else:
-            logger.debug(f"[{self.name}] Integrity: {len(files)} checkpoints verified OK")
+            logger.debug(
+                f"[{self.name}] Integrity: {len(files)} checkpoints verified OK"
+            )
 
     async def _save_checkpoint(self):
-        self.consciousness.current_intention = "saving system state checkpoint with integrity"
+        self.consciousness.current_intention = (
+            "saving system state checkpoint with integrity"
+        )
 
         # Gather world state snapshot
         snapshot = self.world.snapshot()
@@ -139,8 +167,9 @@ class MemoryAgent(BaseAgent):
         }
 
         # G26: Compute and attach checksum
-        checksum = self._compute_checksum({k: v for k, v in checkpoint.items()
-                                            if k != "_checksum"})
+        checksum = self._compute_checksum(
+            {k: v for k, v in checkpoint.items() if k != "_checksum"}
+        )
         checkpoint["_checksum"] = checksum
 
         path = self.base_path / f"checkpoint_{int(time.time())}.json"

@@ -13,7 +13,12 @@ from typing import Dict, List, Optional, Any, Set
 from loguru import logger
 
 from agentic.core.base_agent import BaseAgent
-from agentic.core.agent_message import MessageType, MessagePriority, AgentIntention
+from agentic.core.agent_message import (
+    AgentMessage,
+    MessageType,
+    MessagePriority,
+    AgentIntention,
+)
 from agentic.core.agent_consciousness import ConsciousnessLevel
 
 
@@ -42,8 +47,11 @@ class PositionAgent(BaseAgent):
             purpose="Optimize open positions through trailing stops, partial closes, and risk monitoring",
             domain="positions",
             capabilities={
-                "trailing_stops", "partial_closes", "correlation_monitoring",
-                "concentration_risk", "position_age_tracking",
+                "trailing_stops",
+                "partial_closes",
+                "correlation_monitoring",
+                "concentration_risk",
+                "position_age_tracking",
             },
             tick_interval=2.0,
             consciousness_level=ConsciousnessLevel.REFLECTIVE,
@@ -86,8 +94,14 @@ class PositionAgent(BaseAgent):
             if current <= 0 or atr <= 0:
                 continue
 
-            action = {"pid": pid, "symbol": symbol, "direction": direction,
-                      "entry": entry, "current": current, "atr": atr}
+            action = {
+                "pid": pid,
+                "symbol": symbol,
+                "direction": direction,
+                "entry": entry,
+                "current": current,
+                "atr": atr,
+            }
 
             new_sl = self._check_trailing(pid, entry, current, atr, direction)
             if new_sl:
@@ -105,8 +119,11 @@ class PositionAgent(BaseAgent):
         corr_warnings = self._check_correlations(perception.get("positions", []))
         conc_warnings = self._check_concentration(perception.get("positions", []))
 
-        return {"actions": actions, "correlation_warnings": corr_warnings,
-                "concentration_warnings": conc_warnings}
+        return {
+            "actions": actions,
+            "correlation_warnings": corr_warnings,
+            "concentration_warnings": conc_warnings,
+        }
 
     async def act(self, decision: Dict[str, Any]):
         for action in decision.get("actions", []):
@@ -137,8 +154,13 @@ class PositionAgent(BaseAgent):
                 emotion="warning",
             )
 
-        self.set_world("positions.correlation_warnings", decision.get("correlation_warnings", []))
-        self.set_world("positions.concentration_warnings", decision.get("concentration_warnings", []))
+        self.set_world(
+            "positions.correlation_warnings", decision.get("correlation_warnings", [])
+        )
+        self.set_world(
+            "positions.concentration_warnings",
+            decision.get("concentration_warnings", []),
+        )
 
     async def reflect(self, outcome: Dict[str, Any]):
         pass
@@ -164,8 +186,9 @@ class PositionAgent(BaseAgent):
                 target=message.source_agent,
             )
 
-    def _check_trailing(self, pid: int, entry: float, current: float,
-                        atr: float, direction: str) -> Optional[float]:
+    def _check_trailing(
+        self, pid: int, entry: float, current: float, atr: float, direction: str
+    ) -> Optional[float]:
         if pid not in self._tp_hit:
             self._tp_hit[pid] = [False, False, False]
         pnl_pct = self._pnl_pct(entry, current, direction)
@@ -177,11 +200,17 @@ class PositionAgent(BaseAgent):
             return entry
         if pnl_pct >= 0.02 and not hits[1]:
             hits[1] = True
-            return entry + atr * 2 * mult if direction == "BUY" else entry - atr * 2 * mult
+            return (
+                entry + atr * 2 * mult if direction == "BUY" else entry - atr * 2 * mult
+            )
         if pnl_pct >= 0.03 and hits[0] and hits[1]:
             if not hits[2]:
                 hits[2] = True
-            return current - atr * 0.5 * mult if direction == "BUY" else current + atr * 0.5 * mult
+            return (
+                current - atr * 0.5 * mult
+                if direction == "BUY"
+                else current + atr * 0.5 * mult
+            )
         return None
 
     def _check_correlations(self, positions: List[Dict]) -> List[str]:

@@ -98,12 +98,12 @@ class VectorizedBacktester:
             if position != 0:
                 sl_hit = tp_hit = False
                 sl_price = (
-                    entry_price - position * atr[i] * sl_atr * self.pip_size
+                    entry_price - position * atr[i] * sl_atr
                     if atr is not None
                     else None
                 )
                 tp_price = (
-                    entry_price + position * atr[i] * tp_atr * self.pip_size
+                    entry_price + position * atr[i] * tp_atr
                     if atr is not None
                     else None
                 )
@@ -245,10 +245,11 @@ class VectorizedBacktester:
         return self.spread_pips * self.pip_size * 0.5
 
     def _transaction_cost(self, pips_moved: float, price: float) -> float:
-        spread_cost = self.spread_pips
         lots = 1.0
-        commission = lots * self.commission_per_lot / price
-        return spread_cost + commission
+        pip_value = self.pip_size * self.lot_size  # e.g. $10 per pip for standard lot
+        spread_cost = self.spread_pips * pip_value * lots
+        commission_cost = self.commission_per_lot * lots
+        return spread_cost + commission_cost
 
     @staticmethod
     def _compute_monthly_returns(equity_curve: np.ndarray, n_bars: int) -> np.ndarray:
