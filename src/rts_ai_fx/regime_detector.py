@@ -393,3 +393,63 @@ class HMMRegimeDetector:
         if self.regime_history[-1] == "trending":
             return 1
         return 0
+
+
+class SimpleRegimeDetector:
+    """
+    ADX-based regime detection — no ML, no HMM, no surprises.
+
+    Regimes:
+      - trending:  ADX_14 >= 20
+      - ranging:   ADX_14 < 20
+      - crisis:    ATR/price > 0.02 (2% daily range) — skip trading
+      - volatile:  ATR/price between 0.01 and 0.02 — reduce position size
+    """
+
+    REGIME_NAMES = ["crisis", "ranging", "volatile", "trending"]
+
+    def __init__(self, adx_threshold: float = 20.0, crisis_atr_pct: float = 0.02):
+        self.adx_threshold = adx_threshold
+        self.crisis_atr_pct = crisis_atr_pct
+
+    def detect(self, df_features: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
+        """Return (regime_labels int[], regime_names str[]) per bar.
+
+        Labels map to REGIME_NAMES indices:
+          0=crisis, 1=ranging, 2=volatile, 3=trending
+        """
+        n = len(df_features)
+        labels = np.full(n, 1, dtype=int)  # default: ranging
+        names = np.full(n, "ranging", dtype=object)
+
+        has_adx = "adx_14" in df_features.columns
+        has_atr = "atr_14" in df_features.columns
+        has_close = "close" in df_features.columns
+
+        for i in range(n):
+            # Defaults are already set; check crisis/volatile first
+            if has_atr and has_close:
+                atr_val = df_features["atr_14"].iloc[i]
+                close_val = df_features["close"].iloc[i]
+                if pd.isna(atr_val) or pd.isna(close_val) or close_val <= 0:
+                    labels[i] = 1
+                    names[i] = "ranging"
+                    continue
+                atr_ratio = atr_val / close_val
+                if atr_ratio > self.crisis_atr_pct:
+                    labels[i] = 0
+                    names[i] = "crisis"
+                    continue
+                if atr_ratio > self.crisis_atr_pct / 2.0:
+                    labels[i] = 2
+                    names[i] = "volatile"
+                    continue
+
+            # ADX-based trending / ranging
+            if has_adx:
+                adx_val = df_features["adx_14"].iloc[i]
+                if not pd.isna(adx_val) and adx_val >= self.adx_threshold:
+                    labels[i] = 3
+                    names[i] = "trending"
+
+        return labels, names

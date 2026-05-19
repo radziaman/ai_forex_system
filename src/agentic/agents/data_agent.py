@@ -20,13 +20,28 @@ from agentic.core.agent_consciousness import ConsciousnessLevel, AgentState
 
 from data.data_manager import DataManager, SYMBOLS, DUKASCOPE_SYMBOLS, BASE_PRICES
 
+
 # The full screener universe — includes all instruments the system can potentially trade.
 # The screener_agent tests all of these, and only tradeable ones flow through to processing.
 # Merge with existing SYMBOLS to ensure backward compatibility.
+# NOTE: Screener universe uses Yahoo Finance symbols (EURUSD=X, GC=F, etc.).
+# We normalize these to clean symbols for CSV path construction and data loading.
+def _clean_symbol(sym: str) -> str:
+    """Strip Yahoo Finance '=X' suffix from forex symbols.
+
+    Yahoo-style: EURUSD=X → EURUSD
+    Futures: GC=F → GC=F (no =X suffix, unchanged)
+    ETFs: GLD → GLD (unchanged)
+    """
+    return sym.replace("=X", "")
+
+
 try:
     from agentic.agents.screener_agent import INSTRUMENT_UNIVERSE as SCREENER_UNIVERSE
 
-    SCREENER_SYMBOLS = list(set(SYMBOLS) | set(SCREENER_UNIVERSE.keys()))
+    SCREENER_SYMBOLS = list(
+        set(SYMBOLS) | {_clean_symbol(s) for s in SCREENER_UNIVERSE.keys()}
+    )
 except ImportError:
     SCREENER_SYMBOLS = SYMBOLS
 

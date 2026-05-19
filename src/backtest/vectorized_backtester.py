@@ -70,6 +70,8 @@ class VectorizedBacktester:
         sl_atr: float = 2.0,
         tp_atr: float = 4.0,
         cost_multiplier: float = 1.0,
+        breakeven_atr: float = 0.0,
+        max_hold_bars: int = 0,
     ) -> BacktestResult:
         signals = signal_fn(prices, features)
         n = len(prices)
@@ -82,6 +84,8 @@ class VectorizedBacktester:
         equity = [1.0]
         entry_price = 0.0
         entry_idx = 0
+        best_price = 0.0  # used for breakeven tracking
+        breakeven_triggered = False
 
         for i in range(1, n):
             sig = signals[i] if i < len(signals) else 0
@@ -92,11 +96,14 @@ class VectorizedBacktester:
                 slippage = self._slippage(prices[i], sig)
                 entry_price = prices[i] + slippage if sig == 1 else prices[i] - slippage
                 entry_idx = i
+                best_price = prices[i]
+                breakeven_triggered = False
                 equity.append(equity[-1] * (1 + pnl_pct))
                 continue
 
             if position != 0:
                 sl_hit = tp_hit = False
+                time_stop = False
                 sl_price = (
                     entry_price - position * atr[i] * sl_atr
                     if atr is not None
@@ -108,6 +115,31 @@ class VectorizedBacktester:
                     else None
                 )
 
+                # ── Breakeven stop ──
+                if breakeven_atr > 0 and atr is not None:
+                    # If breakeven was triggered on a prior bar, keep SL at entry
+                    if breakeven_triggered:
+                        sl_price = entry_price
+                    else:
+                        # Track best/worst price and check if breakeven should trigger
+                        if position == 1:
+                            best_price = max(best_price, prices[i])
+                            if (
+                                best_price - entry_price
+                                >= breakeven_atr * atr[entry_idx]
+                            ):
+                                sl_price = entry_price  # Move SL to breakeven
+                                breakeven_triggered = True
+                        elif position == -1:
+                            best_price = min(best_price, prices[i])
+                            if (
+                                entry_price - best_price
+                                >= breakeven_atr * atr[entry_idx]
+                            ):
+                                sl_price = entry_price  # Move SL to breakeven
+                                breakeven_triggered = True
+
+                # ── Check stops ──
                 if sl_price is not None:
                     if position == 1 and prices[i] <= sl_price:
                         sl_hit = True
@@ -120,9 +152,13 @@ class VectorizedBacktester:
                     elif position == -1 and prices[i] <= tp_price:
                         tp_hit = True
 
+                # ── Time stop ──
+                if max_hold_bars > 0 and (i - entry_idx) >= max_hold_bars:
+                    time_stop = True
+
                 close_signal = sl_hit or tp_hit or (sig == -position)
                 exit_sig = sig != 0 and sig != position
-                should_close = close_signal or exit_sig
+                should_close = close_signal or exit_sig or time_stop
 
                 if should_close or i == n - 1:
                     slippage = self._slippage(prices[i], position)

@@ -597,7 +597,21 @@ class DataManager:
     async def load_with_fallback(
         self, symbol: str, timeframe: str = "1h", days: int = 365, ctrader_client=None
     ) -> bool:
-        """Unified data loader: tries Dukascopy → yFinance → cTrader."""
+        """Unified data loader: tries CSV cache → Dukascopy → yFinance → cTrader."""
+        # 0. Local CSV cache first (fastest)
+        fp = os.path.join(self.historical_path, f"{symbol}_{timeframe}.csv")
+        if os.path.exists(fp):
+            try:
+                df = pd.read_csv(fp)
+                if df is not None and len(df) >= 50:
+                    self.ohlcv[symbol][timeframe] = df
+                    self.freshness[symbol].last_source = "csv"
+                    self.freshness[symbol].bar_count[timeframe] = len(df)
+                    logger.info(f"Loaded {symbol} {timeframe} CSV ({len(df)} bars)")
+                    return True
+            except Exception as e:
+                logger.debug(f"CSV load failed for {symbol}: {e}")
+
         # 1. Dukascopy BI5 cache
         loaded = self.load_from_dukascopy_cache(
             symbols=[symbol], timeframes=[timeframe], max_hours=days * 24

@@ -3,15 +3,18 @@
 
 # Trading Parameters
 trading:
-  max_risk_per_trade: 0.02
-  max_drawdown: 0.10
-  max_margin_usage: 0.80
+  max_risk_per_trade: 0.005   # 0.5% risk per trade (ultra-conservative)
+  max_drawdown: 0.05          # 5% max drawdown
+  max_margin_usage: 0.50      # 50% margin
   min_win_rate_live: 0.55
   min_win_rate_paper: 0.45
-  base_lot_size: 0.01
-  max_positions: 10  # Increased for multi-asset
+  base_lot_size: 0.01         # Micro lot
+  max_positions: 1            # Single position only (EURUSD focus)
   slippage_pips: 0.5
   commission_per_lot: 7.0
+  sl_atr_multiplier: 2.0
+  tp_atr_multiplier: 5.0
+  kelly_fraction: 0.10        # Very conservative Kelly
   # Asset class specific settings
   asset_classes:
     forex:
@@ -99,11 +102,11 @@ features:
 
 # Risk Management
 risk:
-  kelly_fraction: 0.25
+  kelly_fraction: 0.10        # Very conservative Kelly
   confidence_multiplier: true
   volatility_adjustment: true
   sl_atr_multiplier: 2.0
-  tp_atr_multiplier: 4.0
+  tp_atr_multiplier: 5.0
   trailing_activation_rr: 1.0
   trailing_distance_rr: 0.5
   max_consecutive_losses: 5

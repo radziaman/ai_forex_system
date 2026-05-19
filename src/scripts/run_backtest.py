@@ -27,11 +27,8 @@ if _src not in sys.path:
 
 from loguru import logger  # noqa: E402
 from rts_ai_fx.features_unified import compute_features  # noqa: E402
-from rts_ai_fx.regime_detector import HMMRegimeDetector  # noqa: E402
-from backtest.vectorized_backtester import (
-    VectorizedBacktester,
-    BacktestResult,
-)  # noqa: E402
+from rts_ai_fx.regime_detector import SimpleRegimeDetector  # noqa: E402
+from backtest.vectorized_backtester import VectorizedBacktester  # noqa: E402
 from validation.walk_forward import PurgedWalkForward, WFResult  # noqa: E402
 from validation.monte_carlo import MonteCarloSigTest, SigTestResult  # noqa: E402
 
@@ -45,8 +42,11 @@ REGIME_NAMES = ["crisis", "ranging", "volatile", "trending"]
 # Backtest defaults
 SPREAD_PIPS = 0.5
 COMMISSION_PER_LOT = 7.0
-SL_ATR = 2.0
+SL_ATR = 2.5
 TP_ATR = 4.0
+BREAKOUT_LOOKBACK = 5
+BREAKEVEN_ATR = 1.0
+MAX_HOLD_BARS = 24
 N_REGIMES = 4
 
 # Walk-forward defaults
@@ -110,80 +110,32 @@ def compute_regimes(
     df: pd.DataFrame,
     df_features: Optional[pd.DataFrame] = None,
     n_regimes: int = 4,
-) -> Tuple[np.ndarray, np.ndarray, HMMRegimeDetector]:
-    """Fit HMM regime detector on OHLCV+feature data, return per-bar regime labels/names.
+) -> Tuple[np.ndarray, np.ndarray, SimpleRegimeDetector]:
+    """ADX-based regime detection via SimpleRegimeDetector.
 
-    Uses enriched feature DataFrame (with ADX, RSI, BB width, ATR) when available
-    for better regime separation. Regime names are mapped by sorting hidden states
-    by their mean returns (ascending: crisis → ranging → volatile → trending).
+    Uses the enriched feature DataFrame (with ADX, ATR, close) for
+    per-bar regime classification.
+
+    Regimes:
+      - trending:  ADX_14 >= 20
+      - ranging:   ADX_14 < 20
+      - crisis:    ATR/price > 0.02
+      - volatile:  ATR/price between 0.01 and 0.02
 
     Returns:
-        regime_labels:  numpy int array of shape (n,), values 0..n_regimes-1
+        regime_labels:  numpy int array of shape (n,), values 0..3
         regime_names:   numpy str array of shape (n,), values from REGIME_NAMES
-        detector:       fitted HMMRegimeDetector instance
+        detector:       fitted SimpleRegimeDetector instance
     """
-    try:
-        # Use feature-enriched DataFrame if available for better regime detection
-        hmm_input_df = df_features if df_features is not None else df
-        detector = HMMRegimeDetector(n_regimes=n_regimes)
-        detector.fit(hmm_input_df)
+    input_df = df_features if df_features is not None else df
 
-        # Get features for prediction — use the detector's own _extract_features
-        hmm_feat = detector._extract_features(hmm_input_df)
-        if len(hmm_feat) < 10:
-            raise ValueError(f"Too few HMM features: {len(hmm_feat)}")
+    detector = SimpleRegimeDetector(adx_threshold=20.0)
+    regime_labels, regime_names = detector.detect(input_df)
 
-        hidden_states = detector.model.predict(hmm_feat)
+    dist = pd.Series(regime_names).value_counts()
+    logger.info(f"Regime distribution: {dist.to_dict()}")
 
-        # Map hidden states to regime names by sorting mean returns
-        # REGIME_NAMES = ["crisis", "ranging", "volatile", "trending"]
-        # order = argsort(mean_returns) → ascending
-        #   order[0] = lowest mean return → REGIME_NAMES[0] = "crisis"  ✓
-        #   order[3] = highest mean return → REGIME_NAMES[3] = "trending"  ✓
-        mean_ret = detector.model.means_[:, 0]
-        order = np.argsort(mean_ret)
-        label_to_name = {i: REGIME_NAMES[order[i]] for i in range(n_regimes)}
-
-        regime_labels = hidden_states  # shape (n-1,)
-        regime_names = np.array([label_to_name[s] for s in hidden_states])
-
-        # Prepend first regime name to align length with prices (n vs n-1)
-        regime_labels = np.concatenate([[regime_labels[0]], regime_labels])
-        regime_names = np.concatenate([[regime_names[0]], regime_names])
-
-        dist = pd.Series(regime_names).value_counts()
-        logger.info(f"Regime distribution: {dist.to_dict()}")
-
-        return regime_labels, regime_names, detector
-
-    except Exception as e:
-        logger.warning(f"HMM regime detection failed ({e}), using fallback")
-
-        prices = df["close"].values.astype(float)
-        returns = np.abs(np.diff(prices) / (prices[:-1] + 1e-10))
-        vol = pd.Series(prices).rolling(20).std().values[1:]
-        vol_percentile = np.zeros(len(returns))
-        if len(vol) > 0:
-            vol_sorted = np.sort(vol)
-            for i in range(len(vol)):
-                pct = np.searchsorted(vol_sorted, vol[i]) / len(vol_sorted)
-                vol_percentile[i] = pct
-
-        fallback_labels = np.zeros(len(returns), dtype=int)
-        fallback_labels[vol_percentile > 0.95] = 3  # trending (highest vol)
-        fallback_labels[(vol_percentile > 0.70) & (vol_percentile <= 0.95)] = (
-            2  # volatile
-        )
-        fallback_labels[(vol_percentile > 0.30) & (vol_percentile <= 0.70)] = (
-            1  # ranging
-        )
-
-        regime_labels = np.concatenate([[0], fallback_labels])
-        regime_names = np.array([REGIME_NAMES[int(label)] for label in regime_labels])
-
-        dummy_detector = HMMRegimeDetector(n_regimes=n_regimes)
-        dummy_detector.fit(df)
-        return regime_labels, regime_names, dummy_detector
+    return regime_labels, regime_names, detector
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -198,24 +150,49 @@ def make_signal_function(
 ) -> Callable:
     """Build a signal function that returns {-1, 0, 1} per bar.
 
-    The signal function closes over pre-computed regime names and feature data,
-    applying regime-adaptive logic:
+    Strategy logic per regime:
 
-      - trending:  EMA(20) > EMA(50) AND ADX > 25 → long; inverse → short
-      - ranging:   RSI < 30 AND BB_pos < 0.2 → long; RSI > 70 AND BB_pos > 0.8 → short
-      - volatile:  Same as trending but with stricter ADX > 30
-      - crisis:    Always neutral (0)
+      **Trending** (ADX >= 20):
+        Breakout following — don't fight the trend.
+        - Long: Close breaks ABOVE the highest high of the last 20 bars
+        - Short: Close breaks BELOW the lowest low of the last 20 bars
 
-    Returns:
-        signal_fn(prices, features) -> np.ndarray of {-1, 0, 1}
+      **Ranging / Volatile** (ADX < 20):
+        Bollinger Band mean reversion.
+        - Long: Close touches or crosses BELOW the lower BB (20,2)
+        - Short: Close touches or crosses ABOVE the upper BB (20,2)
+
+      **Crisis** (ATR/price > 2%):
+        Always neutral (0).
+
+      **Filters (both regimes)**:
+        - Volatility filter: Skip if ATR/close > 0.015 or < 0.0005
+        - Minimum expected move: ATR * TP_ATR must exceed 2 * round_trip_cost
     """
 
-    # Pre-extract columns for speed (avoid repeated .iloc lookups)
-    has_ema_20 = "ema_20" in features_df.columns
-    has_ema_50 = "ema_50" in features_df.columns
+    # Pre-compute breakout lookback series
+    # Shift by 1 so we compare close[i] vs max(high[i-N .. i-1])
+    high_20_max = (
+        pd.Series(features_df["high"]).rolling(BREAKOUT_LOOKBACK).max().shift(1)
+    )
+    low_20_min = pd.Series(features_df["low"]).rolling(BREAKOUT_LOOKBACK).min().shift(1)
+
+    has_atr = "atr_14" in features_df.columns
     has_adx = "adx_14" in features_df.columns
-    has_rsi = "rsi_14" in features_df.columns
-    has_bb_pos = "bb_pos" in features_df.columns
+    has_close = "close" in features_df.columns
+    has_bb_lower = "bb_lower" in features_df.columns
+    has_bb_upper = "bb_upper" in features_df.columns
+
+    adx_vals = features_df["adx_14"] if has_adx else None
+
+    pip_size = 0.0001
+    lot_size = 100000
+    cost_per_side_pips = SPREAD_PIPS + COMMISSION_PER_LOT / (pip_size * lot_size)
+    round_trip_cost_pips = 2.0 * cost_per_side_pips
+
+    # Volatility filter bounds
+    VOLATILITY_MIN = 0.0005  # 0.05% — too dead
+    VOLATILITY_MAX = 0.015  # 1.5% — too risky
 
     def signal_fn(
         prices_arg: np.ndarray,
@@ -227,34 +204,79 @@ def make_signal_function(
         for i in range(burn_in, n):
             regime = regime_names[i]
 
+            # ── Crisis: no trades ──
             if regime == "crisis":
                 signals[i] = 0
                 continue
 
-            if regime in ("trending", "volatile"):
-                if not has_ema_20 or not has_ema_50 or not has_adx:
+            # ── Required: ATR (always in features) and close (from prices_arg) ──
+            if not has_atr:
+                continue
+
+            close = features_df["close"].iloc[i] if has_close else prices_arg[i]
+            atr_val = features_df["atr_14"].iloc[i]
+
+            if pd.isna(atr_val) or atr_val <= 0 or pd.isna(close) or close <= 0:
+                continue
+
+            # ── Volatility filter ──
+            atr_ratio = atr_val / close
+            if atr_ratio > VOLATILITY_MAX or atr_ratio < VOLATILITY_MIN:
+                signals[i] = 0
+                continue
+
+            # ── Minimum expected move filter ──
+            expected_move_pips = atr_val * TP_ATR / pip_size
+            if expected_move_pips <= 2.0 * round_trip_cost_pips:
+                signals[i] = 0
+                continue
+
+            # ═══════════════════════════════════════════════════════════════
+            # Trending regime — Breakout following
+            # ═══════════════════════════════════════════════════════════════
+            if regime == "trending":
+                hh = high_20_max.iloc[i]
+                ll = low_20_min.iloc[i]
+
+                if pd.isna(hh) or pd.isna(ll):
                     continue
-                ema_20 = features_df["ema_20"].iloc[i]
-                ema_50 = features_df["ema_50"].iloc[i]
-                adx = features_df["adx_14"].iloc[i]
 
-                min_adx = 30 if regime == "volatile" else 25
-                if adx > min_adx:
-                    if ema_20 > ema_50:
-                        signals[i] = 1
-                    elif ema_20 < ema_50:
-                        signals[i] = -1
+                # ── 1. Breakout Gap Filter: require close >= 0.5×ATR from level ──
+                BREAKOUT_GAP_MULTIPLE = 0.5
+                if close > hh:
+                    if (close - hh) < BREAKOUT_GAP_MULTIPLE * atr_val:
+                        continue
+                elif close < ll:
+                    if (ll - close) < BREAKOUT_GAP_MULTIPLE * atr_val:
+                        continue
 
-            elif regime == "ranging":
-                if not has_rsi or not has_bb_pos:
-                    continue
-                rsi = features_df["rsi_14"].iloc[i]
-                bb_pos = features_df["bb_pos"].iloc[i]
+                # ── 2. ADX Rising Confirmation: trend must be strengthening ──
+                if has_adx and i > burn_in:
+                    adx_now = adx_vals.iloc[i]
+                    adx_prev = adx_vals.iloc[i - 1]
+                    if not pd.isna(adx_now) and not pd.isna(adx_prev):
+                        if adx_now <= adx_prev:
+                            continue
 
-                if rsi < 30 and bb_pos < 0.2:
-                    signals[i] = 1  # oversold → mean reversion long
-                elif rsi > 70 and bb_pos > 0.8:
-                    signals[i] = -1  # overbought → mean reversion short
+                # ── 3. Prior Consolidation (Coiling): ATR must be declining ──
+                CONSOLIDATION_LOOKBACK = 5
+                if i >= CONSOLIDATION_LOOKBACK:
+                    atr_now = atr_val
+                    atr_before = features_df["atr_14"].iloc[i - CONSOLIDATION_LOOKBACK]
+                    if not pd.isna(atr_now) and not pd.isna(atr_before):
+                        if atr_now >= atr_before:
+                            continue
+
+                if close > hh:
+                    signals[i] = 1  # Upside breakout → long
+                elif close < ll:
+                    signals[i] = -1  # Downside breakout → short
+
+            # ═══════════════════════════════════════════════════════════════
+            # Ranging / Volatile — no trades (breakout-only strategy)
+            # ═══════════════════════════════════════════════════════════════
+            elif regime in ("ranging", "volatile"):
+                continue  # Skip — only trade trending breakouts
 
         return signals
 
@@ -274,6 +296,8 @@ def run_main_backtest(
     regime_names: np.ndarray,
     sl_atr: float = SL_ATR,
     tp_atr: float = TP_ATR,
+    breakeven_atr: float = BREAKEVEN_ATR,
+    max_hold_bars: int = MAX_HOLD_BARS,
     spread_pips: float = SPREAD_PIPS,
     commission_per_lot: float = COMMISSION_PER_LOT,
 ) -> Dict:
@@ -295,6 +319,8 @@ def run_main_backtest(
         regimes=regime_names,
         sl_atr=sl_atr,
         tp_atr=tp_atr,
+        breakeven_atr=breakeven_atr,
+        max_hold_bars=max_hold_bars,
     )
     logger.info(
         f"Base: Sharpe={base_result.sharpe:.3f} | "
@@ -322,6 +348,8 @@ def run_main_backtest(
                 sl_atr=sl_atr,
                 tp_atr=tp_atr,
                 cost_multiplier=mult,
+                breakeven_atr=breakeven_atr,
+                max_hold_bars=max_hold_bars,
             )
             key = f"{slip}_cost{mult}x"
             sensitivity[key] = r
@@ -354,37 +382,38 @@ def run_main_backtest(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def predict_regimes_hmm(
-    prices: np.ndarray,
-    n_regimes: int = 4,
-) -> Tuple[np.ndarray, HMMRegimeDetector]:
-    """Fit HMM on price series and return per-bar regime names."""
-    df_temp = pd.DataFrame({"close": prices})
-    detector = HMMRegimeDetector(n_regimes=n_regimes)
-    try:
-        detector.fit(df_temp)
-    except Exception:
-        # Fallback: return all as "ranging"
-        return np.full(len(prices), "ranging", dtype=object), detector
+def predict_regimes_adx(
+    test_prices: np.ndarray,
+    test_feat: Optional[np.ndarray],
+    column_index: Dict[str, int],
+) -> Tuple[np.ndarray, SimpleRegimeDetector]:
+    """Detect regimes using ADX-based method on feature array.
 
-    hmm_feat = detector._extract_features(df_temp)
-    if len(hmm_feat) < 5:
-        return np.full(len(prices), "ranging", dtype=object), detector
+    Reconstructs a feature DataFrame from the numpy array (which contains
+    indicator columns), adds a 'close' column from prices, then runs
+    SimpleRegimeDetector.detect().
+    """
+    if test_feat is not None and len(column_index) > 0:
+        cols = list(column_index.keys())
+        n_cols = min(test_feat.shape[1], len(cols))
+        feat_df = pd.DataFrame(
+            test_feat[: len(test_prices), :n_cols], columns=cols[:n_cols]
+        )
+        feat_df["close"] = test_prices
+    else:
+        feat_df = pd.DataFrame({"close": test_prices})
 
-    hidden_states = detector.model.predict(hmm_feat)
-    mean_ret = detector.model.means_[:, 0]
-    order = np.argsort(mean_ret)
-    label_to_name = {i: REGIME_NAMES[order[i]] for i in range(n_regimes)}
-    regime_names = np.array([label_to_name[s] for s in hidden_states])
-    regime_names = np.concatenate([[regime_names[0]], regime_names])
+    detector = SimpleRegimeDetector(adx_threshold=20.0)
+    regime_labels, regime_names = detector.detect(feat_df)
     return regime_names, detector
 
 
 def make_walk_forward_strategy(
     column_index: Dict[str, int],
-    n_regimes: int = N_REGIMES,
     sl_atr: float = SL_ATR,
     tp_atr: float = TP_ATR,
+    breakeven_atr: float = BREAKEVEN_ATR,
+    max_hold_bars: int = MAX_HOLD_BARS,
     spread_pips: float = SPREAD_PIPS,
     commission_per_lot: float = COMMISSION_PER_LOT,
     burn_in: int = BURN_IN,
@@ -392,11 +421,10 @@ def make_walk_forward_strategy(
     """Build strategy_fn for PurgedWalkForward.run().
 
     Per fold:
-      1. Fit HMM on train prices
-      2. Predict regimes on test prices
-      3. Build signal function from test features
-      4. Run VectorizedBacktester on test window
-      5. Return list of trade dicts with 'pnl'
+      1. Detect regimes on test features via ADX
+      2. Build signal function from test features
+      3. Run VectorizedBacktester on test window
+      4. Return list of trade dicts with 'pnl'
     """
 
     def strategy_fn(
@@ -405,8 +433,8 @@ def make_walk_forward_strategy(
         train_feat: Optional[np.ndarray],
         test_feat: Optional[np.ndarray],
     ) -> List[Dict]:
-        # 1. Fit HMM on training data
-        test_regimes, _ = predict_regimes_hmm(test_prices, n_regimes)
+        # 1. Detect regimes on test data via ADX
+        test_regimes, _ = predict_regimes_adx(test_prices, test_feat, column_index)
 
         # 2. Build test features DataFrame from numpy array + column index
         if test_feat is not None and len(column_index) > 0:
@@ -443,6 +471,8 @@ def make_walk_forward_strategy(
             regimes=test_regimes,
             sl_atr=sl_atr,
             tp_atr=tp_atr,
+            breakeven_atr=breakeven_atr,
+            max_hold_bars=max_hold_bars,
         )
 
         return [{"pnl": float(p)} for p in result.trade_pnls]
@@ -818,8 +848,9 @@ def main():
     # ── 3. Prepare feature arrays ──
     logger.info("─" * 60)
     logger.info("STEP 3/5: Building feature matrix")
-    # Columns to exclude (non-feature)
-    exclude_cols = {"timestamp", "open", "high", "low", "close", "volume"}
+    # Columns to exclude (non-feature).
+    # Keep high/low for breakout strategy in walk-forward.
+    exclude_cols = {"timestamp", "open", "close", "volume"}
     feature_cols = [c for c in df_features.columns if c not in exclude_cols]
     features_np = df_features[feature_cols].values.astype(float)
     column_index = {col: idx for idx, col in enumerate(feature_cols)}
