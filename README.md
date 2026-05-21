@@ -1,6 +1,8 @@
-# RTS: Agentic Moneybot System Elite v4.0
+# RTS: Agentic Moneybot System Elite v5.0
 
-**Autonomous multi-agent AI forex trading system** — 20 self-aware agents collaborating through an event-driven architecture with real-time market data ingestion, multi-source sentiment analysis, ensemble ML models (PPO + LSTM-CNN + classifiers), and institutional-grade risk management.
+**Autonomous multi-agent AI forex trading system** — 20 self-aware agents with 10 adaptive strategies (5 rule-based + 4 PPO reinforcement learning + 1 LSTM-CNN), real-time market data ingestion, multi-source sentiment analysis, per-symbol AI learning, and institutional-grade risk management.
+
+The system monitors **11 forex symbols** simultaneously, automatically learns which strategies work on each pair, adapts to market conditions in real-time, and manages trades with ATR-based trailing stops, partial profit taking, and correlation-aware position sizing.
 
 > ⚠️ **Disclaimer:** Trading involves substantial risk. This software is for educational/research purposes. Always test thoroughly on demo accounts before using real money. Past performance does not guarantee future results.
 
@@ -41,6 +43,39 @@ src/agentic/
     ├── circuit_breaker_agent.py   # Market health checks (velocity, spread, volume)
     ├── cost_agent.py              # Transaction cost monitoring
     └── screener_agent.py          # Autonomous instrument screener
+```
+
+### Adaptive AI Strategy Selector
+
+```
+MARKET DATA (11 symbols)
+  → ADX (trend strength) → trending/ranging/volatile/crisis
+  → ATR (volatility) → normal/high/extreme
+  → Session (UTC) → london/newyork/asia/overlap
+       ↓
+STRATEGY SELECTOR (picks best strategy for conditions)
+  → Trending: Breakout (SL=2.0, TP=5.0) OR Time Series Momentum (SL=2.5, TP=4.0)
+  → Ranging: Mean Reversion (SL=1.5, TP=2.0) OR Bollinger Squeeze (SL=2.0, TP=3.0)
+  → Volatile: Volatility Mean Reversion (SL=1.5, TP=2.0)
+  → All: PPO agents (4 regimes) + LSTM-CNN
+       ↓
+PER-SYMBOL LEARNING (auto-optimizes over time)
+  → Each symbol × strategy tracked independently
+  → After 10 trades: disable if Sharpe < -0.5
+  → After 50 global trades: re-evaluate blocked symbols
+  → Auto-block symbols where no strategy works
+       ↓
+MoE ENSEMBLE (weights by recent performance)
+  → weight = Sharpe × regime_match × Elo × confidence
+  → Best strategy gets 1.5× weight
+  → Auto-disable losers at 0.1× weight
+       ↓
+EXECUTION (per-strategy optimized)
+  → Strategy-specific SL/TP
+  → ATR-based trailing (breakeven at 1.0×ATR, trail at 0.5×ATR)
+  → Partial profit taking (30% at 1.5×, 30% at 2.5× ATR)
+  → Correlation filter (blocks EURUSD+GBPUSD, AUDUSD+NZDUSD, etc.)
+  → Up to 3 simultaneous uncorrelated positions
 ```
 
 ### Agent Lifecycle
@@ -166,7 +201,7 @@ All models operate on a consistent 49-feature vector per bar, ensuring dimension
 | **Daily drawdown** | 5% max daily loss, 10% total max drawdown |
 | **Correlation filter** | Blocks trades >0.80 correlation with open positions |
 | **Circuit breaker** | Flash crash, liquidity drought, volume anomaly, volatility spike |
-| **Trailing stop** | 3-tier: break-even → ATR×2 → current - ATR×0.5 |
+| **Trailing stop** | ATR-based: breakeven at 1.0×ATR, trail at 0.5×ATR behind best price |
 | **Economic calendar** | Auto-suppresses trading 2h before high-impact events (NFP, FOMC, CPI) |
 | **Stale-data halt** | Rejects signals when market data exceeds 60s staleness |
 | **Adaptive sizing** | Dynamic Kelly multiplier from combined regime × sentiment state |
@@ -201,6 +236,17 @@ python -m src.agentic.main_agentic --mode paper          # Paper trading (defaul
 python -m src.agentic.main_agentic --mode paper --timeout 120  # Auto-stop after 120s
 python -m src.agentic.main_agentic --mode live            # Live trading with cTrader
 ```
+
+### Telegram Alerts
+The system sends 8 types of enhanced real-time alerts to Telegram:
+- 📈 **Trade Opened** — Strategy, session, confidence, SL/TP, account balance
+- 💰 **Trade Closed (Win)** — PnL, updated balance, exit price
+- 💥 **Trade Closed (Loss)** — Loss amount, encouraging message
+- 📊 **Daily Summary** — Per-symbol active/learning status, PnL, Sharpe
+- ⚠️ **Risk Alert** — Circuit breaker, volatility spikes, drawdown warnings
+- 🎯 **Strategy Performance** — Per-strategy Sharpe, auto-disable notices
+- 🔄 **Symbol Status** — When blocked symbols get re-enabled for testing
+- 🤖 **System Startup** — Confirmation that all systems are online
 
 ### Docker Setup
 ```bash

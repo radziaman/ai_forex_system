@@ -35,7 +35,7 @@ class TestAppConfig:
 
     def test_from_yaml_reads_real_config(self):
         cfg = AppConfig.from_yaml("config.yaml")
-        assert cfg.trading.max_positions == 10
+        assert cfg.trading.max_positions == 3  # multi-position enabled
         assert cfg.features.timeframes == ["15m", "1h", "4h"]
         assert cfg.trading.commission_per_lot == 7.0
 

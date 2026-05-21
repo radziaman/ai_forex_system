@@ -265,6 +265,77 @@ class CtraderClient:
         response = await self._recv_msg()
         return bool(response and response.payloadType == 2101)
 
+    async def _refresh_access_token(self) -> bool:
+        """Refresh the access token using the refresh token from environment."""
+        try:
+            import requests as http_requests
+
+            # Load refresh token from env
+            import os, re
+
+            env_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"
+            )
+            if not os.path.exists(env_path):
+                logger.warning("Cannot refresh token: .env not found")
+                return False
+
+            with open(env_path) as f:
+                env = f.read()
+
+            refresh_token = re.search(r"CTRADER_REFRESH_TOKEN=(\S+)", env)
+            if not refresh_token:
+                logger.warning("Cannot refresh token: no refresh token in .env")
+                return False
+
+            refresh_token = refresh_token.group(1)
+            resp = http_requests.post(
+                "https://openapi.ctrader.com/apps/token",
+                data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": refresh_token,
+                    "client_id": self.app_id,
+                    "client_secret": self.app_secret,
+                },
+                timeout=30,
+            )
+
+            if resp.status_code != 200:
+                logger.warning(f"Token refresh failed: {resp.status_code}")
+                return False
+
+            data = resp.json()
+            new_token = data.get("accessToken") or data.get("access_token", "")
+            new_refresh = data.get("refreshToken") or data.get("refresh_token", "")
+
+            if not new_token or len(new_token) < 10:
+                logger.warning("Token refresh returned empty token")
+                return False
+
+            # Update in-memory token
+            self.access_token = new_token
+
+            # Persist to .env
+            env = re.sub(
+                r"CTRADER_ACCESS_TOKEN=.*",
+                f"CTRADER_ACCESS_TOKEN={new_token}",
+                env,
+            )
+            if new_refresh:
+                env = re.sub(
+                    r"CTRADER_REFRESH_TOKEN=.*",
+                    f"CTRADER_REFRESH_TOKEN={new_refresh}",
+                    env,
+                )
+            with open(env_path, "w") as f:
+                f.write(env)
+
+            logger.info("cTrader access token refreshed successfully")
+            return True
+        except Exception as e:
+            logger.warning(f"Token refresh error: {e}")
+            return False
+
     async def _auth_account(self) -> bool:
         # Step 1: Get account list by access token
         from ctrader_open_api.messages.OpenApiMessages_pb2 import (
@@ -317,6 +388,18 @@ class CtraderClient:
             return True
         elif response and response.payloadType == 2142:
             logger.warning(f"Account auth failed: Invalid/expired access token (2142)")
+            # Try refreshing the token and retry once
+            logger.info("Attempting token refresh...")
+            if await self._refresh_access_token():
+                logger.info("Token refreshed, retrying account auth...")
+                acc_auth.accessToken = self.access_token
+                if not await self._send_msg(2102, acc_auth):
+                    return False
+                response2 = await self._recv_msg()
+                if response2 and response2.payloadType == 2103:
+                    self._authenticated = True
+                    return True
+                logger.warning("Account auth still failed after token refresh")
             return False
         elif response:
             logger.warning(
@@ -417,6 +500,40 @@ class CtraderClient:
         if self.on_order_update:
             self.on_order_update(result)
         return result
+
+    async def modify_position(
+        self, position_id: int, sl: float = None, tp: float = None
+    ) -> bool:
+        """Modify stop loss and/or take profit on an existing position.
+
+        Args:
+            position_id: cTrader position ID
+            sl: New stop loss price (absolute, e.g. 1.1150). None = leave unchanged.
+            tp: New take profit price (absolute). None = leave unchanged.
+
+        Returns:
+            True if modification request was sent successfully.
+        """
+        if not self._authenticated or not self._is_connected:
+            return False
+        try:
+            from ctrader_open_api.messages.OpenApiMessages_pb2 import (
+                ProtoOAAmendPositionSLTPReq,
+            )
+
+            req = ProtoOAAmendPositionSLTPReq()
+            req.ctidTraderAccountId = self.account_id
+            req.positionId = position_id
+            if sl is not None:
+                req.stopLoss = int(sl * 100)
+            if tp is not None:
+                req.takeProfit = int(tp * 100)
+            if await self._send_msg(2110, req):
+                return True
+            return False
+        except Exception as e:
+            logger.warning(f"Failed to modify position {position_id}: {e}")
+            return False
 
     async def disconnect(self):
         self._is_connected = False
@@ -649,6 +766,9 @@ class CtraderClient:
             # Update best bid/ask
             md.bid = md.bids[0].price if md.bids else 0.0
             md.ask = md.asks[0].price if md.asks else 0.0
+            # Safety: ensure bid < ask; swap if cTrader provides reversed
+            if md.bid > md.ask and md.ask > 0:
+                md.bid, md.ask = md.ask, md.bid
             md.spread = (md.ask - md.bid) if (md.ask and md.bid) else 0.0
             md.volume = sum(b.size for b in md.bids) + sum(a.size for a in md.asks)
 

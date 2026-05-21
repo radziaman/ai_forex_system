@@ -121,6 +121,9 @@ PAYLOAD_SCHEMAS: Dict[MessageType, Dict[str, Union[type, Tuple[type, ...]]]] = {
         "reason": str,
         "timestamp": (int, float),
     },
+    MessageType.POSITION_MODIFIED: {
+        "position_id": (int, str),
+    },
     MessageType.TICK_RECEIVED: {
         "symbol": str,
         "bid": (int, float),

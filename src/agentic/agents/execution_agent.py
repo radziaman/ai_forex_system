@@ -47,16 +47,19 @@ class ExecutionAgent(BaseAgent):
         self._executed = 0
         self._failed = 0
         self._reconnecting = False
+        self._position_signals: Dict[int, Dict] = {}  # position_id -> signal payload
 
         self.subscribe(MessageType.RISK_APPROVED)
         self.subscribe(MessageType.AGENT_DIRECTIVE)
         self.subscribe(MessageType.DIAGNOSTIC_REQUEST)
         self.subscribe(MessageType.INSTRUMENTS_UPDATED)
+        self.subscribe(MessageType.POSITION_MODIFIED)
 
-        # Active symbols: starts with defaults, dynamically updated by screener
+        # Active symbols: starts with all core SYMBOLS, dynamically updated by screener
         from data.data_manager import SYMBOLS
 
         self._active_symbols = list(SYMBOLS)
+        self._core_symbols = list(SYMBOLS)  # Preserved for subscription fallback
 
     async def _on_start(self):
         self.consciousness.current_intention = "initializing execution provider"
@@ -108,6 +111,24 @@ class ExecutionAgent(BaseAgent):
 
                     pip_size = CostModel.pip_to_price(symbol)
                     spread_pips = (ask - bid) / pip_size if pip_size > 0 else 0
+
+                    # Quality check: reject ticks with abnormal spreads
+                    # Use percentage of price (works across all asset types)
+                    mid_price = (bid + ask) / 2
+                    spread_pct = (
+                        abs(spread_pips * pip_size / mid_price * 100)
+                        if mid_price > 0
+                        else 0
+                    )
+                    MAX_GOOD_SPREAD_PCT = 0.08  # 0.08% of price (EURUSD: ~1 pip, XAUUSD: ~$1.84, XTIUSD: ~$0.06)
+                    if spread_pct > MAX_GOOD_SPREAD_PCT or spread_pips < 0:
+                        logger.warning(
+                            f"TICK REJECTED {symbol}: spread={spread_pips:.1f}pips "
+                            f"({spread_pct:.3f}% of price, max={MAX_GOOD_SPREAD_PCT}%)"
+                        )
+                        # Don't publish bad ticks to the bus
+                        return
+
                     self.set_world(f"data.spread.{symbol}", round(spread_pips, 2))
                     self.set_world(f"data.bid.{symbol}", round(float(bid), 5))
                     self.set_world(f"data.ask.{symbol}", round(float(ask), 5))
@@ -157,14 +178,23 @@ class ExecutionAgent(BaseAgent):
 
             raw = getattr(self.ctrader, "raw", None)
             if raw and hasattr(raw, "subscribe_depth"):
-                for sym in self._active_symbols:
+                succeeded = 0
+                # Subscribe to ALL core symbols (not just _active_symbols which screener may have reduced)
+                for sym in self._core_symbols:
                     try:
                         sid = get_symbol_id(sym)
-                        await raw.subscribe_depth(sid)
+                        ok = await raw.subscribe_depth(sid)
+                        if ok:
+                            succeeded += 1
+                        else:
+                            logger.info(
+                                f"Depth subscribe returned false for {sym} (id={sid}) — may need market data subscription"
+                            )
+                        await asyncio.sleep(0.1)  # Rate limit protection
                     except Exception as e:
                         logger.debug(f"Depth subscribe failed for {sym}: {e}")
                 self.log_state(
-                    f"Subscribed to depth quotes for {len(self._active_symbols)} active symbols"
+                    f"Depth subscriptions: {succeeded}/{len(self._active_symbols)} symbols subscribed"
                 )
         else:
             self.log_state(f"Running in {engine_mode} mode (simulation)", "warning")
@@ -196,13 +226,20 @@ class ExecutionAgent(BaseAgent):
                     raw.on_disconnect = lambda: asyncio.ensure_future(
                         self._on_disconnect()
                     )
-                for sym in self._active_symbols:
+                succeeded = 0
+                for sym in self._core_symbols:
                     try:
                         sid = get_symbol_id(sym)
                         if raw and hasattr(raw, "subscribe_depth"):
-                            await raw.subscribe_depth(sid)
+                            ok = await raw.subscribe_depth(sid)
+                            if ok:
+                                succeeded += 1
+                            await asyncio.sleep(0.1)
                     except Exception:
                         pass
+                self.log_state(
+                    f"Reconnect depth: {succeeded}/{len(self._core_symbols)} symbols"
+                )
                 self._executed = 0
                 self._failed = 0
                 self.log_state(
@@ -267,11 +304,21 @@ class ExecutionAgent(BaseAgent):
             assert self.engine is not None
             success = await self.engine.close_position(int(pid), reason)
             if success:
+                # Get PnL from the closed trade
+                pnl = 0.0
+                trade = self.engine.get_trade_by_id(pid)
+                if trade:
+                    pnl = trade.pnl
+                # Look up cached signal data
+                signal_data = self._position_signals.pop(pid, {})
                 await self.send(
                     MessageType.POSITION_CLOSED,
                     payload={
                         "position_id": pid,
                         "reason": reason,
+                        "pnl": pnl,
+                        "symbol": signal_data.get("symbol", ""),
+                        "signal": signal_data,
                         "timestamp": time.time(),
                     },
                     priority=MessagePriority.NORMAL,
@@ -292,10 +339,20 @@ class ExecutionAgent(BaseAgent):
                 ]
                 if new_symbols:
                     old_count = len(self._active_symbols)
-                    self._active_symbols = new_symbols
+                    # Only trade core SYMBOLS — screener picks are informational only
+                    from data.data_manager import SYMBOLS as CORE_SYMBOLS
+
+                    self._active_symbols = list(CORE_SYMBOLS)
                     self.log_state(
-                        f"Screener updated: {len(new_symbols)} tradeable instruments "
-                        f"(was {old_count}) — depth subscriptions will update on reconnect"
+                        f"Core symbols maintained: {len(self._active_symbols)} pairs "
+                        f"(screener found {len(new_symbols)} additional instruments — informational)"
+                    )
+                    self._active_symbols = list(
+                        dict.fromkeys(new_symbols)
+                    )  # deduplicate
+                    self.log_state(
+                        f"Screener updated: {len(new_symbols)} instruments "
+                        f"(was {old_count}) — EURUSD always subscribed"
                     )
             return
 
@@ -319,6 +376,51 @@ class ExecutionAgent(BaseAgent):
             elif action == "reconnect":
                 self.log_state("Reconnecting to cTrader...")
                 await self._reconnect()
+        elif message.msg_type == MessageType.POSITION_MODIFIED:
+            payload = message.payload if isinstance(message.payload, dict) else {}
+            pid = payload.get("position_id", 0)
+            sl = payload.get("sl")
+            tp = payload.get("tp")
+            close_ratio = payload.get("close_ratio", 0)
+            symbol = payload.get("symbol", "")
+            if pid:
+                assert self.engine is not None
+                # Handle partial close
+                if close_ratio > 0:
+                    pnl = self.engine.partial_close(int(pid), close_ratio)
+                    if pnl is not None:
+                        self.log_state(
+                            f"Partial close {pid} ({symbol}): "
+                            f"{close_ratio*100:.0f}%, PnL=${pnl:.2f}"
+                        )
+                        # Apply SL update for remaining position
+                        if sl is not None:
+                            await self.engine.modify_position(int(pid), sl=sl, tp=tp)
+                        # Notify system about the partial close
+                        await self.send(
+                            MessageType.POSITION_CLOSED,
+                            payload={
+                                "position_id": pid,
+                                "reason": "partial_take_profit",
+                                "pnl": pnl,
+                                "symbol": symbol,
+                                "timestamp": time.time(),
+                            },
+                        )
+                    else:
+                        self.log_state(
+                            f"Failed to partial close position {pid}", "warning"
+                        )
+                else:
+                    success = await self.engine.modify_position(int(pid), sl=sl, tp=tp)
+                    if success:
+                        self.log_state(
+                            f"Modified position {pid} ({symbol}): "
+                            f"{'SL=' + str(sl) if sl is not None else ''}"
+                            f"{' TP=' + str(tp) if tp is not None else ''}"
+                        )
+                    else:
+                        self.log_state(f"Failed to modify position {pid}", "warning")
         elif message.msg_type == MessageType.DIAGNOSTIC_REQUEST:
             await self.send(
                 MessageType.DIAGNOSTIC_RESULT,
@@ -357,6 +459,8 @@ class ExecutionAgent(BaseAgent):
         )
         if trade:
             self._executed += 1
+            # Cache original signal for PnL tracking at close time
+            self._position_signals[trade.position_id] = signal
             await self.send(
                 MessageType.EXECUTION_RESULT,
                 payload={
@@ -366,6 +470,7 @@ class ExecutionAgent(BaseAgent):
                     "volume": volume,
                     "filled_price": trade.entry_price,
                     "position_id": trade.position_id,
+                    "signal": signal,  # Include original signal for expert tracking
                     "timestamp": time.time(),
                 },
                 priority=MessagePriority.HIGH,
@@ -379,6 +484,11 @@ class ExecutionAgent(BaseAgent):
                     "direction": direction,
                     "volume": volume,
                     "entry": trade.entry_price,
+                    "sl_price": trade.sl,
+                    "tp_price": trade.tp,
+                    "strategy": payload.get("strategy", "?"),
+                    "session": payload.get("session", "?"),
+                    "confidence": payload.get("confidence", 0.5),
                 },
             )
         else:

@@ -314,12 +314,16 @@ class AgenticOrchestrator:
 
                     regime = self.world.get("regime.current", "?")
                     positions = self.world.get("account.open_positions", 0)
+                    balance = self.world.get("account.balance", 0)
+                    equity = self.world.get("account.equity", 0)
                     sharpe = perf.get("sharpe", 0)
                     pnl = perf.get("total_pnl", 0)
 
                     logger.info(
                         f"[status] agents={health['alive']}/{health['total']} "
                         f"health={health['health_pct']:.0f}% "
+                        f"bal=${balance:,.0f} "
+                        f"eq=${equity:,.0f} "
                         f"regime={regime} "
                         f"pos={positions} "
                         f"sharpe={sharpe:.2f} "

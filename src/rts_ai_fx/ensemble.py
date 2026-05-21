@@ -48,6 +48,11 @@ class MoEEnsemble:
         self.maml_agent = None  # MAML for meta-learning
         self.use_sharpe_weighting: bool = True
         self.use_maml_adaptation: bool = True
+        self._tracker_weight_fn: Optional[Callable] = None
+
+    def set_tracker_weight_fn(self, fn: Callable):
+        """Set external weight function from StrategyTracker."""
+        self._tracker_weight_fn = fn
 
     def add_expert(
         self,
@@ -109,8 +114,19 @@ class MoEEnsemble:
             # Confidence-adjusted weight
             conf_weight = 0.5 + 0.5 * conf
 
+            # Strategy tracker dynamic weight (Phase 4: MoE dynamic weighting)
+            tracker_weight = 1.0
+            if self._tracker_weight_fn:
+                tracker_weight = self._tracker_weight_fn(expert.name, regime)
+
             # Combined weight
-            weight = regime_weight * elo_weight * sharpe_weight * conf_weight
+            weight = (
+                regime_weight
+                * elo_weight
+                * sharpe_weight
+                * conf_weight
+                * tracker_weight
+            )
             predictions.append(pred)
             confidences.append(conf)
             weight_values.append(weight)
@@ -177,13 +193,14 @@ class MoEEnsemble:
 
     def update_expert_result(self, expert_name: str, pnl: float):
         """Track expert performance for win rate calculation."""
-        if expert_name in self.expert_win_rates:
-            self.expert_win_rates[expert_name]["total"] += 1
-            if pnl > 0:
-                self.expert_win_rates[expert_name]["wins"] += 1
-            # Update Sharpe if we have enough data
-            if expert_name in self.expert_returns:
-                self.update_sharpe(expert_name, self.expert_returns[expert_name][-20:])
+        # Ensure defaultdict entry exists
+        _ = self.expert_win_rates[expert_name]
+        self.expert_win_rates[expert_name]["total"] += 1
+        if pnl > 0:
+            self.expert_win_rates[expert_name]["wins"] += 1
+        # Update Sharpe if we have enough data
+        if expert_name in self.expert_returns:
+            self.update_sharpe(expert_name, self.expert_returns[expert_name][-20:])
 
     def should_trade(
         self,
@@ -265,7 +282,13 @@ class MoEEnsemble:
             return "BUY" if ensemble_price > 0 else "SELL"
         return "HOLD"
 
-    def update_elo(self, name: str, was_correct: bool, k: float = 32.0):
+    def update_elo(self, name: str, was_correct: bool, k: Optional[float] = None):
+        """Update Elo rating with automatic decay of k-factor.
+        Phase 5: k decays as expertise accumulates: k = 32 / (1 + trades/100).
+        """
+        if k is None:
+            total = self.expert_win_rates.get(name, {}).get("total", 0)
+            k = 32.0 / (1.0 + total / 100.0)
         self.elo_ratings[name] = self.elo_ratings.get(name, 1200.0) + (
             k if was_correct else -k
         )

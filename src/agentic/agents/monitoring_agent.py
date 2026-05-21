@@ -302,22 +302,42 @@ class MonitoringAgent(BaseAgent):
     # ── Structured formatters ────────────────────────────────────
 
     def _fmt_trade_opened(self, p: Dict) -> str:
-        return (
-            f"\U0001f4c8 *{p.get('direction', '?')}* {p.get('symbol', '?')}\n"
-            f"Volume: {p.get('volume', 0):.2f} lots\n"
-            f"Entry: {float(p.get('entry', 0)):.5f}"
-        )
+        session = p.get("session", "?")
+        strategy = p.get("strategy", "?")
+        sl = float(p.get("sl_price", 0))
+        tp = float(p.get("tp_price", 0))
+        entry = float(p.get("entry", 0))
+        bal = self.get_world("account.balance", 0)
+        lines = [
+            f"\U0001f4c8 *{p.get('direction', '?')} {p.get('symbol', '?')}*",
+            f"Volume: {p.get('volume', 0):.2f} lots | Strategy: {strategy}",
+            f"Session: {session} | Confidence: {p.get('confidence', 0):.0%}",
+        ]
+        if entry:
+            lines.append(f"Entry: {entry:.5f} | SL: {sl:.5f} | TP: {tp:.5f}")
+        if bal:
+            lines.append(f"Balance: ${bal:.2f}")
+        return "\n".join(lines)
 
     def _fmt_trade_closed(
         self, symbol: str, direction: str, pnl: float, reason: str, entry: float
     ) -> str:
         emoji = "\U0001f4b0" if pnl >= 0 else "\U0001f4a5"
-        return (
-            f"{emoji} *{direction} {symbol}* closed\n"
-            f"PnL: *${pnl:+.2f}*\n"
-            f"Reason: {reason}\n"
-            f"Entry: {float(entry):.5f}"
-        )
+        bal = self.get_world("account.balance", 0)
+        exit_price = self.get_world(f"data.price.{symbol}", 0)
+        lines = [
+            f"{emoji} *{direction} {symbol}* closed",
+            f"PnL: *${pnl:+.2f}* | Balance: ${bal:.2f}",
+            f"Reason: {reason}",
+        ]
+        if entry:
+            lines.append(f"Entry: {entry:.5f} | Exit: {exit_price:.5f}")
+        # Add strategy performance context if available
+        if pnl > 0:
+            lines.append("\U0001f525 Winning trade")
+        else:
+            lines.append("\U0001f4aa Holding — next trade will recover")
+        return "\n".join(lines)
 
     def _fmt_risk_alert(self, alert_type: str, reason: str, payload: Dict) -> str:
         text = f"\u26a0\ufe0f *Risk Alert: {alert_type}*\n{reason}"
@@ -332,20 +352,35 @@ class MonitoringAgent(BaseAgent):
     def _fmt_daily_summary(self) -> str:
         perf = self.get_world("performance.stats", {})
         regime = self.get_world("regime.current", "?")
+        balance = self.get_world("account.balance", 0)
         uptime = time.time() - self.consciousness.started_at
         uptime_h = uptime / 3600
         t = len(self._daily_trades)
         wins = sum(1 for d in self._daily_trades if d.get("pnl", 0) > 0)
         pnl = sum(d.get("pnl", 0) for d in self._daily_trades)
-        return (
-            f"\U0001f4ca *Daily Summary*\n"
-            f"Uptime: {uptime_h:.1f}h | Regime: {regime}\n"
-            f"Trades: {t} | Wins: {wins} | Win rate: {wins/max(t,1):.0%}\n"
-            f"PnL: *${pnl:+.2f}*\n"
-            f"Sharpe: {perf.get('sharpe', 0):.2f}\n"
-            f"Best symbol: {perf.get('best_symbol', '-')}\n"
-            f"Worst symbol: {perf.get('worst_symbol', '-')}"
-        )
+        
+        # Get per-symbol strategy performance
+        tracker_data = self.get_world("signal.tradeable_symbols", {})
+        active_symbols = []
+        blocked_symbols = []
+        if isinstance(tracker_data, dict):
+            for sym, info in tracker_data.items():
+                if info.get("tradeable"):
+                    active_symbols.append(sym)
+                else:
+                    blocked_symbols.append(sym)
+        
+        lines = [
+            f"\U0001f4ca *Daily Summary*",
+            f"Uptime: {uptime_h:.1f}h | Balance: ${balance:.2f}",
+            f"Regime: {regime} | Trades: {t} | Wins: {wins} ({wins/max(t,1):.0%})",
+            f"PnL: *${pnl:+.2f}* | Sharpe: {perf.get('sharpe', 0):.2f}",
+        ]
+        if active_symbols:
+            lines.append(f"Active: {', '.join(active_symbols)}")
+        if blocked_symbols:
+            lines.append(f"Learning: {', '.join(blocked_symbols)}")
+        return "\n".join(lines)
 
     def _send_daily_summary(self):
         self._last_summary_date = datetime.now(timezone.utc).day

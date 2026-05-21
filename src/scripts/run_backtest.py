@@ -36,6 +36,9 @@ from validation.monte_carlo import MonteCarloSigTest, SigTestResult  # noqa: E40
 DEFAULT_DATA_PATH = os.path.join(
     os.path.dirname(__file__), "..", "..", "data", "historical", "EURUSD_1h.csv"
 )
+DEFAULT_DATA_PATH_4H = os.path.join(
+    os.path.dirname(__file__), "..", "..", "data", "historical", "EURUSD_4h.csv"
+)
 
 REGIME_NAMES = ["crisis", "ranging", "volatile", "trending"]
 
@@ -102,6 +105,49 @@ def load_and_prepare_data(path: str) -> Tuple[np.ndarray, pd.DataFrame, pd.DataF
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Section A2: 4h Data Loading & Alignment
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def load_and_prepare_4h_data(
+    path_4h: str,
+    timestamps_1h: pd.Series,
+) -> pd.DataFrame:
+    """Load 4h OHLCV CSV, compute features, align to 1h timestamps via forward-fill.
+
+    Uses pd.merge_asof with direction='backward' so each 1h bar gets the most
+    recent 4h bar's feature values.
+
+    Returns:
+        DataFrame with 4h features aligned to 1h timestamps (same length as timestamps_1h).
+    """
+    df = pd.read_csv(path_4h)
+    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s")
+    df = df.sort_values("timestamp").reset_index(drop=True)
+
+    logger.info(f"  Loaded {len(df)} 4h bars from {os.path.basename(path_4h)}")
+
+    df_features = compute_features(df)
+    logger.info(f"  4h features computed: {df_features.shape[1]} columns")
+
+    # Align 4h features to 1h timestamps via merge_asof (backward-looking)
+    df_1h_ts = pd.DataFrame({"timestamp": timestamps_1h}).sort_values("timestamp")
+    df_4h_for_merge = df_features.sort_values("timestamp")
+
+    aligned = pd.merge_asof(
+        df_1h_ts,
+        df_4h_for_merge,
+        on="timestamp",
+        direction="backward",
+    )
+
+    # Drop the 1h timestamp column we created for the merge (keep original 4h timestamp)
+    logger.info(f"  4h → 1h alignment complete: {len(aligned)} bars")
+
+    return aligned
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Section B: Regime Detection
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -147,43 +193,101 @@ def make_signal_function(
     regime_names: np.ndarray,
     features_df: pd.DataFrame,
     burn_in: int = BURN_IN,
+    features_4h_df: Optional[pd.DataFrame] = None,
 ) -> Callable:
     """Build a signal function that returns {-1, 0, 1} per bar.
 
-    Strategy logic per regime:
+    Strategy logic per regime (adaptive):
 
       **Trending** (ADX >= 20):
         Breakout following — don't fight the trend.
-        - Long: Close breaks ABOVE the highest high of the last 20 bars
-        - Short: Close breaks BELOW the lowest low of the last 20 bars
+        - Long: Close breaks ABOVE the highest high of the last 5 bars
+        - Short: Close breaks BELOW the lowest low of the last 5 bars
 
       **Ranging / Volatile** (ADX < 20):
-        Bollinger Band mean reversion.
-        - Long: Close touches or crosses BELOW the lower BB (20,2)
-        - Short: Close touches or crosses ABOVE the upper BB (20,2)
+        Mean reversion — fade extreme moves within a range.
+        - Long: z-score of close vs 20-bar SMA < -1.5 (price unusually low),
+                with RSI < 40 (oversold) and close > 200-bar SMA (don't fight major uptrend)
+        - Short: z-score > +1.5 (price unusually high),
+                 with RSI > 60 (overbought) and close < 200-bar SMA (don't fight major downtrend)
 
       **Crisis** (ATR/price > 2%):
         Always neutral (0).
 
-      **Filters (both regimes)**:
-        - Volatility filter: Skip if ATR/close > 0.015 or < 0.0005
-        - Minimum expected move: ATR * TP_ATR must exceed 2 * round_trip_cost
+      **Multi-timeframe Filter** (when features_4h_df is provided):
+        - Trending regime: 4h Trend Confirmation — Skip if 4h ADX < 20
+        - Ranging/Volatile regime: No 4h filter (mean reversion works intra-trend)
+
+      **Entry Filters (trending regime only)**:
+        - Breakout gap: close must exceed level by >= 0.5×ATR
+        - ADX Rising: ADX must be rising to confirm trend strength
+        - Prior consolidation: ATR must be contracting (volatility coiling)
+
+      **Entry Filters (ranging/volatile only)**:
+        - Trend filter: Only long if close > 200-bar SMA; only short if close < 200-bar SMA
+        - RSI confirmation: Long only if RSI < 40; short only if RSI > 60
     """
 
-    # Pre-compute breakout lookback series
+    # ── Session detection from hour_sin/hour_cos ──
+    # Reconstruct hour from cyclical encoding to determine trading session per bar.
+    sessions = np.empty(len(features_df), dtype=object)
+    if "hour_sin" in features_df.columns and "hour_cos" in features_df.columns:
+        hour_sin_vals = features_df["hour_sin"].values
+        hour_cos_vals = features_df["hour_cos"].values
+        hour_vals = (
+            np.round(np.arctan2(hour_sin_vals, hour_cos_vals) * 24 / (2 * np.pi)) % 24
+        ).astype(int)
+        for i, h in enumerate(hour_vals):
+            if 7 <= h < 12:
+                sessions[i] = "london"
+            elif 12 <= h < 16:
+                sessions[i] = "overlap"
+            elif 16 <= h < 21:
+                sessions[i] = "newyork"
+            elif h >= 21 or h < 7:
+                sessions[i] = "asia"
+            elif 8 <= h < 12:
+                sessions[i] = "pacific"
+            else:
+                sessions[i] = "asia"
+    else:
+        sessions[:] = "asia"
+
+    # Pre-compute breakout lookback series (for both 3-bar and 5-bar lookbacks)
     # Shift by 1 so we compare close[i] vs max(high[i-N .. i-1])
-    high_20_max = (
-        pd.Series(features_df["high"]).rolling(BREAKOUT_LOOKBACK).max().shift(1)
-    )
-    low_20_min = pd.Series(features_df["low"]).rolling(BREAKOUT_LOOKBACK).min().shift(1)
+    high_5_max = pd.Series(features_df["high"]).rolling(5).max().shift(1)
+    low_5_min = pd.Series(features_df["low"]).rolling(5).min().shift(1)
+    high_3_max = pd.Series(features_df["high"]).rolling(3).max().shift(1)
+    low_3_min = pd.Series(features_df["low"]).rolling(3).min().shift(1)
+
+    # ── Pre-compute mean reversion indicators ──
+    if "close" in features_df.columns:
+        close_series = features_df["close"]
+        sma_20 = close_series.rolling(20).mean()
+        std_20 = close_series.rolling(20).std()
+        z_score = np.where(std_20 > 1e-8, (close_series - sma_20) / std_20, 0.0)
+        sma_200 = close_series.rolling(200).mean()
+        has_sma_200 = True
+    else:
+        z_score = np.zeros(len(regime_names))
+        sma_200 = pd.Series(np.zeros(len(regime_names)))
+        has_sma_200 = False
 
     has_atr = "atr_14" in features_df.columns
     has_adx = "adx_14" in features_df.columns
     has_close = "close" in features_df.columns
     has_bb_lower = "bb_lower" in features_df.columns
     has_bb_upper = "bb_upper" in features_df.columns
+    has_bb_width = "bb_width" in features_df.columns
+    has_bb_mid = "bb_mid" in features_df.columns
+    has_rsi = "rsi_14" in features_df.columns
+    has_mom_1 = "mom_1" in features_df.columns
+    has_mom_5 = "mom_5" in features_df.columns
+    has_mom_10 = "mom_10" in features_df.columns
+    has_vol_ratio = "vol_ratio" in features_df.columns
 
     adx_vals = features_df["adx_14"] if has_adx else None
+    rsi_vals = features_df["rsi_14"] if has_rsi else None
 
     pip_size = 0.0001
     lot_size = 100000
@@ -194,10 +298,19 @@ def make_signal_function(
     VOLATILITY_MIN = 0.0005  # 0.05% — too dead
     VOLATILITY_MAX = 0.015  # 1.5% — too risky
 
+    # 4h trend confirmation reference
+    features_4h = features_4h_df
+    has_4h_data = features_4h is not None and "adx_14" in features_4h.columns
+
+    # Track which strategy produced each signal (for diagnostics)
+    strategy_counts: Dict[str, int] = {}
+
     def signal_fn(
         prices_arg: np.ndarray,
         features_arg: Optional[np.ndarray] = None,
     ) -> np.ndarray:
+        nonlocal strategy_counts
+        strategy_counts = {}
         n = len(regime_names)
         signals = np.zeros(n, dtype=int)
 
@@ -232,51 +345,262 @@ def make_signal_function(
                 continue
 
             # ═══════════════════════════════════════════════════════════════
-            # Trending regime — Breakout following
+            # Trending regime — Breakout following + Time Series Momentum
             # ═══════════════════════════════════════════════════════════════
             if regime == "trending":
-                hh = high_20_max.iloc[i]
-                ll = low_20_min.iloc[i]
+                session = sessions[i]
+                can_breakout = False
+                hh, ll = None, None
 
-                if pd.isna(hh) or pd.isna(ll):
-                    continue
+                # Session-based breakout lookback:
+                #   Asia: skip breakout entirely (low volatility)
+                #   London: aggressive 3-bar lookback
+                #   All other sessions: standard 5-bar lookback
+                if session == "asia":
+                    can_breakout = False  # No breakouts in Asia
+                elif session == "london":
+                    hh = high_3_max.iloc[i]
+                    ll = low_3_min.iloc[i]
+                    can_breakout = not (pd.isna(hh) or pd.isna(ll))
+                else:
+                    hh = high_5_max.iloc[i]
+                    ll = low_5_min.iloc[i]
+                    can_breakout = not (pd.isna(hh) or pd.isna(ll))
 
-                # ── 1. Breakout Gap Filter: require close >= 0.5×ATR from level ──
-                BREAKOUT_GAP_MULTIPLE = 0.5
-                if close > hh:
-                    if (close - hh) < BREAKOUT_GAP_MULTIPLE * atr_val:
-                        continue
-                elif close < ll:
-                    if (ll - close) < BREAKOUT_GAP_MULTIPLE * atr_val:
-                        continue
+                # ── 4h Trend Confirmation (breakout only) ──
+                if can_breakout and has_4h_data:
+                    adx_4h = features_4h["adx_14"].iloc[i]
+                    if pd.isna(adx_4h) or adx_4h < 20:
+                        can_breakout = False  # Not trending on 4h — skip breakout only
 
-                # ── 2. ADX Rising Confirmation: trend must be strengthening ──
-                if has_adx and i > burn_in:
+                # ── Breakout Gap Filter ──
+                if can_breakout:
+                    BREAKOUT_GAP_MULTIPLE = 0.5
+                    if close > hh:
+                        if (close - hh) < BREAKOUT_GAP_MULTIPLE * atr_val:
+                            can_breakout = False
+                    elif close < ll:
+                        if (ll - close) < BREAKOUT_GAP_MULTIPLE * atr_val:
+                            can_breakout = False
+                    else:
+                        can_breakout = False  # Not a breakout bar
+
+                # ── ADX Rising Confirmation ──
+                if can_breakout and has_adx and i > burn_in:
                     adx_now = adx_vals.iloc[i]
                     adx_prev = adx_vals.iloc[i - 1]
                     if not pd.isna(adx_now) and not pd.isna(adx_prev):
                         if adx_now <= adx_prev:
-                            continue
+                            can_breakout = False
 
-                # ── 3. Prior Consolidation (Coiling): ATR must be declining ──
-                CONSOLIDATION_LOOKBACK = 5
-                if i >= CONSOLIDATION_LOOKBACK:
-                    atr_now = atr_val
-                    atr_before = features_df["atr_14"].iloc[i - CONSOLIDATION_LOOKBACK]
-                    if not pd.isna(atr_now) and not pd.isna(atr_before):
-                        if atr_now >= atr_before:
-                            continue
+                # ── Prior Consolidation (Coiling): ATR must be declining ──
+                if can_breakout:
+                    CONSOLIDATION_LOOKBACK = 5
+                    if i >= CONSOLIDATION_LOOKBACK:
+                        atr_now = atr_val
+                        atr_before = features_df["atr_14"].iloc[
+                            i - CONSOLIDATION_LOOKBACK
+                        ]
+                        if not pd.isna(atr_now) and not pd.isna(atr_before):
+                            if atr_now >= atr_before:
+                                can_breakout = False
 
-                if close > hh:
-                    signals[i] = 1  # Upside breakout → long
-                elif close < ll:
-                    signals[i] = -1  # Downside breakout → short
+                # ── Breakout Entry ──
+                if can_breakout:
+                    if close > hh:
+                        signals[i] = 1  # Upside breakout → long
+                        strategy_counts["breakout"] = (
+                            strategy_counts.get("breakout", 0) + 1
+                        )
+                    elif close < ll:
+                        signals[i] = -1  # Downside breakout → short
+                        strategy_counts["breakout"] = (
+                            strategy_counts.get("breakout", 0) + 1
+                        )
+
+                # ── Time Series Momentum (if no breakout signal) ──
+                if signals[i] == 0 and has_mom_1 and has_mom_5 and has_mom_10:
+                    m1 = features_df["mom_1"].iloc[i]
+                    m5 = features_df["mom_5"].iloc[i]
+                    m10 = features_df["mom_10"].iloc[i]
+                    if not (pd.isna(m1) or pd.isna(m5) or pd.isna(m10)):
+                        # Multi-horizon agreement required (Moskowitz, Ooi & Pedersen 2012)
+                        if m5 > 0 and m10 > 0 and m1 > 0:
+                            signals[i] = 1  # Momentum long
+                            strategy_counts["ts_momentum"] = (
+                                strategy_counts.get("ts_momentum", 0) + 1
+                            )
+                        elif m5 < 0 and m10 < 0 and m1 < 0:
+                            signals[i] = -1  # Momentum short
+                            strategy_counts["ts_momentum"] = (
+                                strategy_counts.get("ts_momentum", 0) + 1
+                            )
 
             # ═══════════════════════════════════════════════════════════════
-            # Ranging / Volatile — no trades (breakout-only strategy)
+            # Ranging regime — Bollinger Band Squeeze (high priority) + Mean Reversion
             # ═══════════════════════════════════════════════════════════════
-            elif regime in ("ranging", "volatile"):
-                continue  # Skip — only trade trending breakouts
+            elif regime == "ranging":
+                # Session-based z-score threshold for mean reversion:
+                #   Asia: 1.2 (easier to trigger in low vol)
+                #   Overlap: 2.0 (avoid noise during peak vol)
+                #   Others: 1.5 (standard)
+                session = sessions[i]
+                if session == "asia":
+                    z_threshold = 1.2
+                elif session == "overlap":
+                    z_threshold = 2.0
+                else:
+                    z_threshold = 1.5
+
+                # ── Bollinger Band Squeeze (volatility breakout) ──
+                # Research: Bollinger (2002) — BB width contraction precedes volatility expansion
+                if has_bb_width and has_bb_mid:
+                    bb_width_vals = features_df["bb_width"].values
+                    if len(bb_width_vals) > 100 and i >= 100:
+                        bb_100_min = np.min(bb_width_vals[max(0, i - 100) : i + 1])
+                        bb_current = bb_width_vals[i]
+                        bb_prev = bb_width_vals[i - 1] if i > 0 else bb_current
+
+                        if not (
+                            pd.isna(bb_current)
+                            or pd.isna(bb_prev)
+                            or pd.isna(bb_100_min)
+                        ):
+                            # Squeeze detected: BB width at/near 100-period low
+                            if bb_current <= bb_100_min * 1.01 and bb_current > bb_prev:
+                                # Volatility expansion starting — entry above/below mid
+                                bb_mid_val = features_df["bb_mid"].iloc[i]
+                                if not pd.isna(bb_mid_val):
+                                    if close > bb_mid_val:
+                                        signals[i] = 1  # Long breakout above mid
+                                        strategy_counts["bb_squeeze"] = (
+                                            strategy_counts.get("bb_squeeze", 0) + 1
+                                        )
+                                    elif close < bb_mid_val:
+                                        signals[i] = -1  # Short breakout below mid
+                                        strategy_counts["bb_squeeze"] = (
+                                            strategy_counts.get("bb_squeeze", 0) + 1
+                                        )
+
+                # ── Mean Reversion (if no squeeze signal) ──
+                if signals[i] == 0:
+                    z = z_score[i]
+
+                    # ── 1. Trend filter: don't fight the major trend ──
+                    if has_sma_200:
+                        sma_200_val = sma_200.iloc[i]
+                        if pd.isna(sma_200_val):
+                            continue  # Not enough data for 200-bar SMA
+                        if z < -z_threshold and close < sma_200_val:
+                            signals[i] = 0
+                            continue  # Bearish trend + low price = falling knife
+                        if z > z_threshold and close > sma_200_val:
+                            signals[i] = 0
+                            continue  # Bullish trend + high price = catching rallies
+
+                    # ── 2. RSI confirmation ──
+                    if has_rsi:
+                        rsi_val = rsi_vals.iloc[i]
+                        if pd.isna(rsi_val):
+                            continue
+                        # Long only if oversold
+                        if z < -z_threshold and rsi_val > 40:
+                            signals[i] = 0
+                            continue
+                        # Short only if overbought
+                        if z > z_threshold and rsi_val < 60:
+                            signals[i] = 0
+                            continue
+                    else:
+                        continue  # Require RSI for mean reversion
+
+                    # ── 3. Entry ──
+                    if z < -z_threshold:
+                        signals[i] = 1  # Mean reversion long
+                        strategy_counts["mean_rev"] = (
+                            strategy_counts.get("mean_rev", 0) + 1
+                        )
+                    elif z > z_threshold:
+                        signals[i] = -1  # Mean reversion short
+                        strategy_counts["mean_rev"] = (
+                            strategy_counts.get("mean_rev", 0) + 1
+                        )
+
+            # ═══════════════════════════════════════════════════════════════
+            # Volatile regime — Mean Reversion + Volatility Mean Reversion
+            # ═══════════════════════════════════════════════════════════════
+            elif regime == "volatile":
+                # Session-based z-score threshold for mean reversion
+                session = sessions[i]
+                if session == "asia":
+                    z_threshold = 1.2
+                elif session == "overlap":
+                    z_threshold = 2.0
+                else:
+                    z_threshold = 1.5
+
+                z = z_score[i]
+
+                # ── Mean Reversion ──
+                # ── 1. Trend filter ──
+                if has_sma_200:
+                    sma_200_val = sma_200.iloc[i]
+                    if pd.isna(sma_200_val):
+                        continue
+                    if z < -z_threshold and close < sma_200_val:
+                        signals[i] = 0
+                        continue
+                    if z > z_threshold and close > sma_200_val:
+                        signals[i] = 0
+                        continue
+
+                # ── 2. RSI confirmation ──
+                if has_rsi:
+                    rsi_val = rsi_vals.iloc[i]
+                    if pd.isna(rsi_val):
+                        continue
+                    if z < -z_threshold and rsi_val > 40:
+                        signals[i] = 0
+                        continue
+                    if z > z_threshold and rsi_val < 60:
+                        signals[i] = 0
+                        continue
+                else:
+                    continue
+
+                # ── 3. Entry ──
+                if z < -z_threshold:
+                    signals[i] = 1
+                    strategy_counts["mean_rev"] = strategy_counts.get("mean_rev", 0) + 1
+                elif z > z_threshold:
+                    signals[i] = -1
+                    strategy_counts["mean_rev"] = strategy_counts.get("mean_rev", 0) + 1
+
+                # ── Volatility Mean Reversion (if no mean rev signal) ──
+                # Research: Bollerslev, Tauchen & Zhou (2009); Della Corte, Sarno & Tsiakas (2011)
+                if signals[i] == 0 and has_vol_ratio and has_rsi:
+                    vr = features_df["vol_ratio"].iloc[i]
+                    if not pd.isna(vr) and vr > 1.5:  # Volatility 50% above normal
+                        if rsi_val < 30:
+                            signals[i] = 1  # Oversold + vol spike = buy mean reversion
+                            strategy_counts["vol_mean_rev"] = (
+                                strategy_counts.get("vol_mean_rev", 0) + 1
+                            )
+                        elif rsi_val > 70:
+                            signals[i] = (
+                                -1
+                            )  # Overbought + vol spike = sell mean reversion
+                            strategy_counts["vol_mean_rev"] = (
+                                strategy_counts.get("vol_mean_rev", 0) + 1
+                            )
+
+        # Log strategy signal counts for diagnostics
+        if strategy_counts:
+            total = sum(strategy_counts.values())
+            breakdown = ", ".join(
+                f"{k}: {v}" for k, v in sorted(strategy_counts.items())
+            )
+            logger.info(f"  Strategy signal breakdown ({total} total): {breakdown}")
 
         return signals
 
@@ -410,6 +734,7 @@ def predict_regimes_adx(
 
 def make_walk_forward_strategy(
     column_index: Dict[str, int],
+    features_4h_aligned: Optional[pd.DataFrame] = None,
     sl_atr: float = SL_ATR,
     tp_atr: float = TP_ATR,
     breakeven_atr: float = BREAKEVEN_ATR,
@@ -417,12 +742,13 @@ def make_walk_forward_strategy(
     spread_pips: float = SPREAD_PIPS,
     commission_per_lot: float = COMMISSION_PER_LOT,
     burn_in: int = BURN_IN,
+    embargo_val: int = WF_EMBARGO,
 ) -> Callable:
     """Build strategy_fn for PurgedWalkForward.run().
 
     Per fold:
       1. Detect regimes on test features via ADX
-      2. Build signal function from test features
+      2. Build signal function from test features (with optional 4h trend confirmation)
       3. Run VectorizedBacktester on test window
       4. Return list of trade dicts with 'pnl'
     """
@@ -446,8 +772,24 @@ def make_walk_forward_strategy(
         else:
             test_feat_df = pd.DataFrame({"close": test_prices})
 
+        # 2b. Slice 4h features to match the test window
+        # Test window start = len(train_prices) + embargo (since train always starts at index 0)
+        test_features_4h = None
+        if features_4h_aligned is not None:
+            te_s = len(train_prices) + embargo_val
+            te_e = te_s + len(test_prices)
+            if te_e <= len(features_4h_aligned):
+                test_features_4h = features_4h_aligned.iloc[te_s:te_e].reset_index(
+                    drop=True
+                )
+
         # 3. Build signal function
-        sig_fn = make_signal_function(test_regimes, test_feat_df, burn_in=burn_in)
+        sig_fn = make_signal_function(
+            test_regimes,
+            test_feat_df,
+            burn_in=burn_in,
+            features_4h_df=test_features_4h,
+        )
 
         # 4. Extract ATR from test features
         atr_col = column_index.get("atr_14")
@@ -818,6 +1160,11 @@ def main():
         help=f"Path to OHLCV CSV (default: {DEFAULT_DATA_PATH})",
     )
     parser.add_argument(
+        "--data-4h",
+        default=None,
+        help="Path to 4h OHLCV CSV (default: derived from --data path)",
+    )
+    parser.add_argument(
         "--no-walk-forward",
         action="store_true",
         help="Skip walk-forward validation (faster)",
@@ -835,6 +1182,18 @@ def main():
     logger.info("─" * 60)
     logger.info("STEP 1/5: Loading data")
     prices, df_raw, df_features = load_and_prepare_data(args.data)
+
+    # ── 1b. 4h Data Loading & Alignment ──
+    logger.info("─" * 60)
+    logger.info("STEP 1b/5: Loading & aligning 4h data")
+    data_4h_path = args.data_4h
+    if data_4h_path is None:
+        # Derive 4h path from 1h path (e.g., EURUSD_1h.csv → EURUSD_4h.csv)
+        data_4h_path = args.data.replace("_1h.csv", "_4h.csv")
+        if data_4h_path == args.data:
+            data_4h_path = DEFAULT_DATA_PATH_4H
+            logger.info(f"  Derived 4h path not found, using default: {data_4h_path}")
+    features_4h_aligned = load_and_prepare_4h_data(data_4h_path, df_raw["timestamp"])
 
     # ── 2. Regime Detection ──
     logger.info("─" * 60)
@@ -867,7 +1226,9 @@ def main():
     # ── 4. Signal Function ──
     logger.info("─" * 60)
     logger.info("STEP 4/5: Generating trading signals")
-    sig_fn = make_signal_function(regime_names, df_features)
+    sig_fn = make_signal_function(
+        regime_names, df_features, features_4h_df=features_4h_aligned
+    )
 
     # Quick signal stats
     signals = sig_fn(prices)
@@ -898,6 +1259,7 @@ def main():
         logger.info("RUNNING WALK-FORWARD VALIDATION")
         wf_strategy = make_walk_forward_strategy(
             column_index=column_index,
+            features_4h_aligned=features_4h_aligned,
         )
         wf = PurgedWalkForward(
             n_folds=WF_N_FOLDS,

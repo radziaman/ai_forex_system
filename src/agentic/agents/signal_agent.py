@@ -3,9 +3,11 @@ Signal Agent — G8: online learning from trade outcomes, G16: confidence calibr
 """
 
 from __future__ import annotations
+import datetime
 import os
 import time
 import numpy as np
+import pandas as pd
 from typing import Dict, List, Optional, Any, Set, Callable
 from collections import defaultdict, deque
 from loguru import logger
@@ -18,6 +20,22 @@ from agentic.core.agent_message import (
     AgentMessage,
 )
 from agentic.core.agent_consciousness import ConsciousnessLevel
+
+
+# Strategy-specific SL/TP (ATR multipliers) — each strategy has its own optimal
+# stop-loss and take-profit to improve profitability.
+STRATEGY_SL_TP = {
+    "rule_breakout": (2.0, 5.0),  # Trending breakout
+    "rule_mean_rev": (1.5, 2.0),  # Ranging mean reversion
+    "bb_squeeze": (2.0, 3.0),  # Volatility breakout
+    "ts_momentum": (2.5, 4.0),  # Trend momentum (wider SL)
+    "vol_mean_rev": (1.5, 2.0),  # Volatility reversion
+    "ppo_trending": (2.0, 4.0),  # PPO trending agent
+    "ppo_ranging": (1.5, 3.0),  # PPO ranging agent
+    "ppo_volatile": (2.5, 5.0),  # PPO volatile agent
+    "ppo_crisis": (1.0, 2.0),  # PPO crisis agent
+    "lstm_cnn": (2.0, 4.0),  # LSTM model
+}
 
 
 class SignalAgent(BaseAgent):
@@ -58,6 +76,24 @@ class SignalAgent(BaseAgent):
         self._expert_pnl: Dict[str, float] = defaultdict(float)
         self._expert_trades: Dict[str, int] = defaultdict(int)
 
+        # Phase 2: Cache last feature DataFrame for rule-based experts
+        self._last_df: Optional[pd.DataFrame] = None
+        self._last_price: float = 0.0
+        self._current_symbol: str = "EURUSD"
+        self._current_session: str = "asia"
+
+        # Phase 3: Strategy performance tracker
+        from agentic.agents.strategy_tracker import (
+            StrategyTracker,
+            PerSymbolStrategyTracker,
+        )
+
+        self._strategy_tracker = StrategyTracker()
+        self._per_symbol_tracker = PerSymbolStrategyTracker(min_learn_trades=10)
+
+        # Track position_id -> {symbol, expert_outputs, direction} for PnL at close
+        self._position_info: Dict[int, Dict] = {}
+
         # G16: Confidence calibration
         self._confidence_buckets: Dict[str, deque] = defaultdict(
             lambda: deque(maxlen=500)
@@ -68,6 +104,7 @@ class SignalAgent(BaseAgent):
         self.subscribe(MessageType.REGIME_CHANGED)
         self.subscribe(MessageType.MODEL_UPDATE)
         self.subscribe(MessageType.EXECUTION_RESULT)  # G8: learn from outcomes
+        self.subscribe(MessageType.POSITION_CLOSED)  # Per-symbol PnL tracking
         self.subscribe(MessageType.DIAGNOSTIC_REQUEST)
         self.subscribe(
             MessageType.INSTRUMENTS_UPDATED
@@ -86,6 +123,8 @@ class SignalAgent(BaseAgent):
 
         self.ensemble = MoEEnsemble()
         self.ensemble.use_sharpe_weighting = True
+        # Wire strategy tracker for dynamic weight adjustments (Phase 4)
+        self.ensemble.set_tracker_weight_fn(self._per_symbol_weight_fn)
         self._load_models()
         self._register_experts()
         self.set_world("signal.models_loaded", self._models_loaded)
@@ -95,6 +134,20 @@ class SignalAgent(BaseAgent):
         self.log_state(
             f"Signal engine ready: {'experts loaded' if self._models_loaded else 'rule-based only'}"
         )
+
+    def _per_symbol_weight_fn(self, name: str, regime: str) -> float:
+        """Dynamic weight incorporating per-symbol strategy performance."""
+        global_weight = self._strategy_tracker.get_weight(name, regime)
+        symbol = self._current_symbol
+        tracker = self._per_symbol_tracker
+
+        if not tracker.is_strategy_enabled(symbol, name):
+            return global_weight * 0.1  # Nearly disabled
+
+        best = tracker.get_best_strategy(symbol, regime)
+        if best == name:
+            return global_weight * 1.5  # Bonus for best strategy on this symbol
+        return global_weight * 0.5  # Penalty for non-best
 
     async def perceive(self) -> Dict[str, Any]:
         return {"ready": self._models_loaded}
@@ -142,6 +195,9 @@ class SignalAgent(BaseAgent):
         elif message.msg_type == MessageType.EXECUTION_RESULT:
             # G8: Learn from trade outcome
             await self._on_execution_result(message)
+        elif message.msg_type == MessageType.POSITION_CLOSED:
+            # Per-symbol PnL tracking
+            await self._on_position_closed(message)
         elif message.msg_type == MessageType.MODEL_UPDATE:
             self._load_models()
             self._register_experts()
@@ -168,6 +224,24 @@ class SignalAgent(BaseAgent):
         if features is None:
             return
 
+        # Per-symbol: skip symbols with no profitable strategy yet
+        if not self._per_symbol_tracker.is_symbol_tradeable(symbol):
+            self.log_state(
+                f"Skipping {symbol}: no profitable strategy found yet", "debug"
+            )
+            return
+
+        # Phase 2: Cache for rule-based experts
+        if df is not None:
+            self._last_df = df
+        if price != 0:
+            self._last_price = price
+        # Cache current symbol so LSTM expert can use it
+        self._current_symbol = symbol
+
+        # Determine trading session for rule-based expert adjustments
+        self._current_session = self._get_current_session()
+
         if df is not None and len(df) > 60:
             from rts_ai_fx.regime_detector import HMMRegimeDetector
 
@@ -179,33 +253,10 @@ class SignalAgent(BaseAgent):
         if not self.ensemble:
             return
 
-        # Compute symbol-specific LSTM prediction
-        lstm_pred = self._lstm_prediction_for_symbol(features, symbol)
-        lstm_conf = 0.6
-
-        # Get ensemble prediction (PPO + rule, LSTM is placeholder)
+        # Get ensemble prediction (Phase 4: LSTM is now a proper expert in the ensemble)
         pred = self.ensemble.predict(features, regime=regime_str)
         if pred is None or not hasattr(pred, "confidence") or pred.confidence is None:
             return
-
-        # Blend in symbol-specific LSTM prediction
-        if pred.expert_outputs is not None:
-            pred.expert_outputs["lstm_cnn"] = {
-                "prediction": lstm_pred,
-                "confidence": lstm_conf,
-                "weight": 0.8,
-            }
-            # Recompute ensemble price with true LSTM value
-            all_preds = [v.get("prediction", 0) for v in pred.expert_outputs.values()]
-            all_confs = [v.get("confidence", 0.5) for v in pred.expert_outputs.values()]
-            all_w = [v.get("weight", 1.0) for v in pred.expert_outputs.values()]
-            if all_preds:
-                total_w = sum(all_w)
-                if total_w > 0:
-                    pred.price = sum(p * w for p, w in zip(all_preds, all_w)) / total_w
-                    pred.confidence = (
-                        sum(c * w for c, w in zip(all_confs, all_w)) / total_w
-                    )
 
         should_trade, direction_str, agreement = self.ensemble.should_trade(
             pred,
@@ -218,6 +269,16 @@ class SignalAgent(BaseAgent):
         self._signal_count += 1
         self._last_signal_time = time.time()
 
+        # Find the best expert (highest weight) for per-strategy SL/TP
+        expert_outputs = getattr(pred, "expert_outputs", {})
+        if expert_outputs:
+            best_expert = max(
+                expert_outputs.items(), key=lambda x: x[1].get("weight", 0)
+            )[0]
+        else:
+            best_expert = "unknown"
+        sl_atr, tp_atr = STRATEGY_SL_TP.get(best_expert, (2.0, 4.0))
+
         await self.send(
             MessageType.SIGNAL_GENERATED,
             payload={
@@ -225,16 +286,21 @@ class SignalAgent(BaseAgent):
                 "direction": direction_str,
                 "confidence": getattr(pred, "confidence", 0.5),
                 "regime": regime_str,
+                "session": self._current_session,
                 "price": price,
                 "agreement": agreement,
-                "expert_outputs": getattr(pred, "expert_outputs", {}),
+                "expert_outputs": expert_outputs,
                 "ensemble_price": getattr(pred, "price", price),
+                "strategy": best_expert,
+                "sl_atr": sl_atr,
+                "tp_atr": tp_atr,
                 "timestamp": time.time(),
             },
             priority=MessagePriority.NORMAL,
             intention=AgentIntention(
                 primary_goal=f"generate {direction_str} signal for {symbol}",
-                reasoning=f"ensemble conf={pred.confidence:.2f} agree={agreement:.2f} LSTM={lstm_pred:.4f}",
+                reasoning=f"ensemble conf={pred.confidence:.2f} agree={agreement:.2f} "
+                f"strat={best_expert} sl_atr={sl_atr} tp_atr={tp_atr}",
                 expected_outcome="risk agent evaluates and gatekeeper approves or rejects",
                 confidence=float(pred.confidence),
             ),
@@ -246,7 +312,17 @@ class SignalAgent(BaseAgent):
         if not payload.get("success"):
             return
 
+        symbol = payload.get("symbol", "EURUSD")
         expert_outputs = payload.get("signal", {}).get("expert_outputs", {})
+        position_id = payload.get("position_id", 0)
+
+        # Cache position info for PnL tracking at close time
+        if position_id and expert_outputs:
+            self._position_info[position_id] = {
+                "symbol": symbol,
+                "expert_outputs": expert_outputs,
+                "direction": payload.get("direction", ""),
+            }
 
         # Update Elo ratings based on outcome
         if self.ensemble and payload.get("filled_price") and expert_outputs:
@@ -262,12 +338,8 @@ class SignalAgent(BaseAgent):
                 self._expert_outcomes[expert_name].append(1 if was_correct else 0)
                 self._expert_trades[expert_name] += 1
 
-                # Track PnL contribution per expert
-                pnl = payload.get("pnl", 0)
-                if pnl != 0:
-                    self._expert_pnl[expert_name] += pnl
-                    if hasattr(self.ensemble, "update_expert_result"):
-                        self.ensemble.update_expert_result(expert_name, pnl)
+                # Track which experts participated (PnL recorded at close)
+                self._per_symbol_tracker.register(symbol, expert_name)
 
         # G16: Calibrate confidence vs actual outcomes
         confidence = payload.get("signal", {}).get("confidence", 0.5)
@@ -278,6 +350,48 @@ class SignalAgent(BaseAgent):
                         1 if payload.get("success") else 0
                     )
                     break
+
+    # Per-symbol: track actual PnL when positions close
+    async def _on_position_closed(self, message: AgentMessage):
+        payload = message.payload if isinstance(message.payload, dict) else {}
+        pnl = payload.get("pnl", 0)
+        symbol = payload.get("symbol", "EURUSD")
+        position_id = payload.get("position_id", 0)
+
+        # Look up cached expert info for this position
+        info = self._position_info.pop(position_id, None)
+        if info is None:
+            return
+
+        expert_outputs = info.get("expert_outputs", {})
+        symbol = info.get("symbol", symbol)  # Use cached symbol
+
+        # Distribute PnL to each expert that contributed
+        total_weight = sum(o.get("weight", 1.0) for o in expert_outputs.values())
+        if total_weight <= 0:
+            total_weight = 1.0
+
+        for expert_name, output in expert_outputs.items():
+            weight_share = output.get("weight", 1.0) / total_weight
+            expert_pnl = pnl * weight_share
+            self._expert_pnl[expert_name] += expert_pnl
+
+            if hasattr(self.ensemble, "update_expert_result"):
+                self.ensemble.update_expert_result(expert_name, expert_pnl)
+
+            # Global strategy tracker
+            self._strategy_tracker.record_trade(expert_name, expert_pnl)
+
+            # Per-symbol strategy tracker
+            self._per_symbol_tracker.record_trade(symbol, expert_name, expert_pnl)
+
+        # Publish tradeable symbols to world state for execution agent
+        tradeable = [
+            s
+            for s in self._active_symbols
+            if self._per_symbol_tracker.is_symbol_tradeable(s)
+        ]
+        self.set_world("signal.tradeable_symbols", tradeable)
 
     # G16: Log calibration report
     def _log_calibration(self):
@@ -411,29 +525,81 @@ class SignalAgent(BaseAgent):
             return
         self.ensemble.experts = []
         self.ensemble.elo_ratings = {}
+
+        # Phase 1: 4 regime-specific PPO experts instead of single ppo_regime
         if self._regime_manager:
-            self.ensemble.add_expert(
-                name="ppo_regime",
-                predict_fn=self._ppo_prediction,
-                confidence_fn=self._ppo_confidence,
-                regime="ranging",
-            )
-        # LSTM expert predict is handled symbol-specifically in _on_features.
-        # Register a placeholder that returns 0; the real LSTM value is blended in _on_features.
+            for regime in ["trending", "ranging", "volatile", "crisis"]:
+                self.ensemble.add_expert(
+                    name=f"ppo_{regime}",
+                    predict_fn=lambda X, r=regime: self._ppo_prediction(X, regime=r),
+                    confidence_fn=lambda X, r=regime: self._ppo_confidence(X, regime=r),
+                    regime=regime,
+                )
+                self._strategy_tracker.register_strategy(f"ppo_{regime}", regime)
+                for sym in self._active_symbols:
+                    self._per_symbol_tracker.register(sym, f"ppo_{regime}", regime)
+
+        # Phase 4: Register LSTM as a proper expert (no longer a placeholder)
         has_lstm = len(self._lstm_models) > 0
         if has_lstm:
             self.ensemble.add_expert(
                 name="lstm_cnn",
-                predict_fn=lambda X: 0.0,
+                predict_fn=self._lstm_ensemble_prediction,
                 confidence_fn=lambda X: 0.6,
                 regime="ranging",
             )
+            self._strategy_tracker.register_strategy("lstm_cnn", "ranging")
+            for sym in self._active_symbols:
+                self._per_symbol_tracker.register(sym, "lstm_cnn", "ranging")
+
+        # Phase 2: Replace placeholder rule_based with two real rule-based experts
         self.ensemble.add_expert(
-            name="rule_based",
-            predict_fn=lambda X, sym="EURUSD": 0.0,
-            confidence_fn=lambda X: 0.7,
+            name="rule_breakout",
+            predict_fn=self._rule_breakout_prediction,
+            confidence_fn=self._rule_breakout_confidence,
+            regime="trending",
+        )
+        self._strategy_tracker.register_strategy("rule_breakout", "trending")
+        for sym in self._active_symbols:
+            self._per_symbol_tracker.register(sym, "rule_breakout", "trending")
+        self.ensemble.add_expert(
+            name="rule_mean_rev",
+            predict_fn=self._rule_mean_rev_prediction,
+            confidence_fn=self._rule_mean_rev_confidence,
             regime="ranging",
         )
+        self._strategy_tracker.register_strategy("rule_mean_rev", "ranging")
+        for sym in self._active_symbols:
+            self._per_symbol_tracker.register(sym, "rule_mean_rev", "ranging")
+
+        # Phase 6: Research-backed forex strategies
+        self.ensemble.add_expert(
+            name="bb_squeeze",
+            predict_fn=self._bb_squeeze_prediction,
+            confidence_fn=lambda X: 0.55,
+            regime="volatile",
+        )
+        self._strategy_tracker.register_strategy("bb_squeeze", "volatile")
+        for sym in self._active_symbols:
+            self._per_symbol_tracker.register(sym, "bb_squeeze", "volatile")
+        self.ensemble.add_expert(
+            name="ts_momentum",
+            predict_fn=self._ts_momentum_prediction,
+            confidence_fn=lambda X: 0.6,
+            regime="trending",
+        )
+        self._strategy_tracker.register_strategy("ts_momentum", "trending")
+        for sym in self._active_symbols:
+            self._per_symbol_tracker.register(sym, "ts_momentum", "trending")
+        self.ensemble.add_expert(
+            name="vol_mean_rev",
+            predict_fn=self._vol_mean_rev_prediction,
+            confidence_fn=lambda X: 0.55,
+            regime="volatile",
+        )
+        self._strategy_tracker.register_strategy("vol_mean_rev", "volatile")
+        for sym in self._active_symbols:
+            self._per_symbol_tracker.register(sym, "vol_mean_rev", "volatile")
 
     def _get_lstm_prediction(self, symbol: str) -> float:
         """Get symbol-specific LSTM prediction."""
@@ -483,31 +649,260 @@ class SignalAgent(BaseAgent):
             return float(np.clip(v, lo, hi))
         return v
 
-    def _ppo_prediction(self, X: np.ndarray) -> float:
+    def _ppo_prediction(self, X: np.ndarray, regime: str = "ranging") -> float:
         if self._regime_manager is None:
             return 0.0
         try:
             state = self._features_to_ppo_state(X)
-            action, _ = self._regime_manager.select_action(state, regime="ranging")
+            action, *rest = self._regime_manager.select_action(state, regime=regime)
             pred = 0.001 if action in (1, 3) else -0.001 if action in (2, 4) else 0.0
             return self._sane_prediction(pred, "ppo", (-0.01, 0.01))
         except Exception:
             return 0.0
 
-    def _ppo_confidence(self, X: np.ndarray) -> float:
+    def _ppo_confidence(self, X: np.ndarray, regime: str = "ranging") -> float:
         if self._regime_manager is None:
             return 0.5
         try:
             state = self._features_to_ppo_state(X)
-            action, log_probs = self._regime_manager.select_action(
-                state, regime="ranging"
-            )
-            prob = float(np.exp(log_probs)) if hasattr(log_probs, "__float__") else 0.6
-            return float(
-                np.clip(self._sane_prediction(prob, "ppo_conf", (0, 1)), 0.0, 1.0)
-            )
+            action, *rest = self._regime_manager.select_action(state, regime=regime)
+            # rest = (sl_raw, tp_raw, size_raw, info_dict)
+            info = rest[3] if len(rest) >= 4 else {}
+            action_logits = info.get("action_logits")
+            if action_logits is not None:
+                logits = np.array(action_logits, dtype=np.float64)
+                logits -= logits.max()  # numerical stability
+                probs = np.exp(logits) / np.sum(np.exp(logits))
+                prob = float(probs[action]) if action < len(probs) else 0.6
+            else:
+                prob = 0.6
+            return float(np.clip(prob, 0.0, 1.0))
         except Exception:
             return 0.5
+
+    # ── Phase 2: Rule-based experts ──────────────────────────────────────
+
+    def _get_current_session(self) -> str:
+        """Detect the current forex trading session based on UTC time."""
+        utc_hour = datetime.datetime.now(datetime.timezone.utc).hour
+        if 7 <= utc_hour < 12:
+            return "london"
+        elif 12 <= utc_hour < 16:
+            return "overlap"
+        elif 16 <= utc_hour < 21:
+            return "newyork"
+        elif 21 <= utc_hour or utc_hour < 7:
+            return "asia"
+        elif 8 <= utc_hour < 12:
+            return "pacific"
+        return "asia"
+
+    def _compute_atr(self, period: int = 14) -> float:
+        """Compute ATR from cached DataFrame."""
+        if self._last_df is None or len(self._last_df) < period + 1:
+            return 0.0
+        df = self._last_df
+        high_low = df["high"] - df["low"]
+        atr = high_low.rolling(period).mean()
+        return (
+            float(atr.iloc[-1]) if not atr.empty and not np.isnan(atr.iloc[-1]) else 0.0
+        )
+
+    def _rule_breakout_prediction(self, X: np.ndarray) -> float:
+        """Session-aware breakout: 3-bar during London, 5-bar during NY, skip during Asia."""
+        if self._last_df is None or len(self._last_df) < 10:
+            return 0.0
+
+        session = getattr(self, "_current_session", "asia")
+
+        # Asia: don't trade breakouts (low volatility, ranging markets)
+        if session == "asia":
+            return 0.0
+
+        try:
+            df = self._last_df
+            close = float(df["close"].iloc[-1])
+            atr = self._compute_atr(14)
+            if atr <= 0:
+                return 0.0
+
+            # London: aggressive 3-bar breakout; elsewhere: standard 5-bar
+            lookback_bars = 3 if session == "london" else 5
+            high_n = float(df["high"].iloc[-(lookback_bars + 1) : -1].max())
+            low_n = float(df["low"].iloc[-(lookback_bars + 1) : -1].min())
+
+            # Long breakout
+            if close > high_n + 0.5 * atr:
+                return 0.005
+            # Short breakout (close < lowest low - 0.5*ATR)
+            if close < low_n - 0.5 * atr:
+                return -0.005
+            return 0.0
+        except Exception:
+            return 0.0
+
+    def _rule_breakout_confidence(self, X: np.ndarray) -> float:
+        return 0.65
+
+    def _rule_mean_rev_prediction(self, X: np.ndarray) -> float:
+        """Session-aware mean reversion: adjusted z-score thresholds per session."""
+        if self._last_df is None or len(self._last_df) < 25:
+            return 0.0
+
+        session = getattr(self, "_current_session", "asia")
+
+        try:
+            df = self._last_df
+            close_series = df["close"]
+            close_val = float(close_series.iloc[-1])
+            sma20 = float(close_series.rolling(20).mean().iloc[-1])
+            std20 = float(close_series.rolling(20).std().iloc[-1])
+            if std20 <= 0:
+                return 0.0
+            z = (close_val - sma20) / std20
+
+            # Session-based z-score thresholds
+            if session == "asia":
+                z_threshold = 1.2  # Easier to trigger in low vol
+            elif session == "overlap":
+                z_threshold = 2.0  # Higher threshold to avoid noise
+            else:
+                z_threshold = 1.5  # Standard (london, ny, pacific)
+
+            # RSI from feature columns or compute
+            rsi = None
+            if "rsi_14" in df.columns:
+                rsi_val = df["rsi_14"].iloc[-1]
+                if not np.isnan(rsi_val):
+                    rsi = float(rsi_val)
+            if rsi is None:
+                # Compute simple RSI from price changes
+                delta = close_series.diff()
+                gain = delta.clip(lower=0).rolling(14).mean().iloc[-1]
+                loss = (-delta.clip(upper=0)).rolling(14).mean().iloc[-1]
+                if loss and loss > 0:
+                    rsi = float(100 - 100 / (1 + gain / loss))
+                else:
+                    rsi = 50.0
+            # Long: oversold
+            if z < -z_threshold and rsi < 40:
+                return 0.005
+            # Short: overbought
+            if z > z_threshold and rsi > 60:
+                return -0.005
+            return 0.0
+        except Exception:
+            return 0.0
+
+    def _rule_mean_rev_confidence(self, X: np.ndarray) -> float:
+        return 0.6
+
+    # ── Phase 6: Research-backed forex strategies ────────────────────────
+
+    def _bb_squeeze_prediction(self, X: np.ndarray) -> float:
+        """Bollinger Band Squeeze (Bollinger 2002).
+
+        Detects volatility contraction/expansion cycles:
+        - When BB width reaches a 100-period low and starts expanding,
+          enter in the direction of the breakout relative to BB mid.
+        """
+        if self._last_df is None or len(self._last_df) < 105:
+            return 0.0
+        try:
+            df = self._last_df
+            if "bb_width" not in df.columns or "bb_mid" not in df.columns:
+                return 0.0
+
+            bb_width = df["bb_width"].values
+            i = len(bb_width) - 1
+            if i < 100:
+                return 0.0
+
+            bb_100_min = np.min(bb_width[max(0, i - 100) : i + 1])
+            bb_current = bb_width[i]
+            bb_prev = bb_width[i - 1] if i > 0 else bb_current
+
+            if pd.isna(bb_current) or pd.isna(bb_prev) or pd.isna(bb_100_min):
+                return 0.0
+
+            # Squeeze: BB width at/near 100-period low, starting to expand
+            if bb_current <= bb_100_min * 1.01 and bb_current > bb_prev:
+                close = float(df["close"].iloc[-1])
+                bb_mid = float(df["bb_mid"].iloc[-1])
+                if close > bb_mid:
+                    return 0.005  # Long breakout above mid
+                elif close < bb_mid:
+                    return -0.005  # Short breakout below mid
+            return 0.0
+        except Exception:
+            return 0.0
+
+    def _ts_momentum_prediction(self, X: np.ndarray) -> float:
+        """Time Series Momentum (Moskowitz, Ooi & Pedersen 2012).
+
+        Multi-horizon agreement: requires mom_1, mom_5, and mom_10 to all
+        agree on direction before entering a momentum trade.
+        """
+        if self._last_df is None or len(self._last_df) < 15:
+            return 0.0
+        try:
+            df = self._last_df
+            if not all(col in df.columns for col in ["mom_1", "mom_5", "mom_10"]):
+                return 0.0
+
+            m1 = float(df["mom_1"].iloc[-1])
+            m5 = float(df["mom_5"].iloc[-1])
+            m10 = float(df["mom_10"].iloc[-1])
+
+            if pd.isna(m1) or pd.isna(m5) or pd.isna(m10):
+                return 0.0
+
+            # All three horizons must agree
+            if m5 > 0 and m10 > 0 and m1 > 0:
+                return 0.005  # Momentum long
+            if m5 < 0 and m10 < 0 and m1 < 0:
+                return -0.005  # Momentum short
+            return 0.0
+        except Exception:
+            return 0.0
+
+    def _vol_mean_rev_prediction(self, X: np.ndarray) -> float:
+        """Volatility Mean Reversion (Bollerslev, Tauchen & Zhou 2009).
+
+        When volatility spikes (vol_ratio > 1.5) and RSI is extreme,
+        expect mean reversion:
+        - vol_ratio > 1.5 + RSI < 30 → long (extreme fear = buy)
+        - vol_ratio > 1.5 + RSI > 70 → short (extreme greed = sell)
+        """
+        if self._last_df is None or len(self._last_df) < 20:
+            return 0.0
+        try:
+            df = self._last_df
+            if "vol_ratio" not in df.columns or "rsi_14" not in df.columns:
+                return 0.0
+
+            vr = float(df["vol_ratio"].iloc[-1])
+            rsi = float(df["rsi_14"].iloc[-1])
+
+            if pd.isna(vr) or pd.isna(rsi):
+                return 0.0
+
+            if vr > 1.5:  # Volatility 50% above normal — mean reversion likely
+                if rsi < 30:
+                    return 0.005  # Oversold + vol spike = long
+                if rsi > 70:
+                    return -0.005  # Overbought + vol spike = short
+            return 0.0
+        except Exception:
+            return 0.0
+
+    # ── Phase 4: LSTM ensemble expert ────────────────────────────────────
+
+    def _lstm_ensemble_prediction(self, X: np.ndarray) -> float:
+        """LSTM prediction for the current symbol, used as an ensemble expert."""
+        return self._lstm_prediction_for_symbol(X, self._current_symbol)
+
+    # ── Feature helpers ──────────────────────────────────────────────────
 
     def _features_to_lstm_input(
         self, X: np.ndarray, symbol: str = "EURUSD"
@@ -555,7 +950,7 @@ class SignalAgent(BaseAgent):
             return 0.0
         try:
             X_lstm = self._features_to_lstm_input(X, symbol)
-            pred = model.predict(X_lstm, verbose=0)
+            pred = model.predict(X_lstm)
             raw = float(pred[0][0]) if hasattr(pred, "__len__") else float(pred)
             # Sanity: raw must be a finite number in a realistic price range
             if not np.isfinite(raw):

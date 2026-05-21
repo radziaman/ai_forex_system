@@ -56,9 +56,10 @@ class PositionAgent(BaseAgent):
             tick_interval=2.0,
             consciousness_level=ConsciousnessLevel.REFLECTIVE,
         )
-        self._tp_hit: Dict[int, List[bool]] = {}
+        self._tp_hit: Dict[int, Set[str]] = {}  # pid -> set of milestones hit
         self._last_check: Dict[str, float] = {}
         self._check_interval = 5.0
+        self._trailing_state: Dict[int, Dict] = {}  # pid -> tracking state
 
         self.subscribe(MessageType.POSITION_OPENED)
         self.subscribe(MessageType.POSITION_CLOSED)
@@ -101,18 +102,40 @@ class PositionAgent(BaseAgent):
                 "entry": entry,
                 "current": current,
                 "atr": atr,
+                "milestones_hit": [],
             }
 
             new_sl = self._check_trailing(pid, entry, current, atr, direction)
             if new_sl:
                 action["new_sl"] = new_sl
 
-            pnl_pct = self._pnl_pct(entry, current, direction)
-            if pnl_pct >= 0.05:
-                action["partial_close"] = "Close 30% at +5%"
-            elif pnl_pct >= 0.03:
-                action["partial_close"] = "Close 20% at +3%"
+            # ATR-based partial take-profit logic
+            if direction == "BUY":
+                atr_mult = (current - entry) / atr if atr > 0 else 0
+            else:
+                atr_mult = (entry - current) / atr if atr > 0 else 0
 
+            # Track which milestones we've already hit for this position
+            milestones = self._tp_hit.get(pid, set())
+
+            # At 1.5 × ATR profit: close 30% of position, move SL to breakeven
+            if atr_mult >= 1.5 and "tp_1.5atr" not in milestones:
+                action["partial_close_ratio"] = 0.30
+                action["new_sl"] = entry  # Move remaining to breakeven
+                action["milestones_hit"].append("tp_1.5atr")
+                action["partial_close_reason"] = "Partial TP at 1.5 ATR"
+
+            # At 2.5 × ATR profit: close 30% of remaining, trail at 0.5 ATR
+            if atr_mult >= 2.5 and "tp_2.5atr" not in milestones:
+                action["partial_close_ratio"] = 0.30
+                if direction == "BUY":
+                    action["new_sl"] = max(current - atr * 0.5, entry)
+                else:
+                    action["new_sl"] = min(current + atr * 0.5, entry)
+                action["milestones_hit"].append("tp_2.5atr")
+                action["partial_close_reason"] = "Partial TP at 2.5 ATR + trail"
+
+            pnl_pct = self._pnl_pct(entry, current, direction)
             action["pnl_pct"] = pnl_pct
             actions.append(action)
 
@@ -127,15 +150,62 @@ class PositionAgent(BaseAgent):
 
     async def act(self, decision: Dict[str, Any]):
         for action in decision.get("actions", []):
+            pid = action["pid"]
+
+            # Handle partial take-profit (close a portion + adjust SL)
+            close_ratio = action.get("partial_close_ratio", 0)
+            if close_ratio > 0:
+                # Track the milestone
+                for m in action.get("milestones_hit", []):
+                    self._tp_hit.setdefault(pid, set()).add(m)
+
+                new_sl = action.get("new_sl")
+                self.memory.remember(
+                    event_type="partial_take_profit",
+                    description=(
+                        f"Position {pid} ({action['symbol']}): close {close_ratio*100:.0f}% "
+                        f"{action.get('partial_close_reason', '')}"
+                    ),
+                    importance=0.7,
+                    emotion="success",
+                )
+                # Send partial close + SL change to execution agent
+                payload = {
+                    "position_id": pid,
+                    "close_ratio": close_ratio,
+                    "symbol": action.get("symbol", ""),
+                }
+                if new_sl is not None:
+                    payload["sl"] = new_sl
+                await self.send(
+                    MessageType.POSITION_MODIFIED,
+                    payload=payload,
+                    target="execution_agent",
+                    priority=MessagePriority.HIGH,
+                )
+                continue
+
+            # Standard trailing stop update
             if "new_sl" in action:
-                pid = action["pid"]
                 self._last_check[str(pid)] = time.time()
+                new_sl = action["new_sl"]
                 self.memory.remember(
                     event_type="trailing_stop_updated",
-                    description=f"Position {pid} ({action['symbol']}): SL→{action['new_sl']:.5f}",
+                    description=f"Position {pid} ({action['symbol']}): SL→{new_sl:.5f}",
                     importance=0.5,
                     emotion="info",
-                    data={"pid": pid, "new_sl": action["new_sl"]},
+                    data={"pid": pid, "new_sl": new_sl},
+                )
+                # Send modify command to execution agent
+                await self.send(
+                    MessageType.POSITION_MODIFIED,
+                    payload={
+                        "position_id": pid,
+                        "sl": new_sl,
+                        "symbol": action.get("symbol", ""),
+                    },
+                    target="execution_agent",
+                    priority=MessagePriority.NORMAL,
                 )
 
         for warn in decision.get("correlation_warnings", []):
@@ -170,11 +240,12 @@ class PositionAgent(BaseAgent):
             payload = message.payload if isinstance(message.payload, dict) else {}
             pid = payload.get("position_id", 0)
             if pid:
-                self._tp_hit[pid] = [False, False, False]
+                self._tp_hit[pid] = set()
         elif message.msg_type == MessageType.POSITION_CLOSED:
             payload = message.payload if isinstance(message.payload, dict) else {}
             pid = payload.get("position_id", 0)
             self._tp_hit.pop(pid, None)
+            self._trailing_state.pop(pid, None)
         elif message.msg_type == MessageType.DIAGNOSTIC_REQUEST:
             await self.send(
                 MessageType.DIAGNOSTIC_RESULT,
@@ -189,28 +260,82 @@ class PositionAgent(BaseAgent):
     def _check_trailing(
         self, pid: int, entry: float, current: float, atr: float, direction: str
     ) -> Optional[float]:
-        if pid not in self._tp_hit:
-            self._tp_hit[pid] = [False, False, False]
-        pnl_pct = self._pnl_pct(entry, current, direction)
-        hits = self._tp_hit[pid]
-        mult = 1 if direction == "BUY" else -1
+        """ATR-based trailing stop check.
 
-        if pnl_pct >= 0.01 and not hits[0]:
-            hits[0] = True
-            return entry
-        if pnl_pct >= 0.02 and not hits[1]:
-            hits[1] = True
-            return (
-                entry + atr * 2 * mult if direction == "BUY" else entry - atr * 2 * mult
-            )
-        if pnl_pct >= 0.03 and hits[0] and hits[1]:
-            if not hits[2]:
-                hits[2] = True
-            return (
-                current - atr * 0.5 * mult
-                if direction == "BUY"
-                else current + atr * 0.5 * mult
-            )
+        Milestones (ATR-based):
+          1. Price moved >= 1.0 × ATR in our favor  → move SL to breakeven
+          2. Price moved >= 2.0 × ATR in our favor  → trail SL at 1.0 × ATR behind best price
+          3. Price moved >= 3.0 × ATR in our favor  → trail SL tighter at 0.5 × ATR behind best price
+
+        Returns new SL price, or None if no change needed.
+        """
+        if atr <= 0:
+            return None
+
+        if pid not in self._trailing_state:
+            self._trailing_state[pid] = {
+                "best_price": entry,
+                "trailing_sl": 0.0,
+                "milestones": set(),
+            }
+        state = self._trailing_state[pid]
+
+        if direction == "BUY":
+            price_move = current - entry
+            state["best_price"] = max(state["best_price"], current)
+
+            # Milestone 1: Breakeven at 1.0 ATR
+            if price_move >= atr * 1.0 and "breakeven" not in state["milestones"]:
+                state["milestones"].add("breakeven")
+                state["trailing_sl"] = entry
+                return entry
+
+            # Milestone 2: Trail at 1.0 ATR behind best price
+            if price_move >= atr * 2.0:
+                trail_sl = state["best_price"] - atr * 1.0
+                new_sl = max(trail_sl, entry)  # Never worse than breakeven
+                if new_sl > state["trailing_sl"]:
+                    state["milestones"].add("tight_1atr")
+                    state["trailing_sl"] = new_sl
+                    return new_sl
+
+            # Milestone 3: Trail tighter at 0.5 ATR behind best price
+            if price_move >= atr * 3.0:
+                trail_sl = state["best_price"] - atr * 0.5
+                new_sl = max(trail_sl, entry)  # Never worse than breakeven
+                if new_sl > state["trailing_sl"]:
+                    state["milestones"].add("tight_05atr")
+                    state["trailing_sl"] = new_sl
+                    return new_sl
+
+        else:  # SELL
+            price_move = entry - current
+            state["best_price"] = min(state["best_price"], current)
+
+            # Milestone 1: Breakeven at 1.0 ATR
+            if price_move >= atr * 1.0 and "breakeven" not in state["milestones"]:
+                state["milestones"].add("breakeven")
+                state["trailing_sl"] = entry
+                return entry
+
+            # Milestone 2: Trail at 1.0 ATR behind best price
+            if price_move >= atr * 2.0:
+                trail_sl = state["best_price"] + atr * 1.0
+                new_sl = min(trail_sl, entry)  # Never worse than breakeven
+                if new_sl < state["trailing_sl"] or state["trailing_sl"] == 0:
+                    state["milestones"].add("tight_1atr")
+                    state["trailing_sl"] = new_sl
+                    return new_sl
+
+            # Milestone 3: Trail tighter at 0.5 ATR behind best price
+            if price_move >= atr * 3.0:
+                trail_sl = state["best_price"] + atr * 0.5
+                new_sl = min(trail_sl, entry)  # Never worse than breakeven
+                if new_sl < state["trailing_sl"] or state["trailing_sl"] == 0:
+                    state["milestones"].add("tight_05atr")
+                    state["trailing_sl"] = new_sl
+                    return new_sl
+
         return None
 
     def _check_correlations(self, positions: List[Dict]) -> List[str]:

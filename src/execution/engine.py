@@ -219,6 +219,82 @@ class ExecutionEngine:
         if self.risk:
             self.risk.record_trade(trade, exit_price, pnl)
 
+    def partial_close(self, position_id: int, close_ratio: float) -> Optional[float]:
+        """Close a portion of a position.
+
+        Args:
+            position_id: ID of the position
+            close_ratio: Fraction to close (0.0 to 1.0)
+
+        Returns:
+            PnL from the closed portion, or None if position not found
+        """
+        trade = self.open_positions.get(position_id)
+        if trade is None:
+            return None
+
+        close_volume = trade.volume * close_ratio
+        keep_volume = trade.volume - close_volume
+
+        # Use live price if available, fall back to entry price
+        current_price = self._live_price(trade.symbol) or trade.entry_price
+
+        # Calculate PnL on the closed portion
+        if trade.direction == "BUY":
+            pnl = (current_price - trade.entry_price) * close_volume * 100000
+        else:
+            pnl = (trade.entry_price - current_price) * close_volume * 100000
+
+        # Reduce position volume
+        trade.volume = keep_volume
+
+        # Record in trade history
+        self.trade_history.append(
+            TradeRecord(
+                timestamp=time.time(),
+                symbol=trade.symbol,
+                direction=trade.direction,
+                volume=close_volume,
+                entry_price=trade.entry_price,
+                sl=trade.sl,
+                tp=trade.tp,
+                exit_price=current_price,
+                pnl=pnl,
+                status="CLOSED",
+                reason="partial_take_profit",
+                position_id=position_id,
+            )
+        )
+
+        # Update balance
+        self._balance += pnl
+
+        logger.info(
+            f"[PARTIAL CLOSE] {trade.direction} {trade.symbol} "
+            f"vol={close_volume:.2f} pnl=${pnl:.2f} remaining={keep_volume:.2f}"
+        )
+
+        return pnl
+
+    async def modify_position(
+        self, position_id: int, sl: float = None, tp: float = None
+    ) -> bool:
+        """Modify SL/TP on an existing position.
+
+        Updates local state and sends modify request to broker if live.
+        """
+        if position_id not in self.open_positions:
+            logger.warning(f"modify_position: position {position_id} not found")
+            return False
+        trade = self.open_positions[position_id]
+        if sl is not None:
+            trade.sl = sl
+        if tp is not None:
+            trade.tp = tp
+        if self.client and hasattr(self.client, "modify_position"):
+            return await self.client.modify_position(position_id, sl, tp)
+        return True  # Paper trading: just update local state
+
     async def close_all_positions(self, reason="AI close all"):
         async with self._close_lock:
             for pid in list(self.open_positions.keys()):
@@ -324,6 +400,16 @@ class ExecutionEngine:
             }
             for t in self.open_positions.values()
         ]
+
+    def get_trade_by_id(self, position_id: int):
+        """Look up a trade by position_id in both open and closed trades."""
+        trade = self.open_positions.get(position_id)
+        if trade:
+            return trade
+        for t in self.trade_history:
+            if t.position_id == position_id:
+                return t
+        return None
 
     def get_trade_history(self, limit=100):
         return [

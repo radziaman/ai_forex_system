@@ -10,6 +10,7 @@ to dynamically adjust which symbols they process.
 """
 
 from __future__ import annotations
+import datetime
 import os
 import sys
 import time
@@ -150,8 +151,22 @@ class InstrumentScreenerAgent(BaseAgent):
         # Subscribe to on-demand screening requests
         self.subscribe(MessageType.SCREENING_REQUEST)
 
+    def _is_trading_hours(self) -> bool:
+        """Check if forex/futures markets are open (skip weekends)."""
+        now = datetime.datetime.now(datetime.timezone.utc)
+        # Forex opens Sunday 21:00 UTC, closes Friday 21:00 UTC
+        if now.weekday() == 5 or (now.weekday() == 6 and now.hour < 21):
+            return False  # Weekend closed
+        return True
+
     async def perceive(self) -> Dict[str, Any]:
         """Check if a scan is needed."""
+        # Skip screening during weekends (no market data available)
+        if not self._is_trading_hours():
+            if self._last_scan_time > 0:
+                return {"skip": True, "reason": "weekend"}
+            # Allow one initial scan to load cached data
+
         now = time.time()
         hours_since_last = (now - self._last_scan_time) / 3600
 

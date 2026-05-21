@@ -3,6 +3,7 @@ Risk Agent — G2: reads adaptive risk values, G7: acts on halted symbols, G9: h
 """
 
 from __future__ import annotations
+import datetime
 import time
 import numpy as np
 from typing import Dict, List, Optional, Any, Set
@@ -194,6 +195,42 @@ class RiskAgent(BaseAgent):
                 target=message.source_agent,
             )
 
+    # Correlated pairs that should not both have open positions
+    CORRELATED_GROUPS: Dict[str, list] = {
+        "EURUSD": ["GBPUSD"],
+        "AUDUSD": ["NZDUSD"],
+        "USDCAD": ["XTIUSD"],
+        "USDJPY": ["USDCHF"],
+    }
+
+    # ── Session-based position sizing ───────────────────────────────────────
+
+    def _get_current_session(self) -> str:
+        """Detect the current forex trading session based on UTC time."""
+        utc_hour = datetime.datetime.now(datetime.timezone.utc).hour
+        if 7 <= utc_hour < 12:
+            return "london"
+        elif 12 <= utc_hour < 16:
+            return "overlap"
+        elif 16 <= utc_hour < 21:
+            return "newyork"
+        elif 21 <= utc_hour or utc_hour < 7:
+            return "asia"
+        elif 8 <= utc_hour < 12:
+            return "pacific"
+        return "asia"
+
+    def _session_size_multiplier(self) -> float:
+        """Return size multiplier based on session liquidity."""
+        session = self._get_current_session()
+        if session == "overlap":
+            return 1.0  # Full size during peak liquidity
+        if session in ("london", "newyork"):
+            return 0.8  # 80% during single major session
+        if session == "asia":
+            return 0.5  # 50% during low liquidity
+        return 0.8  # pacific and others
+
     async def _evaluate_signal(self, message: AgentMessage):
         payload = message.payload if isinstance(message.payload, dict) else {}
         symbol = payload.get("symbol", "")
@@ -221,10 +258,29 @@ class RiskAgent(BaseAgent):
         margin = self.get_world("account.margin", 0)
         open_pos_count = self.get_world("account.open_positions", 0)
         max_positions = self.get_world("config.max_positions", 10)
+        open_positions = self.get_world("execution.open_positions_raw", [])
 
         if open_pos_count >= max_positions:
             await self._reject(message, f"Max positions ({max_positions}) reached")
             return
+
+        # Correlation check: reject signal if a correlated pair already has an open position
+        open_symbols = {p.get("symbol", "") for p in open_positions}
+        for base, correlated_list in self.CORRELATED_GROUPS.items():
+            if symbol in correlated_list and base in open_symbols:
+                await self._reject(
+                    message,
+                    f"Correlated pair {base} already open (same group as {symbol})",
+                )
+                return
+            if symbol == base:
+                for corr_sym in correlated_list:
+                    if corr_sym in open_symbols:
+                        await self._reject(
+                            message,
+                            f"Correlated pair {corr_sym} already open (same group as {symbol})",
+                        )
+                        return
 
         approved, reason = self.risk_manager.pre_trade_checks(
             balance, equity, margin, equity - balance
@@ -249,7 +305,10 @@ class RiskAgent(BaseAgent):
             atr,
             confidence,
             symbol=symbol,
+            open_positions=open_positions,
         )
+        # Apply session-based size multiplier (reduced in low-liquidity sessions)
+        volume *= self._session_size_multiplier()
         lot_min = 0.01
         volume = max(round(volume / lot_min) * lot_min, lot_min)
         volume = min(volume, balance * 0.5 / max(price, 0.0001))
@@ -268,11 +327,12 @@ class RiskAgent(BaseAgent):
             await self._reject(message, cost.rejection_reason)
             return
 
-        # G2: Read dynamically adjusted SL/TP from regime params
-        sl_mult = self.get_world(
+        # Per-strategy SL/TP from signal payload (if provided), falling back to
+        # regime params, then to config defaults
+        sl_mult = payload.get("sl_atr") or self.get_world(
             "regime.params.sl_atr", self.config.trading.sl_atr_multiplier
         )
-        tp_mult = self.get_world(
+        tp_mult = payload.get("tp_atr") or self.get_world(
             "regime.params.tp_atr", self.config.trading.tp_atr_multiplier
         )
 

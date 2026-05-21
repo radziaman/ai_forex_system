@@ -9,7 +9,7 @@ trading:
   min_win_rate_live: 0.55
   min_win_rate_paper: 0.45
   base_lot_size: 0.01         # Micro lot
-  max_positions: 1            # Single position only (EURUSD focus)
+  max_positions: 3            # Multi-position trading enabled
   slippage_pips: 0.5
   commission_per_lot: 7.0
   sl_atr_multiplier: 2.0
