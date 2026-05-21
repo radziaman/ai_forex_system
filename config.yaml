@@ -3,7 +3,7 @@
 
 # Trading Parameters
 trading:
-  max_risk_per_trade: 0.005   # 0.5% risk per trade (ultra-conservative)
+  max_risk_per_trade: 0.04    # 4% risk per trade (fits $50 micro-account: 0.01 lot min = ~$2)
   max_drawdown: 0.05          # 5% max drawdown
   max_margin_usage: 0.50      # 50% margin
   min_win_rate_live: 0.55
