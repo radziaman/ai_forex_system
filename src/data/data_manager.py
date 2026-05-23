@@ -16,6 +16,8 @@ from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
 
+from .microstructure_features import MicrostructureEngine, PriceTick
+
 # ---------------------------------------------------------------------------
 # Symbol registry (single source of truth)
 # ---------------------------------------------------------------------------
@@ -157,6 +159,9 @@ class DataManager:
         self._last_aggregate_time: float = time.time()
         self._aggregate_interval: float = 1.0  # batch & process every 1s max
 
+        # --- Microstructure engine ---
+        self.microstructure = MicrostructureEngine()
+
         # --- Initialize structures for all symbols ---
         for sym in SYMBOLS:
             self.ohlcv[sym] = {}
@@ -242,6 +247,18 @@ class DataManager:
             "vol": max(volume, 0),
         }
         self._pending_ticks[symbol].append(tick)
+
+        # Feed microstructure engine
+        self.microstructure.ingest_tick(
+            PriceTick(
+                symbol=symbol,
+                bid=bid,
+                ask=ask,
+                mid=mid,
+                timestamp=ts,
+                volume=max(volume, 0),
+            )
+        )
 
         fd = self.freshness[symbol]
         fd.last_tick_ts = ts
@@ -1062,12 +1079,16 @@ class DataManager:
     def get_order_flow_metrics(self, symbol: str) -> Dict:
         cvd_hist, _, _ = self._cvd.get(symbol, ([], [], []))
         of = self.order_flow.get(symbol, {})
+        ms_snapshot = self.microstructure.get_snapshot(
+            symbol, self._last_realtime_price.get(symbol, 0.0)
+        )
         return {
             "cvd": of.get("cvd", 0.0),
             "cvd_slope": of.get("cvd_slope", 0.0),
             "imbalance": of.get("imbalance", 0.0),
             "dom_imbalance": self.get_dom_imbalance(symbol),
             "cvd_hist": cvd_hist[-100:] if cvd_hist else [],
+            "microstructure": ms_snapshot,
         }
 
     def calculate_gamma_exposure(self, symbol: str) -> Dict:
@@ -1091,6 +1112,9 @@ class DataManager:
                 self.order_flow.get(symbol, {}),
                 acc,
                 positions,
+                microstructure=self.microstructure,
+                symbol=symbol,
+                current_price=self._last_realtime_price.get(symbol, 0.0),
             )
             fnames = fe.feature_names
         except Exception:

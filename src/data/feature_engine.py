@@ -48,6 +48,19 @@ class FeatureEngine:
             names += [f"{p}cvd", f"{p}cvd_sl", f"{p}imbalance", f"{p}large_z"]
         names += ["mtf_trend", "mtf_vol_avg", "mtf_rsi_avg", "mtf_vol_avg2"]
         names += ["acc_bal", "acc_eq", "acc_margin", "acc_pos_cnt", "acc_pnl_norm"]
+        names += [
+            "ms_ofi",
+            "ms_cvd",
+            "ms_cvd_slope",
+            "ms_spread_p50",
+            "ms_spread_p95",
+            "ms_spread_expansion",
+            "ms_trade_size_skew",
+            "ms_whale_ratio",
+            "ms_vwap_deviation",
+            "ms_twap_deviation",
+            "ms_dom_depth_imbalance",
+        ]
         self.feature_names = names
 
     def compute_features(
@@ -56,6 +69,9 @@ class FeatureEngine:
         order_flow: Optional[Dict] = None,
         acc: Optional[Dict] = None,
         positions: Optional[List] = None,
+        microstructure: Optional[Any] = None,
+        symbol: str = "",
+        current_price: float = 0.0,
     ) -> np.ndarray:
         feats = []
         for tf in self.TIMEFRAMES:
@@ -194,6 +210,12 @@ class FeatureEngine:
                 1,
             )
         )
+        # Microstructure features
+        if microstructure is not None and symbol and current_price > 0:
+            ms_vec = microstructure.get_feature_vector(symbol, current_price)
+            feats.extend(ms_vec.tolist())
+        else:
+            feats.extend([0.0] * 11)
         return np.array(feats, dtype=np.float32)
 
     def _atr(self, h, l, c, p=14):

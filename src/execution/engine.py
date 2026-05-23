@@ -5,6 +5,11 @@ from typing import Optional, Dict, List
 from dataclasses import dataclass
 from api.ctrader_client import TradeOrder
 from data.data_manager import BASE_PRICES
+from execution.execution_quality import ExecutionQualityTracker
+from execution.position_reconciler import PositionReconciler
+from execution.broker_health import BrokerHealthMonitor
+from risk.enhanced_manager import EnhancedRiskManager
+from risk.manager import RiskManager, RiskParameters
 
 
 @dataclass
@@ -34,7 +39,18 @@ class ExecutionEngine:
         mode: str = "PAPER",
     ):
         self.client = ctrader_client
-        self.risk = risk_manager
+        if risk_manager is not None and not isinstance(
+            risk_manager, EnhancedRiskManager
+        ):
+            self.risk = EnhancedRiskManager(
+                risk_manager.params,
+                risk_manager.initial_balance,
+                base_manager=risk_manager,
+            )
+        elif risk_manager is None:
+            self.risk = EnhancedRiskManager(RiskParameters(), initial_balance)
+        else:
+            self.risk = risk_manager
         self.data = data_manager
         self.mode = mode
         self.open_positions: Dict[int, TradeRecord] = {}
@@ -46,6 +62,25 @@ class ExecutionEngine:
         self.client.on_market_data = self._on_market_data
         self._close_lock = asyncio.Lock()
         self._wire_order_update()
+        self.quality = ExecutionQualityTracker()
+        self.reconciler = PositionReconciler(
+            get_internal_positions=self.get_open_positions,
+            get_broker_positions=self._get_broker_positions,
+            on_mismatch=self._on_reconciliation_mismatch,
+        )
+        self.health_monitor = BrokerHealthMonitor(
+            failover_threshold=3,
+            on_failover=self._on_broker_failover,
+        )
+        self._reconcile_task: Optional[asyncio.Task] = None
+        self._health_task: Optional[asyncio.Task] = None
+        try:
+            loop = asyncio.get_running_loop()
+            self._reconcile_task = loop.create_task(self.reconciler.reconcile_loop())
+            self._health_task = loop.create_task(self.health_monitor.monitor_loop())
+        except RuntimeError:
+            self._reconcile_task = None
+            self._health_task = None
 
     @property
     def on_market_data(self):
@@ -104,6 +139,7 @@ class ExecutionEngine:
     ):
         if self.risk and self.risk.kill_switch_triggered:
             return None
+        self.quality.record_order_attempt(symbol)
         if self.risk and self.risk.mode == "PAPER":
             return self._simulate_open(symbol, direction, volume, sl, tp, reason)
         price = self._live_price(symbol)
@@ -124,6 +160,12 @@ class ExecutionEngine:
             if result and result.status == "FILLED":
                 self._position_counter += 1
                 fill_price = result.filled_price or price
+                self.quality.record_fill(symbol, price, fill_price, direction, volume)
+                if self.quality.should_slice(volume):
+                    slices = self.quality.plan_slices(
+                        volume, method="twap", n_slices=5, duration_sec=300
+                    )
+                    logger.info(f"Slicing recommended for {symbol}: {slices}")
                 trade = TradeRecord(
                     timestamp=time.time(),
                     symbol=symbol,
@@ -139,6 +181,8 @@ class ExecutionEngine:
                 )
                 self.open_positions[trade.position_id] = trade
                 self.total_trades += 1
+                if self.risk is not None:
+                    self.risk.record_trade_open(trade)
                 logger.success(
                     f"OPENED: {direction} {volume:.0f} {symbol} @ {trade.entry_price:.5f}"  # noqa: E501
                 )
@@ -164,6 +208,14 @@ class ExecutionEngine:
         )
         self.open_positions[trade.position_id] = trade
         self.total_trades += 1
+        if self.risk is not None:
+            self.risk.record_trade_open(trade)
+        self.quality.record_fill(symbol, price, price, direction, volume)
+        if self.quality.should_slice(volume):
+            slices = self.quality.plan_slices(
+                volume, method="twap", n_slices=5, duration_sec=300
+            )
+            logger.info(f"Slicing recommended for {symbol}: {slices}")
         logger.info(f"[PAPER] OPENED: {direction} {volume:.0f} {symbol} @ {price:.5f}")
         return trade
 
@@ -173,6 +225,7 @@ class ExecutionEngine:
         if position_id not in self.open_positions:
             return False
         trade = self.open_positions[position_id]
+        self.quality.record_order_attempt(trade.symbol)
         if exit_price is None or exit_price <= 0:
             exit_price = self._live_price(trade.symbol) or trade.entry_price
         pnl = self._pnl_usd(
@@ -189,24 +242,32 @@ class ExecutionEngine:
             volume=int(trade.volume),
             position_id=position_id,
         )
+        expected_exit = exit_price
         try:
             result = await self.client.place_order(order)
             if result and result.status == "FILLED":
-                exit_price = result.filled_price or exit_price
+                actual_exit = result.filled_price or expected_exit
                 pnl = self._pnl_usd(
                     trade.entry_price,
-                    exit_price,
+                    actual_exit,
                     trade.direction,
                     trade.volume,
                     trade.symbol,
                 )
-                self._finalize_close(trade, exit_price, pnl, reason)
+                self.quality.record_fill(
+                    trade.symbol, expected_exit, actual_exit, close_side, trade.volume
+                )
+                self._finalize_close(trade, actual_exit, pnl, reason)
                 return True
         except Exception as e:
             logger.error(f"Close error: {e}")
         return False
 
     def _simulate_close(self, trade, reason, exit_price, pnl):
+        close_side = "SELL" if trade.direction == "BUY" else "BUY"
+        self.quality.record_fill(
+            trade.symbol, exit_price, exit_price, close_side, trade.volume
+        )
         self._finalize_close(trade, exit_price, pnl, reason)
         logger.info(f"[PAPER] CLOSED: {trade.symbol} {reason} | PnL: ${pnl:.2f}")
         return True
@@ -220,7 +281,10 @@ class ExecutionEngine:
         del self.open_positions[trade.position_id]
         self._balance += pnl
         if self.risk:
-            self.risk.record_trade(trade, exit_price, pnl)
+            if hasattr(self.risk, "record_trade_close"):
+                self.risk.record_trade_close(trade, exit_price, pnl)
+            else:
+                self.risk.record_trade(trade, exit_price, pnl)
 
     def partial_close(self, position_id: int, close_ratio: float) -> Optional[float]:
         """Close a portion of a position.
@@ -315,6 +379,9 @@ class ExecutionEngine:
                 )
             except Exception:
                 pass
+        if self.risk is not None:
+            mid_price = (depth.bid + depth.ask) / 2
+            self.risk.update_price_history(mid_price, depth.symbol)
         now = time.time()
         for pid, trade in list(self.open_positions.items()):
             if trade.symbol != depth.symbol:
@@ -322,6 +389,8 @@ class ExecutionEngine:
             if now - trade.timestamp < 60:
                 continue
             price = depth.bid if trade.direction == "BUY" else depth.ask
+            if self.risk is not None:
+                self.risk.update_trade_mae_mfe(pid, price)
             if trade.direction == "BUY":
                 if price <= trade.sl:
                     await self.close_position(pid, "Stop Loss", price)
@@ -432,6 +501,28 @@ class ExecutionEngine:
             }
             for t in self.trade_history[-limit:]
         ]
+
+    async def _get_broker_positions(self):
+        if self.mode == "LIVE" and self.client is not None:
+            try:
+                raw = getattr(self.client, "raw", None)
+                if raw and hasattr(raw, "reconcile") and callable(raw.reconcile):
+                    if hasattr(raw, "is_connected") and raw.is_connected():
+                        result = await raw.reconcile()
+                        return result or []
+            except Exception as e:
+                logger.warning(f"Broker position reconcile failed: {e}")
+        return []
+
+    def _on_reconciliation_mismatch(self, diff):
+        logger.warning(
+            f"Position reconciliation mismatch: missing={len(diff.missing)} "
+            f"extra={len(diff.extra)} mismatched={len(diff.mismatched)}"
+        )
+
+    def _on_broker_failover(self):
+        logger.error("Broker health degraded — switching to PAPER mode")
+        self.mode = "PAPER"
 
     def _get_symbol_id(self, symbol):
         from api.symbol_map import get_symbol_id

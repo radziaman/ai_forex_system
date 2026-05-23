@@ -403,6 +403,10 @@ class RiskManager:
         self.daily_trades = 0
         self.consecutive_losses = 0
 
+    def set_enhanced_manager(self, enhanced):
+        """Allow external EnhancedRiskManager to attach itself."""
+        self._enhanced = enhanced
+
 
 class TrailingStopManager:
     """Multi-tier trailing stop (Zenox EA 3-tier system)."""

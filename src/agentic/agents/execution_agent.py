@@ -225,6 +225,32 @@ class ExecutionAgent(BaseAgent):
         self.set_world("execution.mode", engine_mode)
         self.set_world("execution.status", "ready")
 
+        # Bridge cTrader heartbeats to health monitor
+        if self.engine and self.engine.health_monitor:
+            raw = getattr(self.ctrader, "raw", None)
+            if raw:
+
+                async def _health_bridge():
+                    while True:
+                        try:
+                            if hasattr(raw, "is_connected") and raw.is_connected():
+                                latency = 0.0
+                                if hasattr(raw, "_last_heartbeat_ts"):
+                                    latency = max(
+                                        0.0,
+                                        (time.time() - raw._last_heartbeat_ts) * 1000,
+                                    )
+                                self.engine.health_monitor.record_heartbeat(latency)
+                            else:
+                                self.engine.health_monitor.record_error()
+                            await asyncio.sleep(5.0)
+                        except asyncio.CancelledError:
+                            break
+                        except Exception:
+                            await asyncio.sleep(5.0)
+
+                self._health_bridge_task = asyncio.create_task(_health_bridge())
+
     async def _publish_market_state(self):
         """Publish market session info to world state for all agents."""
         from data.market_session import MarketSession

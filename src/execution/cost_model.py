@@ -6,6 +6,8 @@ Applies realistic costs to every simulated/executed trade.
 from dataclasses import dataclass
 from typing import Dict, Optional, Callable
 
+from .execution_quality import ExecutionQualityTracker
+
 
 @dataclass
 class CostResult:
@@ -16,6 +18,7 @@ class CostResult:
     actual_spread_pips: float = 0.0
     is_acceptable: bool = True
     rejection_reason: str = ""
+    market_impact: float = 0.0
 
 
 # Typical spreads in pips for major forex pairs (variable by liquidity)
@@ -49,12 +52,14 @@ class CostModel:
         commission_per_lot: float = 7.0,
         default_spread: float = 1.0,
         price_provider: Optional[Callable[[str], float]] = None,
+        quality_tracker: Optional[ExecutionQualityTracker] = None,
     ):
         self.commission_per_lot = commission_per_lot
         self.default_spread = default_spread
         self._spread_history: Dict[str, list] = {}
         self._max_spread_multiplier = MAX_SPREAD_MULT
         self._price_provider = price_provider
+        self.quality_tracker = quality_tracker
 
     def calculate(
         self,
@@ -109,15 +114,25 @@ class CostModel:
 
         spread_cost = base_cost * usd_rate
         slippage = slippage_cost * usd_rate
+        total = spread_cost + commission + slippage
+
+        market_impact = 0.0
+        if self.quality_tracker is not None:
+            impact_bps = self.quality_tracker.calculate_market_impact(
+                symbol, volume, atr, price
+            )
+            market_impact = impact_bps / 10_000 * price * volume * usd_rate
+            total += market_impact
 
         return CostResult(
             spread_cost=spread_cost,
             commission=commission,
             slippage=slippage,
-            total=spread_cost + commission + slippage,
+            total=total,
             actual_spread_pips=spread_pips,
             is_acceptable=is_acceptable,
             rejection_reason=rejection_reason,
+            market_impact=market_impact,
         )
 
     def _get_average_spread(self, symbol: str) -> float:

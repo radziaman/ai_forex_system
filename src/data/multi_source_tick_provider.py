@@ -23,26 +23,13 @@ import asyncio
 import pandas as pd
 from typing import List, Dict, Optional, Callable, Any
 from collections import defaultdict
-from dataclasses import dataclass
 from loguru import logger
 
 _src = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _src not in sys.path:
     sys.path.insert(0, _src)
 
-
-@dataclass
-class PriceTick:
-    """Unified tick format for all sources."""
-
-    symbol: str
-    bid: float
-    ask: float
-    mid: float
-    timestamp: float
-    volume: float = 0.0
-    source: str = ""
-
+from .microstructure_features import PriceTick  # noqa: E402
 
 # ─── cTrader Read-Only Data Listener ──────────────────────────────────────
 

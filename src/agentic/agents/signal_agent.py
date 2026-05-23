@@ -35,8 +35,14 @@ STRATEGY_SL_TP = {
     "ppo_volatile": (2.5, 5.0),  # PPO volatile agent
     "ppo_crisis": (1.0, 2.0),  # PPO crisis agent
     "lstm_cnn": (2.0, 4.0),  # LSTM model
+    "tft_primary": (2.0, 4.0),  # TFT model
     "orderflow": (1.5, 2.5),  # Order flow / CVD (tight SL, moderate TP)
     "macro_sentiment": (2.0, 4.0),  # Macroeconomic / sentiment (wider SL)
+    "stat_arb": (1.5, 3.0),  # Statistical arbitrage
+    "carry_trade": (2.0, 4.0),  # Carry trade
+    "event_driven": (1.0, 2.0),  # Event-driven straddle
+    "vol_expansion": (2.5, 5.0),  # Volatility breakout
+    "order_flow_momentum": (1.5, 2.5),  # Order flow momentum
 }
 
 
@@ -64,6 +70,7 @@ class SignalAgent(BaseAgent):
         self.config = config
         self.ensemble = None
         self._lstm_models: Dict[str, Any] = {}  # symbol -> loaded LSTM model
+        self._tft_models: Dict[str, Any] = {}  # symbol -> loaded TFT model
         self._classifiers: Dict[str, Any] = {}  # symbol -> loaded classifier
         self._model_registry = None
         self._regime_manager = None
@@ -72,6 +79,7 @@ class SignalAgent(BaseAgent):
         self._signal_count = 0
         self._last_signal_time = 0.0
         self._fallback_warnings: set = set()  # Track which symbols we warned about
+        self._alpha_strategies: Dict[str, Any] = {}  # name -> strategy instance
 
         # G8: Track outcomes per expert for online learning
         self._expert_outcomes: Dict[str, deque] = defaultdict(lambda: deque(maxlen=200))
@@ -95,6 +103,11 @@ class SignalAgent(BaseAgent):
 
         # Track position_id -> {symbol, expert_outputs, direction} for PnL at close
         self._position_info: Dict[int, Dict] = {}
+
+        # Attribution engine for per-strategy PnL decomposition
+        from validation.attribution import StrategyAttributionEngine
+
+        self._attribution_engine = StrategyAttributionEngine()
 
         # G16: Confidence calibration
         self._confidence_buckets: Dict[str, deque] = defaultdict(
@@ -391,6 +404,19 @@ class SignalAgent(BaseAgent):
             # Per-symbol strategy tracker
             self._per_symbol_tracker.record_trade(symbol, expert_name, expert_pnl)
 
+            # Attribution engine: decompose PnL
+            if self._attribution_engine is not None:
+                self._attribution_engine.attribute_trade(
+                    {
+                        "pnl": expert_pnl,
+                        "expected_pnl": expert_pnl * 0.8,
+                        "fill_price": payload.get("fill_price", 0.0),
+                        "signal_price": payload.get("signal_price", 0.0),
+                        "strategy": expert_name,
+                        "market_return": 0.0,
+                    }
+                )
+
         # Publish tradeable symbols to world state for execution agent
         tradeable = [
             s
@@ -398,6 +424,12 @@ class SignalAgent(BaseAgent):
             if self._per_symbol_tracker.is_symbol_tradeable(s)
         ]
         self.set_world("signal.tradeable_symbols", tradeable)
+
+        # Publish attribution report to world state
+        if self._attribution_engine is not None:
+            attr_report = self._attribution_engine.get_report()
+            if attr_report:
+                self.set_world("signal.attribution_report", attr_report)
 
     # G16: Log calibration report
     def _log_calibration(self):
@@ -480,6 +512,31 @@ class SignalAgent(BaseAgent):
                         except Exception:
                             pass
 
+        # Load TFT models for all active symbols
+        try:
+            from ai.tft_model import TemporalFusionTransformer
+
+            for sym in self._active_symbols:
+                tft_path = f"models/tft_{sym}.pt"
+                if os.path.exists(tft_path):
+                    try:
+                        loaded = TemporalFusionTransformer.load(tft_path)
+                        self._tft_models[sym] = loaded
+                    except Exception:
+                        pass
+                if sym not in self._tft_models:
+                    # Fallback: generic model
+                    generic = "models/tft_primary.pt"
+                    if os.path.exists(generic):
+                        try:
+                            loaded = TemporalFusionTransformer.load(generic)
+                            self._tft_models[sym] = loaded
+                            self._fallback_warnings.add(sym)
+                        except Exception:
+                            pass
+        except Exception as e:
+            self.log_state(f"TFT models not loaded: {e}", "warning")
+
         # Load classifier models per active symbol
         from rts_ai_fx.model import ProfitabilityClassifier
 
@@ -505,6 +562,7 @@ class SignalAgent(BaseAgent):
 
         # Log summary
         lstm_count = len(self._lstm_models)
+        tft_count = len(self._tft_models)
         clf_count = len(self._classifiers)
         lstm_unique = len(set(id(m) for m in self._lstm_models.values()))
         if self._fallback_warnings:
@@ -519,10 +577,11 @@ class SignalAgent(BaseAgent):
             self.log_state(
                 f"{lstm_count} symbols have LSTM models ({lstm_unique} unique instances)"  # noqa: E501
             )
+        self.log_state(f"{tft_count} symbols have TFT models")
         self.log_state(f"{clf_count} symbols have classifiers")
 
-        self._models_loaded = (
-            self._regime_manager is not None and len(self._lstm_models) > 0
+        self._models_loaded = self._regime_manager is not None and (
+            len(self._lstm_models) > 0 or len(self._tft_models) > 0
         )
 
     def _register_experts(self):  # noqa: C901
@@ -650,6 +709,166 @@ class SignalAgent(BaseAgent):
         self._strategy_tracker.register_strategy("xgboost", "ranging")
         for sym in self._active_symbols:
             self._per_symbol_tracker.register(sym, "xgboost", "ranging")
+
+        # Phase 11: TFT primary expert (Temporal Fusion Transformer)
+        has_tft = len(self._tft_models) > 0
+        if has_tft:
+            self.ensemble.add_expert(
+                name="tft_primary",
+                predict_fn=self._tft_prediction,
+                confidence_fn=self._tft_confidence,
+                regime="ranging",
+            )
+            self._strategy_tracker.register_strategy("tft_primary", "ranging")
+            for sym in self._active_symbols:
+                self._per_symbol_tracker.register(sym, "tft_primary", "ranging")
+
+        # Phase 12: Alpha strategies from StrategyRegistry
+        try:
+            from ai.alpha_strategies import StrategyRegistry
+            from ai.alpha_strategies.stat_arb import StatArbStrategy
+            from ai.alpha_strategies.carry_trade import CarryTradeStrategy
+            from ai.alpha_strategies.event_driven import EventDrivenStrategy
+            from ai.alpha_strategies.vol_expansion import VolExpansionStrategy
+            from ai.alpha_strategies.order_flow_momentum import (
+                OrderFlowMomentumStrategy,
+            )
+
+            registry = StrategyRegistry()
+            registry.register("stat_arb", StatArbStrategy)
+            registry.register("carry_trade", CarryTradeStrategy)
+            registry.register("event_driven", EventDrivenStrategy)
+            registry.register("vol_expansion", VolExpansionStrategy)
+            registry.register("order_flow_momentum", OrderFlowMomentumStrategy)
+
+            # Map regimes to strategies for dynamic selection
+            registry.map_regime("trending", ["stat_arb", "carry_trade"])
+            registry.map_regime("ranging", ["event_driven", "order_flow_momentum"])
+            registry.map_regime("volatile", ["vol_expansion", "event_driven"])
+            registry.map_regime("crisis", ["event_driven"])
+
+            for name, strat_class in registry.get_all().items():
+                instance = strat_class(symbol=self._current_symbol, params={})
+                self._alpha_strategies[name] = instance
+                predict_fn = self._make_alpha_predict_fn(name)
+                conf_fn = self._make_alpha_confidence_fn(name)
+                regime = self._alpha_regime_for(name)
+                self.ensemble.add_expert(
+                    name=name,
+                    predict_fn=predict_fn,
+                    confidence_fn=conf_fn,
+                    regime=regime,
+                )
+                self._strategy_tracker.register_strategy(name, regime)
+                for sym in self._active_symbols:
+                    self._per_symbol_tracker.register(sym, name, regime)
+        except Exception as e:
+            self.log_state(f"Alpha strategies not registered: {e}", "warning")
+
+    def _make_alpha_predict_fn(self, name: str):
+        """Closure that routes ensemble calls to the correct alpha strategy."""
+        return lambda X, n=name: self._alpha_prediction(X, n)
+
+    def _make_alpha_confidence_fn(self, name: str):
+        return lambda X, n=name: self._alpha_confidence(X, n)
+
+    def _alpha_regime_for(self, name: str) -> str:
+        mapping = {
+            "stat_arb": "ranging",
+            "carry_trade": "trending",
+            "event_driven": "volatile",
+            "vol_expansion": "volatile",
+            "order_flow_momentum": "ranging",
+        }
+        return mapping.get(name, "ranging")
+
+    def _alpha_prediction(self, X: np.ndarray, name: str) -> float:
+        """Convert alpha strategy signal direction to a price-like prediction."""
+        strategy = self._alpha_strategies.get(name)
+        if strategy is None or self._last_df is None:
+            return 0.0
+        try:
+            sig = strategy.generate_signal(self._last_df)
+            direction = sig.get("direction", "HOLD")
+            conf = sig.get("confidence", 0.0)
+            if direction == "BUY":
+                return 0.005 * conf
+            elif direction == "SELL":
+                return -0.005 * conf
+            return 0.0
+        except Exception:
+            return 0.0
+
+    def _alpha_confidence(self, X: np.ndarray, name: str) -> float:
+        """Return alpha strategy confidence."""
+        strategy = self._alpha_strategies.get(name)
+        if strategy is None or self._last_df is None:
+            return 0.5
+        try:
+            sig = strategy.generate_signal(self._last_df)
+            return float(sig.get("confidence", 0.5))
+        except Exception:
+            return 0.5
+
+    def _tft_prediction(self, X: np.ndarray) -> float:
+        """TFT ensemble prediction for the current symbol."""
+        model = self._tft_models.get(self._current_symbol)
+        if model is None:
+            model = self._tft_models.get("EURUSD") or next(
+                iter(self._tft_models.values()), None
+            )
+        if model is None:
+            return 0.0
+        try:
+            X_arr = np.asarray(X)
+            if X_arr.ndim == 2:
+                X_arr = X_arr.reshape(1, X_arr.shape[0], X_arr.shape[1])
+            elif X_arr.ndim == 1:
+                X_arr = X_arr.reshape(1, 1, -1)
+            # Build static context: simple symbol + session encoding
+            static = self._build_static_context()
+            probs = model.predict(X_arr, static)
+            prob = float(probs.flatten()[0])
+            # Map probability [0,1] to signed prediction centered at 0.5
+            return (prob - 0.5) * 0.02
+        except Exception:
+            return 0.0
+
+    def _tft_confidence(self, X: np.ndarray) -> float:
+        """TFT confidence = distance from 0.5 in probability space."""
+        model = self._tft_models.get(self._current_symbol)
+        if model is None:
+            return 0.5
+        try:
+            X_arr = np.asarray(X)
+            if X_arr.ndim == 2:
+                X_arr = X_arr.reshape(1, X_arr.shape[0], X_arr.shape[1])
+            elif X_arr.ndim == 1:
+                X_arr = X_arr.reshape(1, 1, -1)
+            static = self._build_static_context()
+            probs = model.predict(X_arr, static)
+            prob = float(probs.flatten()[0])
+            return 0.5 + abs(prob - 0.5)
+        except Exception:
+            return 0.5
+
+    def _build_static_context(self) -> np.ndarray:
+        """Encode current symbol and session as a static vector for TFT."""
+        sym = self._current_symbol.upper()
+        session = self._current_session
+        # Simple one-hot-ish encoding (8 dims)
+        vec = np.zeros(8, dtype=np.float32)
+        # First 3 dims: symbol hash
+        h = hash(sym) % 1000 / 1000.0
+        vec[0] = h
+        vec[1] = np.sin(h * np.pi * 2)
+        vec[2] = np.cos(h * np.pi * 2)
+        # Next dims: session encoding
+        sessions = ["asia", "london", "overlap", "newyork", "pacific"]
+        if session in sessions:
+            idx = sessions.index(session)
+            vec[3 + idx] = 1.0
+        return vec
 
     def _get_lstm_prediction(self, symbol: str) -> float:
         """Get symbol-specific LSTM prediction."""

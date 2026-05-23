@@ -51,7 +51,8 @@ class RiskAgent(BaseAgent):
 
     async def _on_start(self):
         self.consciousness.current_intention = "initializing risk systems"
-        from risk.manager import RiskManager, RiskParameters
+        from risk.enhanced_manager import EnhancedRiskManager
+        from risk.manager import RiskParameters
         from risk.circuit_breaker import CircuitBreaker
         from execution.cost_model import CostModel
 
@@ -60,7 +61,7 @@ class RiskAgent(BaseAgent):
             max_drawdown=self.config.trading.max_drawdown,
             max_margin_usage=self.config.trading.max_margin_usage,
         )
-        self.risk_manager = RiskManager(params, self.initial_balance)
+        self.risk_manager = EnhancedRiskManager(params, self.initial_balance)
         self.circuit_breaker = CircuitBreaker(
             price_velocity_threshold=0.005,
             spread_multiplier_threshold=5.0,
