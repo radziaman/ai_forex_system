@@ -82,7 +82,7 @@ class CircuitBreaker:
         self.base_confidence_threshold: float = 0.65
         self.current_confidence_threshold: float = self.base_confidence_threshold
 
-    def check_market_health(
+    def check_market_health(  # noqa: C901
         self, symbol: str, tick: Dict
     ) -> Tuple[bool, str, MarketStressSnapshot]:
         """
@@ -258,7 +258,7 @@ class CircuitBreaker:
             reason = f"flash_crash_velocity_{max_return:.4f}"
             snapshot.stress_level = "extreme"
             logger.error(
-                f"CIRCUIT BREAKER: {symbol} flash crash detected! Velocity={max_return:.4f}"
+                f"CIRCUIT BREAKER: {symbol} flash crash detected! Velocity={max_return:.4f}"  # noqa: E501
             )
             self.last_halt_time[symbol] = time.time()
             return True, reason
@@ -279,7 +279,7 @@ class CircuitBreaker:
             reason = f"liquidity_drought_spread_{ratio:.1f}x_normal"
             snapshot.stress_level = "high" if ratio > 10 else "elevated"
             logger.warning(
-                f"CIRCUIT BREAKER: {symbol} liquidity drought! Spread {ratio:.1f}x normal"
+                f"CIRCUIT BREAKER: {symbol} liquidity drought! Spread {ratio:.1f}x normal"  # noqa: E501
             )
             self.last_halt_time[symbol] = time.time()
             return True, reason

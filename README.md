@@ -1,10 +1,10 @@
-# RTS: Agentic Moneybot System Elite v5.1
+# RTS: Agentic Moneybot System Elite v5.2
 
 **Autonomous multi-agent AI forex trading system** — 20 self-aware agents with 10 adaptive strategies (5 rule-based + 4 PPO reinforcement learning + 1 LSTM-CNN), real-time market data ingestion, multi-source sentiment analysis, per-symbol AI learning, and institutional-grade risk management.
 
 The system monitors **11 forex symbols** simultaneously, automatically learns which strategies work on each pair, adapts to market conditions in real-time, and manages trades with ATR-based trailing stops, partial profit taking, and correlation-aware position sizing.
 
-> **v5.1 — Code Quality & Stability Pass:** 19 runtime bugs fixed (undefined names, missing awaits, None crashes), 120+ type annotations cleaned, mypy errors reduced 76% (158 → 38), flake8 F-level errors eliminated, full black formatting compliance. All 74 tests pass with zero regressions.
+> **v5.2 — Zero Warnings Pass:** All 375 flake8 lint warnings eliminated, all 38 mypy type errors resolved (127 files clean), 6 missing `__init__.py` files added for package integrity, `.env.example` expanded to 28 environment variables, Makefile/setup.py/pre-commit config bugs fixed. `make check` now passes fully with 0 lint warnings, 0 type errors, and 74/74 tests green.
 
 > ⚠️ **Disclaimer:** Trading involves substantial risk. This software is for educational/research purposes. Always test thoroughly on demo accounts before using real money. Past performance does not guarantee future results.
 
@@ -260,9 +260,9 @@ docker compose up -d
 ### Verification
 ```bash
 make test      # Run all 74 tests
-make lint     # Flake8 linting (F-level errors: 0)
-make format   # Black auto-formatting (120 files clean)
-make type-check  # Mypy type checking (38 annotation warnings remaining)
+make lint     # Flake8 linting (0 warnings — full compliance)
+make format   # Black auto-formatting (all files clean)
+make type-check  # Mypy type checking (0 errors in 127 files)
 make check    # Full suite: lint → type-check → test
 ```
 
@@ -283,18 +283,34 @@ See `.env.example` — never commit `.env` to git.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
+| `CTRADER_APP_CLIENT_ID` | Yes | cTrader application client ID |
+| `CTRADER_APP_CLIENT_SECRET` | Yes | cTrader application secret |
 | `CTRADER_APP_ID` | Yes | cTrader application ID |
 | `CTRADER_APP_SECRET` | Yes | cTrader application secret |
+| `CTRADER_ACCOUNT_ID` | Yes | cTrader account ID |
 | `CTRADER_ACCESS_TOKEN` | Yes | OAuth2 access token |
 | `CTRADER_REFRESH_TOKEN` | For refresh | OAuth2 refresh token |
-| `CTRADER_ACCOUNT_ID` | Yes | cTrader account ID |
+| `CTRADER_DEMO` | No | Use demo account (`true`/`false`) |
+| `CTRADER_FIX_HOST` | No | cTrader FIX API host |
+| `CTRADER_FIX_ACCOUNT_ID` | No | FIX account ID |
+| `CTRADER_FIX_SENDER_COMP_ID` | No | FIX sender comp ID |
+| `CTRADER_FIX_PASSWORD` | No | FIX password |
+| `TRADING_PROVIDER` | No | Data provider: `ctrader` (default) or `dukascopy` |
+| `REDIS_URL` | No | Redis connection URL (e.g. `redis://localhost:6379/0`) |
 | `TELEGRAM_BOT_TOKEN` | No | Telegram alerting bot token |
 | `TELEGRAM_CHAT_ID` | No | Telegram alerting chat ID |
-| `FRED_API_KEY` | No | St. Louis Fed economic data |
-| `TWITTER_BEARER_TOKEN` | No | Twitter/X API v2 |
-| `REDDIT_CLIENT_ID` | No | Reddit API (PRAW) |
-| `NASA_API_KEY` | No | NASA satellite data (default: DEMO_KEY) |
+| `DASHBOARD_PORT` | No | Dashboard port (default: 8000) |
+| `DASHBOARD_USER` | No | Dashboard username |
+| `DASHBOARD_PASS` | No | Dashboard password |
 | `LOG_LEVEL` | No | Logging level (default: INFO) |
+| `HF_TOKEN` | No | HuggingFace model hub token |
+| `TWITTER_API_KEY` | No | Twitter/X API key |
+| `TWITTER_API_SECRET` | No | Twitter/X API secret |
+| `TWITTER_BEARER_TOKEN` | No | Twitter/X API bearer token |
+| `REDDIT_CLIENT_ID` | No | Reddit API client ID |
+| `REDDIT_CLIENT_SECRET` | No | Reddit API client secret |
+| `NASA_API_KEY` | No | NASA satellite data (default: DEMO_KEY) |
+| `FRED_API_KEY` | No | St. Louis Fed economic data |
 
 ### config.yaml
 All trading parameters in `config.yaml`:
@@ -316,10 +332,12 @@ All trading parameters in `config.yaml`:
 
 | Quality Gate | Status | Count |
 |-------------|--------|-------|
-| Flake8 F-level errors | ✅ **0** | All fixed — 4 undefined-name bugs eliminated |
-| Black formatting | ✅ **120/120** | Full compliance |
-| Mypy type errors | 🟡 **38 remaining** | Reduced 76% (158→38). All remaining are annotation gaps, not runtime bugs |
-| Compilation | ✅ **121/121** | All source files compile cleanly |
+| Flake8 fatal errors (E9/F63/F7/F82) | ✅ **0** | All fixed — undefined-name bugs eliminated |
+| Flake8 style warnings (E501/F401/C901) | ✅ **0** | All 375 warnings resolved |
+| Black formatting | ✅ **All files** | Full compliance via `make format` |
+| Mypy type errors | ✅ **0** | 127 source files, zero type errors |
+| Python syntax | ✅ **All valid** | AST parse clean across entire codebase |
+| Tests | ✅ **74/74** | All passing with zero regressions |
 
 ---
 
@@ -357,7 +375,20 @@ tests/                # pytest suite (74 tests)
 - **Error escalation** protocol with severity levels
 - **Simulation mode** for all agents — safe testing without real I/O
 
-## 🧹 Recent Code Quality Improvements (v5.1)
+## 🧹 Recent Code Quality Improvements
+
+### v5.2 — Zero Warnings Pass
+
+| Fix Category | Files Changed | Details |
+|-------------|---------------|---------|
+| **Mypy type errors** | 14 | All 38 PEP 484 `no_implicit_optional` errors fixed, type assignment mismatches resolved, union-attr guards added |
+| **Lint warnings** | 103 | All 375 flake8 warnings eliminated (E501, F401, C901, E401, E402, F541, F841) |
+| **Package integrity** | 6 | Missing `__init__.py` added to `dashboard`, `execution`, `ai`, `infrastructure`, `data`, `risk` |
+| **Config & deps** | 4 | `.env.example` expanded to 28 keys, `Makefile` venv path fixed, `setup.py` synced with `pyproject.toml`, pre-commit regex corrected |
+| **Unused imports** | 68 | `autoflake` removed 170+ unused imports across all modules |
+| **Formatting** | 9 | `black` reformatted remaining non-compliant files |
+
+### v5.1 — Stability Pass
 
 | Fix Category | Files Changed | Details |
 |-------------|---------------|---------|

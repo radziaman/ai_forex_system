@@ -23,7 +23,7 @@ if "data.ohlcv" in src_regime and "data.ohlcv" not in src_data:
     gaps.append(
         (
             "data.ohlcv",
-            "regime_agent/feature_agent read from world state but data_agent never publishes it",
+            "regime_agent/feature_agent read from world state but data_agent never publishes it",  # noqa: E501
             "HIGH",
             "Publish dm.ohlcv in data_agent.act() or perceive()",
         )

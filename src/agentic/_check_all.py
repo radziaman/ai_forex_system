@@ -105,7 +105,6 @@ check("zero leftover symbol references", not found_any)
 # ── 3. Config consistency ──
 print("\n[3] CONFIG CONSISTENCY")
 from data.data_manager import SYMBOLS, BASE_PRICES  # noqa: E402
-from execution.cost_model import SPREADS  # noqa: E402
 from api.symbol_map import SYMBOL_MAP as SM  # noqa: E402
 from api.ctrader_client import SYMBOL_MAP as CM  # noqa: E402
 from infrastructure.config_v2 import AppConfig  # noqa: E402
@@ -121,16 +120,12 @@ check("no extra symbol_map IDs", len(SM) == 11)
 
 # ── 4. Agent framework health ──
 print("\n[4] AGENT FRAMEWORK HEALTH")
-from agentic.core.base_agent import BaseAgent  # noqa: E402
-from agentic.core.agent_message import MessageType, PAYLOAD_SCHEMAS  # noqa: E402
-from agentic.core.agent_consciousness import (
+from agentic.core.agent_message import PAYLOAD_SCHEMAS  # noqa: E402
+from agentic.core.agent_consciousness import (  # noqa: E402
     EmotionalState,
     ConsciousnessLevel,
 )  # noqa: E402
-from agentic.core.agent_bus import AgentBus, BusStats  # noqa: E402
-from agentic.core.agent_memory import AgentMemory  # noqa: E402
-from agentic.core.agent_registry import get_agent_registry  # noqa: E402
-from agentic.core.world_state import get_world_state  # noqa: E402
+from agentic.core.agent_bus import AgentBus  # noqa: E402
 
 check("PAYLOAD_SCHEMAS defined", len(PAYLOAD_SCHEMAS) > 10)
 check(

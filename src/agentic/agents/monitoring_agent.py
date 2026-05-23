@@ -5,8 +5,7 @@ alert aggregation, rate limiting, escalation, and daily summaries.
 
 from __future__ import annotations
 import time
-import asyncio
-from typing import Dict, List, Optional, Any, Set
+from typing import Dict, List, Any
 from collections import defaultdict, deque
 from datetime import datetime, timezone
 from loguru import logger
@@ -15,8 +14,6 @@ from agentic.core.base_agent import BaseAgent
 from agentic.core.agent_message import (
     AgentMessage,
     MessageType,
-    MessagePriority,
-    AgentIntention,
 )
 from agentic.core.agent_consciousness import ConsciousnessLevel
 
@@ -49,7 +46,7 @@ class MonitoringAgent(BaseAgent):
         super().__init__(
             name="monitoring_agent",
             role="System Monitor & Notifier",
-            purpose="Best-practice alerting: structured, aggregated, rate-limited, escalated",
+            purpose="Best-practice alerting: structured, aggregated, rate-limited, escalated",  # noqa: E501
             domain="monitoring",
             capabilities={
                 "telegram_notifications",
@@ -294,7 +291,7 @@ class MonitoringAgent(BaseAgent):
         perf = self.get_world("performance.stats", {})
         sharpe = perf.get("sharpe", 0)
         pnl = perf.get("total_pnl", 0)
-        footer = f"\n\U0001f4c8 {positions} pos | Sharpe {sharpe:.2f} | PnL ${pnl:+.2f} | {regime}"
+        footer = f"\n\U0001f4c8 {positions} pos | Sharpe {sharpe:.2f} | PnL ${pnl:+.2f} | {regime}"  # noqa: E501
 
         full_text = f"{header}\n{text}{footer}"
         self._safe_telegram(full_text, level, category)
@@ -371,7 +368,7 @@ class MonitoringAgent(BaseAgent):
                     blocked_symbols.append(sym)
 
         lines = [
-            f"\U0001f4ca *Daily Summary*",
+            "\U0001f4ca *Daily Summary*",
             f"Uptime: {uptime_h:.1f}h | Balance: ${balance:.2f}",
             f"Regime: {regime} | Trades: {t} | Wins: {wins} ({wins/max(t,1):.0%})",
             f"PnL: *${pnl:+.2f}* | Sharpe: {perf.get('sharpe', 0):.2f}",

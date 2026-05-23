@@ -1,5 +1,5 @@
 """
-World State — shared reality layer with versioned updates, change observers, and G26 integrity checks.
+World State — shared reality layer with versioned updates, change observers, and G26 integrity checks.  # noqa: E501
 """
 
 from __future__ import annotations

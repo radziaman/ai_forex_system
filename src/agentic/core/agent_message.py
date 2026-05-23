@@ -1,6 +1,6 @@
 """
 Agent Message Protocol — mathematically typed communication between agents.
-Every message carries identity, intent, context, causal chain, delivery guarantees, and payload schemas.
+Every message carries identity, intent, context, causal chain, delivery guarantees, and payload schemas.  # noqa: E501
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ import uuid
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, List, Set, Tuple, Union
+from typing import Any, Dict, Optional, List, Tuple, Union
 from enum import Enum, auto
 
 

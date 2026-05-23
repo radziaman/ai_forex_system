@@ -1,6 +1,5 @@
 """Tests for typed configuration."""
 
-import pytest
 import os
 import tempfile
 import yaml

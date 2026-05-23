@@ -11,7 +11,7 @@ help:
 	@echo "  make clean    - Clean up generated files"
 
 setup:
-	python3 -m venv venv
+	python3 -m venv .venv
 	. .venv/bin/activate && pip install --upgrade pip
 	. .venv/bin/activate && pip install -r requirements.txt
 	. .venv/bin/activate && pip install -e .

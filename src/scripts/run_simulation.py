@@ -1,5 +1,5 @@
 """
-Off-Site Simulation Runner — Live tick data, local position management, no broker posting.
+Off-Site Simulation Runner — Live tick data, local position management, no broker posting.  # noqa: E501
 
 Connects to Dukascopy for FREE real-time tick data, runs the full agentic
 pipeline (screener → data → signal → risk → execution), logs every decision
@@ -17,8 +17,8 @@ import asyncio
 import time
 import json
 import numpy as np
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
+from datetime import datetime
+from typing import Dict, List, Optional
 from dataclasses import dataclass, field, asdict
 from collections import defaultdict
 
@@ -309,7 +309,7 @@ class OffSiteSimulation:
             )
         )
         logger.info(
-            f"[CLOSE] {symbol} {reason} @ {exit_price:.5f} | PnL=${pos.realized_pnl:.2f}"
+            f"[CLOSE] {symbol} {reason} @ {exit_price:.5f} | PnL=${pos.realized_pnl:.2f}"  # noqa: E501
         )
 
     # ─── Screener Integration ─────────────────────────────────────────────
@@ -333,7 +333,7 @@ class OffSiteSimulation:
                 if score and score.edge_detected:
                     tradeable.append(score.ticker)
                     logger.info(
-                        f"  ✅ HO=F tradeable: Sharpe={score.mom5_sharpe:.2f} PF={score.mom5_pf:.2f}"
+                        f"  ✅ HO=F tradeable: Sharpe={score.mom5_sharpe:.2f} PF={score.mom5_pf:.2f}"  # noqa: E501
                     )
 
             # Screen EURUSD for tick-level simulation
@@ -343,7 +343,7 @@ class OffSiteSimulation:
                 )
                 if score:
                     logger.info(
-                        f"  EURUSD: Sharpe={score.mom5_sharpe:.2f} -> {score.recommendation}"
+                        f"  EURUSD: Sharpe={score.mom5_sharpe:.2f} -> {score.recommendation}"  # noqa: E501
                     )
 
             self.trade_symbols = tradeable
@@ -417,7 +417,7 @@ class OffSiteSimulation:
 
     # ─── Main Loop ────────────────────────────────────────────────────────
 
-    async def run(self, duration_minutes: int = 5):
+    async def run(self, duration_minutes: int = 5):  # noqa: C901
         """Run the simulation for a specified duration."""
         self._running = True
 

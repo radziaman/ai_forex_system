@@ -1,10 +1,10 @@
 """
-cTrader Read-Only Data Listener — streams real-time price quotes without any trading capability.
+cTrader Read-Only Data Listener — streams real-time price quotes without any trading capability.  # noqa: E501
 
-Connects to cTrader Open API via SSL/TCP, authenticates, subscribes to spot price updates,
-and streams them via callbacks. Has NO account ID configured and NO order placement methods.
+Connects to cTrader Open API via SSL/TCP, authenticates, subscribes to spot price updates,  # noqa: E501
+and streams them via callbacks. Has NO account ID configured and NO order placement methods.  # noqa: E501
 
-Uses the same protobuf protocol as ctrader_client.py but purpose-built for read-only data.
+Uses the same protobuf protocol as ctrader_client.py but purpose-built for read-only data.  # noqa: E501
 
 Usage:
     listener = CtradeDataListener()
@@ -13,8 +13,12 @@ Usage:
     while True: await asyncio.sleep(1)  # stream forever
 """
 
-import os, sys, ssl, asyncio, struct, time
-from typing import List, Dict, Optional, Callable, Any
+import os
+import sys
+import ssl
+import asyncio
+import time
+from typing import List, Dict, Optional, Callable
 from dataclasses import dataclass
 from loguru import logger
 
@@ -30,9 +34,7 @@ try:
     from ctrader_open_api.messages.OpenApiCommonMessages_pb2 import ProtoMessage
     from ctrader_open_api.messages.OpenApiMessages_pb2 import (
         ProtoOAApplicationAuthReq,
-        ProtoOAApplicationAuthRes,
         ProtoOAAccountAuthReq,
-        ProtoOAAccountAuthRes,
         ProtoOAGetAccountListByAccessTokenReq,
         ProtoOAGetAccountListByAccessTokenRes,
         ProtoOASubscribeSpotsReq,

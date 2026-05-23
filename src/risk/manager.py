@@ -44,7 +44,7 @@ class TradeRecord:
 
 
 class RiskManager:
-    """Full risk management suite — Kelly sizing, VaR, drawdown, correlation, stress tests."""
+    """Full risk management suite — Kelly sizing, VaR, drawdown, correlation, stress tests."""  # noqa: E501
 
     def __init__(self, params: RiskParameters, initial_balance: float = 100_000.0):
         self.params = params
@@ -70,8 +70,8 @@ class RiskManager:
         price: float,
         atr: float,
         confidence: float,
-        symbol: str = None,
-        open_positions: list = None,
+        symbol: Optional[str] = None,
+        open_positions: Optional[list] = None,
     ) -> float:
         """
         Kelly Criterion position sizing with VaR adjustment.
@@ -80,7 +80,7 @@ class RiskManager:
         if atr <= 0:
             atr = price * 0.001
 
-        # Base Kelly calculation — use R-multiple (PnL / risk) for size-independent averaging
+        # Base Kelly calculation — use R-multiple (PnL / risk) for size-independent averaging  # noqa: E501
         win_rate = self.get_win_rate()
         if win_rate == 0.0 and self.total_trades == 0:
             win_rate = 0.55
@@ -132,7 +132,10 @@ class RiskManager:
         return float(np.clip(size, 0, balance * self.params.max_margin_usage / price))
 
     def _calculate_var_adjustment(
-        self, balance: float, symbol: str = None, open_positions: List[Dict] = None
+        self,
+        balance: float,
+        symbol: Optional[str] = None,
+        open_positions: Optional[List[Dict]] = None,
     ) -> float:
         """Calculate VaR-based adjustment factor."""
         if len(self._price_history) < 20:
@@ -188,7 +191,7 @@ class RiskManager:
         tp = entry + (atr * self.params.tp_atr_multiplier)
         return sl, tp
 
-    def _get_price_series(self, symbol: str = None) -> List[float]:
+    def _get_price_series(self, symbol: Optional[str] = None) -> List[float]:
         """Get price history for VaR computation.
 
         Uses per-symbol price history (Fix 2). Falls back to any available
@@ -206,7 +209,7 @@ class RiskManager:
             return self._price_history[k]
         return []
 
-    def var(self, confidence: float = 0.95, symbol: str = None) -> float:
+    def var(self, confidence: float = 0.95, symbol: Optional[str] = None) -> float:
         """Historical VaR — per-symbol price history (Fix 2)."""
         current_balance = max(self.initial_balance, 1)
         prices = self._get_price_series(symbol)
@@ -219,7 +222,7 @@ class RiskManager:
         var_pct = float(np.percentile(returns, (1 - confidence) * 100))
         return var_pct * current_balance
 
-    def cvar(self, confidence: float = 0.95, symbol: str = None) -> float:
+    def cvar(self, confidence: float = 0.95, symbol: Optional[str] = None) -> float:
         """Conditional VaR — per-symbol price history (Fix 2)."""
         current_balance = max(self.initial_balance, 1)
         prices = self._get_price_series(symbol)
@@ -240,7 +243,7 @@ class RiskManager:
         if not scenario_returns:
             return {"max_loss": 0, "impact": 0}
         current_balance = self.initial_balance
-        max_loss = 0
+        max_loss = 0.0
         for ret in scenario_returns:
             loss = current_balance * abs(ret)
             if loss > max_loss:

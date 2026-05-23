@@ -315,7 +315,7 @@ class HMMRegimeDetector:
         if transitions >= 3:
             return {
                 "should_pause": True,
-                "reason": f"high_transition_frequency: {transitions} transitions in 5 periods",
+                "reason": f"high_transition_frequency: {transitions} transitions in 5 periods",  # noqa: E501
                 "transitions": transitions,
             }
 

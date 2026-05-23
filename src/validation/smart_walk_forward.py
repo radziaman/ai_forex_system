@@ -1,12 +1,11 @@
 """
 Smart Walk-Forward Optimization (Enhancement #14).
-Implements Combinatorial Purged Cross-Validation (CPCV), out-of-sample condition testing,
+Implements Combinatorial Purged Cross-Validation (CPCV), out-of-sample condition testing,  # noqa: E501
 and degradation tracking for robust model validation.
 """
 
 import numpy as np
-import pandas as pd
-from typing import Dict, List, Optional, Tuple, Callable
+from typing import Dict, List, Optional, Callable, Any
 from dataclasses import dataclass, field
 from loguru import logger
 
@@ -78,7 +77,7 @@ class SmartWalkForward:
         n = len(prices)
         if n < self.min_train_window + self.test_window:
             logger.warning(
-                f"Insufficient data: {n} bars (need {self.min_train_window + self.test_window})"
+                f"Insufficient data: {n} bars (need {self.min_train_window + self.test_window})"  # noqa: E501
             )
             return OptimizationResult(total_folds=0)
 
@@ -250,9 +249,9 @@ class SmartWalkForward:
         """Calculate Sharpe ratio from returns."""
         if not returns or len(returns) < 2:
             return 0.0
-        returns = np.array(returns)
-        mean_ret = np.mean(returns)
-        std_ret = np.std(returns)
+        arr = np.array(returns)
+        mean_ret = np.mean(arr)
+        std_ret = np.std(arr)
         if std_ret <= 0:
             return 0.0
         return mean_ret / std_ret * np.sqrt(252)  # Annualized
@@ -268,17 +267,17 @@ class SmartWalkForward:
         if not returns or len(returns) < 10:
             return {"passed": False}
 
-        returns = np.array(returns)
+        arr = np.array(returns)
 
         # Test on uptrends, downtrends, high volatility, low volatility
         conditions = {
-            "uptrend": returns[returns > 0],
-            "downtrend": returns[returns < 0],
-            "high_vol": returns[np.abs(returns) > np.percentile(np.abs(returns), 75)],
-            "low_vol": returns[np.abs(returns) <= np.percentile(np.abs(returns), 25)],
+            "uptrend": arr[arr > 0],
+            "downtrend": arr[arr < 0],
+            "high_vol": arr[np.abs(arr) > np.percentile(np.abs(arr), 75)],
+            "low_vol": arr[np.abs(arr) <= np.percentile(np.abs(arr), 25)],
         }
 
-        results = {}
+        results: Dict[str, Any] = {}
         for condition, subset in conditions.items():
             if len(subset) > 0:
                 sharpe = self._calculate_sharpe(subset.tolist())
@@ -289,8 +288,8 @@ class SmartWalkForward:
                 }
 
         # Beta to market
-        if market_returns and len(market_returns) == len(returns):
-            covariance = np.cov(returns, market_returns)[0, 1]
+        if market_returns and len(market_returns) == len(arr):
+            covariance = np.cov(arr, market_returns)[0, 1]
             market_variance = np.var(market_returns)
             beta = covariance / market_variance if market_variance > 0 else 1.0
             results["beta"] = beta

@@ -8,7 +8,7 @@ import time
 import json
 import os
 import threading
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 from loguru import logger
 
@@ -296,7 +296,6 @@ class SentimentAnalyzer:
                     return time.mktime(parsed)
                 except (ValueError, TypeError, OverflowError) as e:
                     logger.debug(f"Date parsing failed: {e}")
-                    pass
         return time.time() - 3600
 
     def get_latest(self, force_refresh: bool = False) -> SentimentSnapshot:
@@ -349,7 +348,6 @@ class SentimentAnalyzer:
                 json.dump(data, f)
         except (IOError, OSError, TypeError, KeyError) as e:
             logger.debug(f"Failed to save sentiment cache: {e}")
-            pass
 
     def _load_cache(self) -> Optional[SentimentSnapshot]:
         try:

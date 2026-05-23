@@ -4,10 +4,9 @@ The bot writes to latest_state; the dashboard reads it.
 """
 
 import time
-import json
 import os
-from typing import List, Dict, Any, Optional
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from typing import List, Dict, Any
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from loguru import logger
 

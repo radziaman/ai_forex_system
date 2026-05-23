@@ -1,4 +1,4 @@
-"""Secrets management — loads credentials from environment variables, never git-tracked files."""
+"""Secrets management — loads credentials from environment variables, never git-tracked files."""  # noqa: E501
 
 import os
 from pathlib import Path

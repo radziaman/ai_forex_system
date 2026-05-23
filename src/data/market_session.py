@@ -5,7 +5,6 @@ Forex trades 24/5: Sunday 22:00 GMT to Friday 22:00 GMT.
 
 import pandas as pd
 from typing import Optional, Tuple
-from loguru import logger
 
 # Major trading sessions (GMT/UTC)
 SESSION_TIMES = {

@@ -10,7 +10,7 @@ import os
 import sys
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, Tuple
 from dataclasses import dataclass
 
 _src = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -339,12 +339,12 @@ def main():
     print()
     print("─" * 100)
     print(
-        f"  {'Pair':<10s} {'Sharpe':>8s} {'WinRate':>8s} {'ProfFact':>8s} {'NetPnL':>10s} {'Trades':>8s} {'Lag1Corr':>10s}"
+        f"  {'Pair':<10s} {'Sharpe':>8s} {'WinRate':>8s} {'ProfFact':>8s} {'NetPnL':>10s} {'Trades':>8s} {'Lag1Corr':>10s}"  # noqa: E501
     )
     print("─" * 100)
     for r in results:
         print(
-            f"  {r.symbol:<10s} {r.sharpe:>8.3f} {r.win_rate:>7.1%} {r.profit_factor:>8.2f} "
+            f"  {r.symbol:<10s} {r.sharpe:>8.3f} {r.win_rate:>7.1%} {r.profit_factor:>8.2f} "  # noqa: E501
             f"{r.net_pnl:>+9.0f} {r.total_trades:>8d} {r.lag1_corr:>+10.4f}"
         )
     print("─" * 100)
@@ -354,12 +354,12 @@ def main():
     best = results[0] if results else None
     if best and best.sharpe > 0:
         print(
-            f"  ✅ BEST PAIR: {best.symbol} (Sharpe={best.sharpe:.3f}, PF={best.profit_factor:.2f})"
+            f"  ✅ BEST PAIR: {best.symbol} (Sharpe={best.sharpe:.3f}, PF={best.profit_factor:.2f})"  # noqa: E501
         )
     else:
         print("  ❌ NO PROFITABLE PAIR FOUND")
         print(
-            f"     Best was {results[0].symbol if results else 'N/A'} with Sharpe={results[0].sharpe:.3f}"
+            f"     Best was {results[0].symbol if results else 'N/A'} with Sharpe={results[0].sharpe:.3f}"  # noqa: E501
         )
 
     print()

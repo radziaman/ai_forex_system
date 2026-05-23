@@ -12,7 +12,7 @@ class DriftAgent(BaseAgent):
         super().__init__(
             name="drift_agent",
             role="Concept Drift Monitor",
-            purpose="Detect distribution shifts across all symbols and broadcast drift alerts",
+            purpose="Detect distribution shifts across all symbols and broadcast drift alerts",  # noqa: E501
             domain="monitoring",
             capabilities={
                 "drift_detection",

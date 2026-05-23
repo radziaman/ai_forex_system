@@ -10,16 +10,14 @@ to dynamically adjust which symbols they process.
 """
 
 from __future__ import annotations
-import datetime
 import os
 import sys
 import time
 import json
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Optional, Any, Set, Tuple
+from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, asdict
-from loguru import logger
 
 _src = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if _src not in sys.path:
@@ -29,8 +27,6 @@ import yfinance as yf  # noqa: E402
 from agentic.core.base_agent import BaseAgent  # noqa: E402
 from agentic.core.agent_message import (  # noqa: E402
     MessageType,
-    MessagePriority,
-    AgentIntention,
 )
 from agentic.core.agent_consciousness import ConsciousnessLevel  # noqa: E402
 
@@ -129,7 +125,7 @@ class InstrumentScreenerAgent(BaseAgent):
         super().__init__(
             name="screener_agent",
             role="Autonomous Instrument Screener",
-            purpose="Continuously scan markets for tradeable edges and publish findings",
+            purpose="Continuously scan markets for tradeable edges and publish findings",  # noqa: E501
             domain="screening",
             capabilities={
                 "instrument_screening",
@@ -154,11 +150,9 @@ class InstrumentScreenerAgent(BaseAgent):
 
     def _is_trading_hours(self) -> bool:
         """Check if forex/futures markets are open (skip weekends)."""
-        now = datetime.datetime.now(datetime.timezone.utc)
-        # Forex opens Sunday 21:00 UTC, closes Friday 21:00 UTC
-        if now.weekday() == 5 or (now.weekday() == 6 and now.hour < 21):
-            return False  # Weekend closed
-        return True
+        from data.market_session import MarketSession
+
+        return MarketSession.is_market_open()
 
     async def perceive(self) -> Dict[str, Any]:
         """Check if a scan is needed."""
@@ -252,7 +246,6 @@ class InstrumentScreenerAgent(BaseAgent):
         by the core 11 forex symbols through the MoE ensemble.
         """
         # Build cross-asset price snapshot for regime detection
-        from data.data_manager import BASE_PRICES
 
         cross_asset_prices = {}
         for ticker in self.instrument_universe:
@@ -321,7 +314,7 @@ class InstrumentScreenerAgent(BaseAgent):
 
     # ─── Screening Logic ─────────────────────────────────────────────────
 
-    def _load_prices(self, ticker: str) -> Optional[np.ndarray]:
+    def _load_prices(self, ticker: str) -> Optional[np.ndarray]:  # noqa: C901
         """Load or download daily price data."""
         safe = ticker.replace("=", "_").replace("-", "_")
         fpath = os.path.join(DATA_DIR, f"{safe}_daily.csv")

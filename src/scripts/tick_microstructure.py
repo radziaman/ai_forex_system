@@ -18,8 +18,7 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from datetime import datetime, timedelta
-from typing import List, Tuple, Dict, Optional
-from collections import defaultdict
+from typing import List, Tuple, Dict
 
 _src = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _src not in sys.path:
@@ -35,7 +34,7 @@ PRICE_SCALE = 100000.0
 
 
 def load_bi5_file(path: str) -> List[Tuple[float, float, float, float, float]]:
-    """Load a BI5 tick file. Returns [(seconds_in_hour, bid, ask, bid_vol, ask_vol), ...]
+    """Load a BI5 tick file. Returns [(seconds_in_hour, bid, ask, bid_vol, ask_vol), ...]  # noqa: E501
 
     Each tick record: 20 bytes
       - 4 bytes: millisecond offset within hour (big-endian uint)
@@ -148,7 +147,7 @@ def compute_microstructure_features(
         ft["total_vol"] + 1e-10
     )
 
-    # Order book pressure: microprice vs mid (positive = selling pressure, negative = buying)
+    # Order book pressure: microprice vs mid (positive = selling pressure, negative = buying)  # noqa: E501
     ft["order_pressure"] = ft["microprice"] - ft["mid"]
 
     # Tick-level mid change
@@ -216,7 +215,7 @@ def compute_microstructure_features(
     second_bars = second_bars.dropna()
 
     logger.info(
-        f"Computed microstructure features: {len(second_bars):,} second-bars x {len(second_bars.columns)} features"
+        f"Computed microstructure features: {len(second_bars):,} second-bars x {len(second_bars.columns)} features"  # noqa: E501
     )
 
     return second_bars
@@ -423,7 +422,9 @@ def analyze_all(symbol: str):
 
         # Predictive power test
         pred_results = test_predictive_power(features)
-        top_features = pred_results.head(10) if hasattr(pred_results, 'head') else pred_results
+        top_features = (
+            pred_results.head(10) if hasattr(pred_results, "head") else pred_results
+        )
         all_predictions.append(pred_results)
 
         # Backtest
@@ -431,11 +432,12 @@ def analyze_all(symbol: str):
         bt_result = backtest_microstructure(features, signals)
         all_trades.append(bt_result)
 
-        logger.info(
-            f"  Top feature: {top_features.iloc[0]['feature']} "
-            f"corr={top_features.iloc[0]['corr']:.4f} "
-            f"dir_acc={top_features.iloc[0]['dir_acc']:.1%}"
-        )
+        if isinstance(top_features, pd.DataFrame):
+            logger.info(
+                f"  Top feature: {top_features.iloc[0]['feature']} "
+                f"corr={top_features.iloc[0]['corr']:.4f} "
+                f"dir_acc={top_features.iloc[0]['dir_acc']:.1%}"
+            )
         logger.info(
             f"  Backtest: Sharpe={bt_result['sharpe']:.3f} "
             f"PF={bt_result['pf']:.2f} "
@@ -509,7 +511,7 @@ def main():
         print("-" * 54)
         for _, row in pred_results.head(15).iterrows():
             print(
-                f"{row['feature']:<30s} {row['corr']:>+8.4f} {row['p_value']:>8.4f} {row['dir_acc']:>7.1%}"
+                f"{row['feature']:<30s} {row['corr']:>+8.4f} {row['p_value']:>8.4f} {row['dir_acc']:>7.1%}"  # noqa: E501
             )
 
         print("\n=== MICROSTRUCTURE BACKTEST ===")

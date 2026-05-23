@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from typing import Dict, Optional, Tuple, TYPE_CHECKING
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from loguru import logger
 
 if TYPE_CHECKING:
@@ -130,7 +130,7 @@ class RegimeSpecialistSystem:
                         logger.info(f"Loaded {regime} agent from {agent_path}")
                     except Exception as load_err:
                         logger.info(
-                            f"Fresh {regime} agent (saved dim differs from current {state_dim})"
+                            f"Fresh {regime} agent (saved dim differs from current {state_dim})"  # noqa: E501
                         )
                 self.agents[regime] = agent
             except Exception as e:

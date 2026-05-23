@@ -7,10 +7,13 @@ import numpy as np
 import pandas as pd
 from dataclasses import dataclass, field
 from loguru import logger
-from typing import Dict, Optional, List, Tuple, Any, Set, Callable
-import os, json, time, math, struct, lzma
+from typing import Dict, Optional, List, Tuple, Any, Callable
+import os
+import time
+import struct
+import lzma
 from pathlib import Path
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 from collections import defaultdict
 
 # ---------------------------------------------------------------------------
@@ -138,7 +141,7 @@ class DataManager:
         self.latest_snapshot: Dict[str, Optional[Any]] = {}
         self.market_depth: Dict[str, MarketDepthData] = {}
         self._feature_cache: Dict[str, Dict[str, Tuple[np.ndarray, float]]] = {}
-        # (symbol) -> {tf: (features, cache_key)} where cache_key = hash of last OHLCV row
+        # (symbol) -> {tf: (features, cache_key)} where cache_key = hash of last OHLCV row  # noqa: E501
 
         # --- Freshness & source tracking ---
         self.freshness: Dict[str, DataFreshness] = {}
@@ -171,7 +174,7 @@ class DataManager:
                 )
 
         logger.info(
-            f"DataManager v2.0 initialized: {len(SYMBOLS)} symbols x {len(TIMEFRAMES)} timeframes"
+            f"DataManager v2.0 initialized: {len(SYMBOLS)} symbols x {len(TIMEFRAMES)} timeframes"  # noqa: E501
         )
 
     # ------------------------------------------------------------------
@@ -770,7 +773,7 @@ class DataManager:
                     )
                     self.ohlcv[symbol][timeframe] = merged
                     logger.info(
-                        f"Appended {len(new_bars)} new bars to {symbol} (total {len(merged)})"
+                        f"Appended {len(new_bars)} new bars to {symbol} (total {len(merged)})"  # noqa: E501
                     )
                 else:
                     self.ohlcv[symbol][timeframe] = new_bars

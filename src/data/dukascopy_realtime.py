@@ -12,8 +12,6 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Callable, Dict
 from pathlib import Path
-from collections import deque
-import time
 
 from api.base import DataProvider, PriceTick, OHLCV
 
@@ -31,7 +29,7 @@ DUKASCOPE_SYMBOLS = {
 }
 
 # Real-time tick endpoint (Dukascopy provides tick data via their public API)
-TICK_BI5_URL = "https://www.dukascopy.com/datafeed/{symbol}/{year}/{month:02d}/{day:02d}/{hour:02d}h_ticks.bi5"
+TICK_BI5_URL = "https://www.dukascopy.com/datafeed/{symbol}/{year}/{month:02d}/{day:02d}/{hour:02d}h_ticks.bi5"  # noqa: E501
 
 # Cache for historical data
 CACHE_DIR = Path("data/dukascopy_cache")

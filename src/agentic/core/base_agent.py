@@ -1,5 +1,5 @@
 """
-Base Agent — enhanced with G11 cycle governance, G18 simulation, G22 error escalation, G25 resource limits.
+Base Agent — enhanced with G11 cycle governance, G18 simulation, G22 error escalation, G25 resource limits.  # noqa: E501
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from loguru import logger
 
 from .agent_message import AgentMessage, MessageType, MessagePriority, AgentIntention
 from .agent_consciousness import AgentConsciousness, AgentIdentity, ConsciousnessLevel
-from .agent_consciousness import AgentState, AgentCycleMetrics, EmotionalState
+from .agent_consciousness import AgentState, AgentCycleMetrics
 from .agent_memory import AgentMemory
 from .agent_bus import AgentBus, get_agent_bus
 from .agent_registry import AgentRegistry, get_agent_registry
@@ -35,7 +35,7 @@ class BaseAgent(ABC):
         purpose: str,
         domain: str,
         capabilities: Set[str],
-        dependencies: List[str] = None,
+        dependencies: Optional[List[str]] = None,
         tick_interval: float = 1.0,
         consciousness_level: ConsciousnessLevel = ConsciousnessLevel.REFLECTIVE,
         persist_memory: bool = True,
@@ -95,7 +95,7 @@ class BaseAgent(ABC):
         await self.publish_status("started")
         self._main_task = asyncio.create_task(self._cycle_loop())
         logger.info(
-            f"[{self.name}] Agent started (interval={self.consciousness.tick_interval}s)"
+            f"[{self.name}] Agent started (interval={self.consciousness.tick_interval}s)"  # noqa: E501
         )
 
     async def stop(self):
@@ -202,7 +202,7 @@ class BaseAgent(ABC):
         except Exception as e:
             logger.warning(f"[{self.name}] on_message error: {e}")
 
-    async def _cycle_loop(self):
+    async def _cycle_loop(self):  # noqa: C901
         while self._running:
             try:
                 cycle_start = time.time()
@@ -333,7 +333,7 @@ class BaseAgent(ABC):
             priority=MessagePriority.HIGH,
             intention=AgentIntention(
                 primary_goal="escalate error to master agent",
-                reasoning=f"{self.consciousness.consecutive_errors} consecutive errors: {error}",
+                reasoning=f"{self.consciousness.consecutive_errors} consecutive errors: {error}",  # noqa: E501
                 expected_outcome="master agent investigates and coordinates healing",
                 confidence=0.9,
             ),

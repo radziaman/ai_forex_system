@@ -6,7 +6,7 @@ from __future__ import annotations
 import time
 import json
 import hashlib
-from typing import Dict, List, Optional, Any, Set
+from typing import Dict, Any
 from pathlib import Path
 from loguru import logger
 
@@ -14,8 +14,6 @@ from agentic.core.base_agent import BaseAgent
 from agentic.core.agent_message import (
     AgentMessage,
     MessageType,
-    MessagePriority,
-    AgentIntention,
 )
 from agentic.core.agent_consciousness import ConsciousnessLevel
 
@@ -25,7 +23,7 @@ class MemoryAgent(BaseAgent):
         super().__init__(
             name="memory_agent",
             role="State Persistence Manager",
-            purpose="Persist system state with integrity verification for crash recovery",
+            purpose="Persist system state with integrity verification for crash recovery",  # noqa: E501
             domain="persistence",
             capabilities={
                 "state_persistence",

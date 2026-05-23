@@ -86,8 +86,8 @@ class TestSLTPCalculation:
             assert result.avg_hold_bars >= 1.0, "All trades should last at least 1 bar"
 
             # Check if the SL is reasonable: distance should be ~2 * ATR = 0.002
-            # With the bug (multiplying by pip_size): distance = 0.001 * 2 * 0.0001 = 0.0000002
-            # Prices change by ~0.0001 per bar, so a 0.0000002 SL would be hit every single bar
+            # With the bug (multiplying by pip_size): distance = 0.001 * 2 * 0.0001 = 0.0000002  # noqa: E501
+            # Prices change by ~0.0001 per bar, so a 0.0000002 SL would be hit every single bar  # noqa: E501
             if result.avg_hold_bars <= 1.5:
                 print(
                     f"WARNING: Avg hold only {result.avg_hold_bars:.1f} bars — "

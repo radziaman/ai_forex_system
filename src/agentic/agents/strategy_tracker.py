@@ -172,7 +172,7 @@ class PerSymbolStrategyTracker:
     def is_symbol_tradeable(self, symbol: str) -> bool:
         """A symbol is tradeable if at least one strategy has positive expectancy.
 
-        Blocked symbols are automatically re-evaluated every `reeval_interval` global trades.
+        Blocked symbols are automatically re-evaluated every `reeval_interval` global trades.  # noqa: E501
         """
         strategies = self._data.get(symbol, {})
         if not strategies:

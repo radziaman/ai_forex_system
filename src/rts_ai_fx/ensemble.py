@@ -273,7 +273,7 @@ class MoEEnsemble:
         self, ensemble_price: float, confidences: list, weights: np.ndarray
     ) -> str:
         """Determine direction based on whether prediction is above/below input.
-        Only used as fallback — should_trade() computes direction independently from expert outputs.
+        Only used as fallback — should_trade() computes direction independently from expert outputs.  # noqa: E501
         """
         avg_conf = (
             np.average(confidences, weights=weights) if weights.sum() > 0 else 0.0

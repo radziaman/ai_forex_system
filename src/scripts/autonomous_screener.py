@@ -19,9 +19,9 @@ import json
 import numpy as np
 import pandas as pd
 import yfinance as yf
-from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timedelta
+from typing import Dict, List, Optional
+from dataclasses import dataclass, asdict
+from datetime import datetime
 
 _src = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _src not in sys.path:
@@ -109,7 +109,7 @@ class InstrumentScore:
     optimal_tp_atr: float = 6.0
 
 
-def load_prices(ticker: str) -> Optional[np.ndarray]:
+def load_prices(ticker: str) -> Optional[np.ndarray]:  # noqa: C901
     """Load or download daily price data for a ticker."""
     safe = ticker.replace("=", "_").replace("-", "_")
     fpath = os.path.join(DATA_DIR, f"{safe}_daily.csv")
@@ -148,7 +148,7 @@ def load_prices(ticker: str) -> Optional[np.ndarray]:
         return None
 
 
-def test_momentum_strategy(
+def test_momentum_strategy(  # noqa: C901
     prices: np.ndarray,
     lookback: int = 5,
     sl_atr: float = 3.0,
@@ -323,7 +323,7 @@ def screen_all() -> List[InstrumentScore]:
                 else "⚠️" if score.composite_score > 0 else "❌"
             )
             logger.info(
-                f"  {flag} {ticker}: Sharpe={score.mom5_sharpe:.3f} PF={score.mom5_pf:.2f} "
+                f"  {flag} {ticker}: Sharpe={score.mom5_sharpe:.3f} PF={score.mom5_pf:.2f} "  # noqa: E501
                 f"Score={score.composite_score:.3f} -> {score.recommendation}"
             )
         else:
@@ -344,8 +344,8 @@ def print_report(results: List[InstrumentScore]):
 
     # Header
     print(
-        f"  {'Tkr':<8s} {'Name':<22s} {'Class':<8s} {'Mom5S':>7s} {'Mom5PF':>7s} {'WR':>5s} "
-        f"{'Trds':>5s} {'Score':>7s} {'AnnRet':>7s} {'AnnVol':>7s} {'Lag1':>7s} {'Rec':<12s}"
+        f"  {'Tkr':<8s} {'Name':<22s} {'Class':<8s} {'Mom5S':>7s} {'Mom5PF':>7s} {'WR':>5s} "  # noqa: E501
+        f"{'Trds':>5s} {'Score':>7s} {'AnnRet':>7s} {'AnnVol':>7s} {'Lag1':>7s} {'Rec':<12s}"  # noqa: E501
     )
     print(
         f"  {'-'*8} {'-'*22} {'-'*8} {'-'*7} {'-'*7} {'-'*5} "
@@ -358,7 +358,7 @@ def print_report(results: List[InstrumentScore]):
             f"  {flag} {r.ticker:<6s} {r.name:<22s} {r.asset_class:<8s} "
             f"{r.mom5_sharpe:>+7.3f} {r.mom5_pf:>7.2f} {r.mom5_win_rate:>4.0%} "
             f"{r.mom5_trades:>5d} {r.composite_score:>+7.3f} {r.annual_return:>+6.2f}% "
-            f"{r.annual_volatility:>6.2f}% {r.lag1_autocorr:>+7.4f} {r.recommendation:<12s}"
+            f"{r.annual_volatility:>6.2f}% {r.lag1_autocorr:>+7.4f} {r.recommendation:<12s}"  # noqa: E501
         )
 
     print()

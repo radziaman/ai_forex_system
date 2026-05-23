@@ -1,6 +1,6 @@
 """
 Run RTS: Agentic Moneybot System Elite with real-live streaming data.
-Boots all 15 agents, connects to cTrader for live ticks, processes data through full pipeline.
+Boots all 15 agents, connects to cTrader for live ticks, processes data through full pipeline.  # noqa: E501
 """
 
 import sys
@@ -78,11 +78,11 @@ async def main():
             f"connected: exec={exec_connected} telegram={telegram_ok}"
         )
         print(
-            f"    bus: {bus['total_messages']} msgs ({bus['avg_latency_ms']:.1f}ms avg)  |  "
-            f"dropped={bus['dropped']}  acks={bus['ack_count']}  routes={bus['routing_count']}"
+            f"    bus: {bus['total_messages']} msgs ({bus['avg_latency_ms']:.1f}ms avg)  |  "  # noqa: E501
+            f"dropped={bus['dropped']}  acks={bus['ack_count']}  routes={bus['routing_count']}"  # noqa: E501
         )
         print(
-            f"    data: {tick_rate} ticks/s  |  {symbols_with_data}/24 symbols fresh  |  "
+            f"    data: {tick_rate} ticks/s  |  {symbols_with_data}/24 symbols fresh  |  "  # noqa: E501
             f"regime={regime}"
         )
         print(
@@ -135,7 +135,7 @@ master={emotions.get('master_agent','?')}"
     print(
         f"\n  BUS: {bus['total_messages']} total msgs, {bus['dropped']} dropped, "
         f"{bus['ack_count']} acks, {bus['routing_count']} routes, "
-        f"{bus['validation_errors']} val_errs, {bus['avg_latency_ms']:.2f}ms avg latency"
+        f"{bus['validation_errors']} val_errs, {bus['avg_latency_ms']:.2f}ms avg latency"  # noqa: E501
     )
     print(f"  QUEUES: {bus['queue_sizes']}")
     print(f"  DEAD LETTERS: {bus['dead_letter_count']}")

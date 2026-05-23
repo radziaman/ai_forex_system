@@ -1,12 +1,11 @@
 """
-Validation Agent — G14: autonomous data fetching, G18: simulation training, G20: A/B comparison.
+Validation Agent — G14: autonomous data fetching, G18: simulation training, G20: A/B comparison.  # noqa: E501
 """
 
 from __future__ import annotations
 import time
 import numpy as np
-from typing import Dict, List, Optional, Any, Set, Callable
-from loguru import logger
+from typing import Dict, List, Any, Callable
 
 from agentic.core.base_agent import BaseAgent
 from agentic.core.agent_message import (
@@ -23,7 +22,7 @@ class ValidationAgent(BaseAgent):
         super().__init__(
             name="validation_agent",
             role="Strategy Validation Engine",
-            purpose="Validate models through backtesting, walk-forward, Monte Carlo, and A/B comparison",
+            purpose="Validate models through backtesting, walk-forward, Monte Carlo, and A/B comparison",  # noqa: E501
             domain="validation",
             capabilities={
                 "vectorized_backtesting",
@@ -129,7 +128,7 @@ class ValidationAgent(BaseAgent):
             "total_trades", 0
         )
         self.log_state(
-            f"Data fetched for validation: {len(self._cached_prices)} price series, {cached_trades} trades"
+            f"Data fetched for validation: {len(self._cached_prices)} price series, {cached_trades} trades"  # noqa: E501
         )
 
     # G20: Start an A/B experiment

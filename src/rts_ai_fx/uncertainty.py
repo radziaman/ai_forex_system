@@ -4,7 +4,7 @@ Runs forward pass N times with dropout enabled, returns mean + variance.
 """
 
 import numpy as np
-from typing import Optional, Tuple
+from typing import Tuple
 
 
 def monte_carlo_dropout(

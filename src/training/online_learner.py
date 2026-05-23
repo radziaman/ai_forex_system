@@ -8,14 +8,12 @@ import time
 import json
 import threading
 import warnings
-from typing import Dict, Optional, List, Callable
+from typing import Dict, Optional, Callable
 from dataclasses import dataclass, field
 from loguru import logger
 
 warnings.filterwarnings("ignore")
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-import numpy as np  # noqa: E402
-import pandas as pd  # noqa: E402
 
 
 @dataclass
@@ -150,7 +148,7 @@ class OnlineLearner:
                 self._last_retrain[pair] = time.time()
                 self._drift_signals[pair] = 0
 
-    def _do_retrain(self, pair: str, fetch_fn, fp):
+    def _do_retrain(self, pair: str, fetch_fn, fp):  # noqa: C901
         logger.info(f"Online learner: fetching data for {pair}")
         df = fetch_fn(pair)
         if df is None or len(df) < 200:

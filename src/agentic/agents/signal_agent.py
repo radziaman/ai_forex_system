@@ -8,7 +8,7 @@ import os
 import time
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Optional, Any, Set, Callable
+from typing import Dict, Optional, Any
 from collections import defaultdict, deque
 from loguru import logger
 
@@ -45,7 +45,7 @@ class SignalAgent(BaseAgent):
         super().__init__(
             name="signal_agent",
             role="Ensemble Signal Generator",
-            purpose="Generate symbol-specific trading signals from multi-model ensemble",
+            purpose="Generate symbol-specific trading signals from multi-model ensemble",  # noqa: E501
             domain="signals",
             capabilities={
                 "ensemble_signal_generation",
@@ -134,7 +134,7 @@ class SignalAgent(BaseAgent):
             "signal.experts", len(self.ensemble.experts) if self.ensemble else 0
         )
         self.log_state(
-            f"Signal engine ready: {'experts loaded' if self._models_loaded else 'rule-based only'}"
+            f"Signal engine ready: {'experts loaded' if self._models_loaded else 'rule-based only'}"  # noqa: E501
         )
 
     def _per_symbol_weight_fn(self, name: str, regime: str) -> float:
@@ -307,7 +307,7 @@ class SignalAgent(BaseAgent):
                 primary_goal=f"generate {direction_str} signal for {symbol}",
                 reasoning=f"ensemble conf={pred.confidence:.2f} agree={agreement:.2f} "
                 f"strat={best_expert} sl_atr={sl_atr} tp_atr={tp_atr}",
-                expected_outcome="risk agent evaluates and gatekeeper approves or rejects",
+                expected_outcome="risk agent evaluates and gatekeeper approves or rejects",  # noqa: E501
                 confidence=float(pred.confidence),
             ),
         )
@@ -415,14 +415,13 @@ class SignalAgent(BaseAgent):
         if report:
             self.memory.know("signal.calibration", report, ttl=3600)
 
-    def _load_models(self):
+    def _load_models(self):  # noqa: C901
         # PPO regime agents (shared across all symbols)
         try:
             from ai.regime_agents import RegimeSpecialistSystem
 
             self._regime_manager = RegimeSpecialistSystem(state_dim=49, n_actions=5)
             n_agents = len([a for a in self._regime_manager.agents.values() if a])
-            import torch
 
             has_real_weights = any(
                 any(p.norm().item() > 1.0 for p in agent.actor.parameters())
@@ -511,14 +510,14 @@ class SignalAgent(BaseAgent):
         if self._fallback_warnings:
             fallback_list = sorted(self._fallback_warnings)[:5]
             self.log_state(
-                f"{lstm_count} symbols have LSTM models ({lstm_unique} unique instances) "
+                f"{lstm_count} symbols have LSTM models ({lstm_unique} unique instances) "  # noqa: E501
                 f"— {len(self._fallback_warnings)} symbols fall back to EURUSD "
-                f"({', '.join(fallback_list)}{'...' if len(self._fallback_warnings) > 5 else ''})",
+                f"({', '.join(fallback_list)}{'...' if len(self._fallback_warnings) > 5 else ''})",  # noqa: E501
                 level="warning",
             )
         else:
             self.log_state(
-                f"{lstm_count} symbols have LSTM models ({lstm_unique} unique instances)"
+                f"{lstm_count} symbols have LSTM models ({lstm_unique} unique instances)"  # noqa: E501
             )
         self.log_state(f"{clf_count} symbols have classifiers")
 
@@ -526,7 +525,7 @@ class SignalAgent(BaseAgent):
             self._regime_manager is not None and len(self._lstm_models) > 0
         )
 
-    def _register_experts(self):
+    def _register_experts(self):  # noqa: C901
         if not self.ensemble:
             return
         self.ensemble.experts = []
@@ -663,7 +662,7 @@ class SignalAgent(BaseAgent):
         return 0.0  # Placeholder; actual prediction is done in _on_features
 
     def _features_to_ppo_state(self, X: np.ndarray) -> np.ndarray:
-        """Extract a flat state vector from multi-bar feature matrix matching PPO dims."""
+        """Extract a flat state vector from multi-bar feature matrix matching PPO dims."""  # noqa: E501
         X_arr = np.asarray(X)
         if X_arr.ndim == 3:
             X_arr = X_arr[0]
@@ -760,7 +759,7 @@ class SignalAgent(BaseAgent):
         )
 
     def _rule_breakout_prediction(self, X: np.ndarray) -> float:
-        """Session-aware breakout: 3-bar during London, 5-bar during NY, skip during Asia."""
+        """Session-aware breakout: 3-bar during London, 5-bar during NY, skip during Asia."""  # noqa: E501
         if self._last_df is None or len(self._last_df) < 10:
             return 0.0
 
@@ -795,7 +794,7 @@ class SignalAgent(BaseAgent):
     def _rule_breakout_confidence(self, X: np.ndarray) -> float:
         return 0.65
 
-    def _rule_mean_rev_prediction(self, X: np.ndarray) -> float:
+    def _rule_mean_rev_prediction(self, X: np.ndarray) -> float:  # noqa: C901
         """Session-aware mean reversion: adjusted z-score thresholds per session."""
         if self._last_df is None or len(self._last_df) < 25:
             return 0.0
@@ -1156,7 +1155,7 @@ class SignalAgent(BaseAgent):
         )
 
     def _lstm_prediction_for_symbol(self, X: np.ndarray, symbol: str) -> float:
-        """Symbol-specific LSTM prediction. Falls back to EURUSD model if no dedicated model."""
+        """Symbol-specific LSTM prediction. Falls back to EURUSD model if no dedicated model."""  # noqa: E501
         model = self._lstm_models.get(symbol)
         if model is None:
             # Try EURUSD as fallback

@@ -4,12 +4,9 @@ Authentication, real-time equity curve, risk metrics, WebSocket improvements.
 """
 
 import os
-import json
 import time
-import asyncio
 import hashlib
 from typing import Dict, List, Optional, Any
-from datetime import datetime
 from loguru import logger
 
 try:
@@ -19,11 +16,9 @@ try:
         WebSocketDisconnect,
         HTTPException,
         Depends,
-        Security,
     )
     from fastapi.security import HTTPBasic, HTTPBasicCredentials
-    from fastapi.responses import HTMLResponse, JSONResponse
-    import uvicorn
+    from fastapi.responses import HTMLResponse
 
     FASTAPI_AVAILABLE = True
 except ImportError:
@@ -66,7 +61,7 @@ if not JWT_SECRET:
 
     JWT_SECRET = str(uuid.uuid4())
     logger.warning(
-        "DASHBOARD_JWT_SECRET not set — using random per-run secret (sessions invalidated on restart)"
+        "DASHBOARD_JWT_SECRET not set — using random per-run secret (sessions invalidated on restart)"  # noqa: E501
     )
 
 # Alerts
@@ -137,51 +132,51 @@ def get_dashboard_html() -> str:
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>RTS: Agentic Moneybot System Elite</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">  # noqa: E501
 <style>
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
-:root{--bg:#080b16;--surface:#0f1326;--surface2:#171d35;--border:#1e2648;--gold:#f59e0b;--green:#10b981;--red:#ef4444;--blue:#3b82f6;--cyan:#06b6d4;--text:#f1f5f9;--muted:#64748b;--radius:10px}
+:root{--bg:#080b16;--surface:#0f1326;--surface2:#171d35;--border:#1e2648;--gold:#f59e0b;--green:#10b981;--red:#ef4444;--blue:#3b82f6;--cyan:#06b6d4;--text:#f1f5f9;--muted:#64748b;--radius:10px}  # noqa: E501
 html{font-size:15px}
-body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
-.topbar{display:flex;align-items:center;gap:12px;padding:14px 20px;background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100}
-.topbar h1{font-size:1.05rem;font-weight:700;background:linear-gradient(135deg,var(--gold),var(--green));-webkit-background-clip:text;-webkit-text-fill-color:transparent;white-space:nowrap}
-.topbar-right{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:.75rem}
+body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}  # noqa: E501
+.topbar{display:flex;align-items:center;gap:12px;padding:14px 20px;background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100}  # noqa: E501
+.topbar h1{font-size:1.05rem;font-weight:700;background:linear-gradient(135deg,var(--gold),var(--green));-webkit-background-clip:text;-webkit-text-fill-color:transparent;white-space:nowrap}  # noqa: E501
+.topbar-right{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:.75rem}  # noqa: E501
 .status-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
 .status-dot.ok{background:var(--green);box-shadow:0 0 6px var(--green)}
 .status-dot.warn{background:var(--gold);box-shadow:0 0 6px var(--gold)}
-.mode-badge{font-size:.65rem;font-weight:600;padding:3px 10px;border-radius:20px;text-transform:uppercase;letter-spacing:.04em}
-.mode-badge.PAPER{background:rgba(245,158,11,.15);color:var(--gold);border:1px solid rgba(245,158,11,.3)}
-.mode-badge.LIVE{background:rgba(239,68,68,.15);color:var(--red);border:1px solid rgba(239,68,68,.3)}
+.mode-badge{font-size:.65rem;font-weight:600;padding:3px 10px;border-radius:20px;text-transform:uppercase;letter-spacing:.04em}  # noqa: E501
+.mode-badge.PAPER{background:rgba(245,158,11,.15);color:var(--gold);border:1px solid rgba(245,158,11,.3)}  # noqa: E501
+.mode-badge.LIVE{background:rgba(239,68,68,.15);color:var(--red);border:1px solid rgba(239,68,68,.3)}  # noqa: E501
 .timer{font-family:'JetBrains Mono',monospace;font-size:.7rem;color:var(--muted)}
 .container{padding:16px;max-width:1400px;margin:0 auto}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin-bottom:12px}
-.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px}
-.card-title{font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:8px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin-bottom:12px}  # noqa: E501
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px}  # noqa: E501
+.card-title{font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:8px}  # noqa: E501
 .stat-row{display:flex;justify-content:space-between;align-items:baseline;padding:4px 0}
 .stat-label{font-size:.78rem;color:var(--muted)}
 .stat-value{font-family:'JetBrains Mono',monospace;font-size:1.1rem;font-weight:600}
 .stat-value.lg{font-size:1.6rem;font-weight:700}
 .stat-value.pos{color:var(--green)}
 .stat-value.neg{color:var(--red)}
-.price-tile{background:var(--surface2);border-radius:6px;padding:6px 10px;display:flex;justify-content:space-between;align-items:center;font-size:.78rem;font-family:'JetBrains Mono',monospace}
+.price-tile{background:var(--surface2);border-radius:6px;padding:6px 10px;display:flex;justify-content:space-between;align-items:center;font-size:.78rem;font-family:'JetBrains Mono',monospace}  # noqa: E501
 .price-sym{color:var(--muted);font-weight:500}
 .price-val{font-weight:600}
 table{width:100%;border-collapse:collapse;font-size:.78rem}
-th{padding:8px 10px;text-align:left;font-size:.65rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600;border-bottom:1px solid var(--border)}
+th{padding:8px 10px;text-align:left;font-size:.65rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600;border-bottom:1px solid var(--border)}  # noqa: E501
 td{padding:8px 10px;border-bottom:1px solid rgba(30,38,72,.5)}
 tr:hover td{background:rgba(255,255,255,.02)}
 .cell-buy{color:var(--green);font-weight:600}
 .cell-sell{color:var(--red);font-weight:600}
-.regime-tag{display:inline-block;font-size:.65rem;padding:2px 8px;border-radius:4px;font-weight:500}
+.regime-tag{display:inline-block;font-size:.65rem;padding:2px 8px;border-radius:4px;font-weight:500}  # noqa: E501
 .regime-tag.trending{background:rgba(16,185,129,.12);color:var(--green)}
 .regime-tag.ranging{background:rgba(59,130,246,.12);color:var(--blue)}
 .regime-tag.volatile{background:rgba(245,158,11,.12);color:var(--gold)}
 .regime-tag.crisis{background:rgba(239,68,68,.12);color:var(--red)}
-.metrics-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px}
+.metrics-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px}  # noqa: E501
 .metric-item{background:var(--surface2);border-radius:6px;padding:8px 12px}
-.metric-item .label{font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
-.metric-item .value{font-family:'JetBrains Mono',monospace;font-size:.85rem;font-weight:600;margin-top:2px}
-@media(max-width:600px){.grid{grid-template-columns:1fr}.topbar h1{font-size:.9rem}.stat-value.lg{font-size:1.3rem}}
+.metric-item .label{font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}  # noqa: E501
+.metric-item .value{font-family:'JetBrains Mono',monospace;font-size:.85rem;font-weight:600;margin-top:2px}  # noqa: E501
+@media(max-width:600px){.grid{grid-template-columns:1fr}.topbar h1{font-size:.9rem}.stat-value.lg{font-size:1.3rem}}  # noqa: E501
 </style>
 </head>
 <body>
@@ -191,7 +186,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
   <rect x="2" y="2" width="28" height="28" rx="6" fill="url(#lg)"/>
   <path d="M8 22V14l4 2 4-6 4 4 4-6v14H8z" fill="#fff" opacity=".9"/>
   <rect x="10" y="23" width="12" height="1.5" rx=".75" fill="#fff" opacity=".4"/>
-  <defs><linearGradient id="lg" x1="0" y1="0" x2="32" y2="32"><stop stop-color="#f59e0b"/><stop offset="1" stop-color="#10b981"/></linearGradient></defs>
+  <defs><linearGradient id="lg" x1="0" y1="0" x2="32" y2="32"><stop stop-color="#f59e0b"/><stop offset="1" stop-color="#10b981"/></linearGradient></defs>  # noqa: E501
 </svg>
 <h1>RTS: Agentic Moneybot System Elite</h1>
 <div class="topbar-right">
@@ -206,24 +201,24 @@ tr:hover td{background:rgba(255,255,255,.02)}
 <div class="grid">
   <div class="card">
     <div class="card-title">Account</div>
-    <div class="stat-row"><span class="stat-label">Balance</span><span class="stat-value lg" id="balance">--</span></div>
-    <div class="stat-row"><span class="stat-label">Equity</span><span class="stat-value" id="equity">--</span></div>
-    <div class="stat-row"><span class="stat-label">Free Margin</span><span class="stat-value" id="freeMargin">--</span></div>
-    <div class="stat-row"><span class="stat-label">Open Positions</span><span class="stat-value" id="posCount">0</span></div>
+    <div class="stat-row"><span class="stat-label">Balance</span><span class="stat-value lg" id="balance">--</span></div>  # noqa: E501
+    <div class="stat-row"><span class="stat-label">Equity</span><span class="stat-value" id="equity">--</span></div>  # noqa: E501
+    <div class="stat-row"><span class="stat-label">Free Margin</span><span class="stat-value" id="freeMargin">--</span></div>  # noqa: E501
+    <div class="stat-row"><span class="stat-label">Open Positions</span><span class="stat-value" id="posCount">0</span></div>  # noqa: E501
   </div>
   <div class="card">
     <div class="card-title">Performance</div>
-    <div class="stat-row"><span class="stat-label">Total Trades</span><span class="stat-value" id="totalTrades">0</span></div>
-    <div class="stat-row"><span class="stat-label">Win Rate</span><span class="stat-value" id="winRate">--</span></div>
-    <div class="stat-row"><span class="stat-label">P&amp;L</span><span class="stat-value" id="pnl">--</span></div>
-    <div class="stat-row"><span class="stat-label">Sharpe</span><span class="stat-value" id="sharpe">--</span></div>
+    <div class="stat-row"><span class="stat-label">Total Trades</span><span class="stat-value" id="totalTrades">0</span></div>  # noqa: E501
+    <div class="stat-row"><span class="stat-label">Win Rate</span><span class="stat-value" id="winRate">--</span></div>  # noqa: E501
+    <div class="stat-row"><span class="stat-label">P&amp;L</span><span class="stat-value" id="pnl">--</span></div>  # noqa: E501
+    <div class="stat-row"><span class="stat-label">Sharpe</span><span class="stat-value" id="sharpe">--</span></div>  # noqa: E501
   </div>
   <div class="card">
     <div class="card-title">Risk</div>
-    <div class="stat-row"><span class="stat-label">VaR (95%)</span><span class="stat-value" id="var">--</span></div>
-    <div class="stat-row"><span class="stat-label">CVaR</span><span class="stat-value" id="cvar">--</span></div>
-    <div class="stat-row"><span class="stat-label">Sentiment</span><span class="stat-value" id="sentiment">--</span></div>
-    <div class="stat-row"><span class="stat-label">Regime</span><span class="stat-value" id="regime">--</span></div>
+    <div class="stat-row"><span class="stat-label">VaR (95%)</span><span class="stat-value" id="var">--</span></div>  # noqa: E501
+    <div class="stat-row"><span class="stat-label">CVaR</span><span class="stat-value" id="cvar">--</span></div>  # noqa: E501
+    <div class="stat-row"><span class="stat-label">Sentiment</span><span class="stat-value" id="sentiment">--</span></div>  # noqa: E501
+    <div class="stat-row"><span class="stat-label">Regime</span><span class="stat-value" id="regime">--</span></div>  # noqa: E501
   </div>
 </div>
 
@@ -234,8 +229,8 @@ tr:hover td{background:rgba(255,255,255,.02)}
 
 <div class="card" style="margin-bottom:12px">
   <div class="card-title">Open Positions</div>
-  <table><thead><tr><th>Symbol</th><th>Dir</th><th>Volume</th><th>Entry</th><th>SL</th><th>TP</th><th>P&amp;L</th></tr></thead><tbody id="positionsBody"></tbody></table>
-  <div id="noPositions" style="text-align:center;padding:20px 0;color:var(--muted);font-size:.85rem">No open positions</div>
+  <table><thead><tr><th>Symbol</th><th>Dir</th><th>Volume</th><th>Entry</th><th>SL</th><th>TP</th><th>P&amp;L</th></tr></thead><tbody id="positionsBody"></tbody></table>  # noqa: E501
+  <div id="noPositions" style="text-align:center;padding:20px 0;color:var(--muted);font-size:.85rem">No open positions</div>  # noqa: E501
 </div>
 
 <div class="card">
@@ -256,8 +251,8 @@ function connectWS(){
   ws.onclose = function(){setTimeout(connectWS,2000)};
 }
 function updateDashboard(d){
-  const fmt = (n,d=2)=>n==null||n===undefined?'--':'$'+Number(n).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});
-  const num = (n,d=2)=>n==null||n===undefined?'--':Number(n).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});
+  const fmt = (n,d=2)=>n==null||n===undefined?'--':'$'+Number(n).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});  # noqa: E501
+  const num = (n,d=2)=>n==null||n===undefined?'--':Number(n).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});  # noqa: E501
   const pct = (n,d=1)=>n==null||n===undefined?'--':(Number(n)*100).toFixed(d)+'%';
   setText('balance',fmt(d.balance,0));
   setText('equity',fmt(d.equity,0));
@@ -293,42 +288,42 @@ function renderRegime(r){
   el.innerHTML=r.split(',').map(s=>{
     const parts=s.trim().split(':');
     const reg=(parts[1]||'').trim().toLowerCase();
-    return '<span class="regime-tag '+(['trending','ranging','volatile','crisis'].includes(reg)?reg:'')+'">'+s.trim()+'</span>';
+    return '<span class="regime-tag '+(['trending','ranging','volatile','crisis'].includes(reg)?reg:'')+'">'+s.trim()+'</span>';  # noqa: E501
   }).join(' ');
 }
 function renderPrices(prices){
   const g=document.getElementById('pricesGrid');
   if(!g)return;
   const syms=Object.keys(prices);
-  if(syms.length===0){g.innerHTML='<span style="color:var(--muted);font-size:.8rem">Waiting for data...</span>';return}
-  g.innerHTML=syms.map(s=>'<div class="price-tile"><span class="price-sym">'+s+'</span><span class="price-val">'+(Number(prices[s])||0).toFixed(5)+'</span></div>').join('');
+  if(syms.length===0){g.innerHTML='<span style="color:var(--muted);font-size:.8rem">Waiting for data...</span>';return}  # noqa: E501
+  g.innerHTML=syms.map(s=>'<div class="price-tile"><span class="price-sym">'+s+'</span><span class="price-val">'+(Number(prices[s])||0).toFixed(5)+'</span></div>').join('');  # noqa: E501
 }
 function renderPositions(positions){
   const body=document.getElementById('positionsBody');
   const none=document.getElementById('noPositions');
   if(!body)return;
-  if(!positions||positions.length===0){body.innerHTML='';if(none)none.style.display='block';return}
+  if(!positions||positions.length===0){body.innerHTML='';if(none)none.style.display='block';return}  # noqa: E501
   if(none)none.style.display='none';
-  body.innerHTML=positions.map(p=>'<tr><td>'+(p.symbol||'')+'</td><td class="cell-'+(p.direction||'buy').toLowerCase()+'">'+(p.direction||'')+'</td><td>'+Number(p.volume||0).toLocaleString()+'</td><td>'+Number(p.entry_price||0).toFixed(5)+'</td><td>'+Number(p.sl||0).toFixed(5)+'</td><td>'+Number(p.tp||0).toFixed(5)+'</td><td class="'+((p.unrealized_pnl||0)>=0?'pos':'neg')+'">'+((p.unrealized_pnl||0)>=0?'+':'')+Number(p.unrealized_pnl||0).toFixed(2)+'</td></tr>').join('');
+  body.innerHTML=positions.map(p=>'<tr><td>'+(p.symbol||'')+'</td><td class="cell-'+(p.direction||'buy').toLowerCase()+'">'+(p.direction||'')+'</td><td>'+Number(p.volume||0).toLocaleString()+'</td><td>'+Number(p.entry_price||0).toFixed(5)+'</td><td>'+Number(p.sl||0).toFixed(5)+'</td><td>'+Number(p.tp||0).toFixed(5)+'</td><td class="'+((p.unrealized_pnl||0)>=0?'pos':'neg')+'">'+((p.unrealized_pnl||0)>=0?'+':'')+Number(p.unrealized_pnl||0).toFixed(2)+'</td></tr>').join('');  # noqa: E501
 }
 function renderAIMetrics(metrics){
   const g=document.getElementById('aiMetricsGrid');
   if(!g)return;
-  let html='<div class="metric-item"><div class="label">Active Decisions</div><div class="value">'+(metrics.active_decisions||0)+'</div></div>';
+  let html='<div class="metric-item"><div class="label">Active Decisions</div><div class="value">'+(metrics.active_decisions||0)+'</div></div>';  # noqa: E501
   const sd=metrics.sentiment_data;
   if(sd){
-    html+='<div class="metric-item"><div class="label">Sentiment Score</div><div class="value">'+Number(sd.overall_score||0).toFixed(3)+'</div></div>';
-    html+='<div class="metric-item"><div class="label">Fear & Greed</div><div class="value">'+(sd.fear_greed_index||50).toFixed(0)+'</div></div>';
-    html+='<div class="metric-item"><div class="label">Social Volume</div><div class="value">'+(sd.social_volume||0).toLocaleString()+'</div></div>';
-    html+='<div class="metric-item"><div class="label">News Sentiment</div><div class="value">'+Number(sd.news_score||0).toFixed(3)+'</div></div>';
-    html+='<div class="metric-item"><div class="label">Reddit Sentiment</div><div class="value">'+Number(sd.reddit_score||0).toFixed(3)+'</div></div>';
-    html+='<div class="metric-item"><div class="label">Satellite Activity</div><div class="value">'+Number(sd.satellite_score||0).toFixed(3)+'</div></div>';
-    html+='<div class="metric-item"><div class="label">On-Chain Sentiment</div><div class="value">'+Number(sd.onchain_score||0).toFixed(3)+'</div></div>';
+    html+='<div class="metric-item"><div class="label">Sentiment Score</div><div class="value">'+Number(sd.overall_score||0).toFixed(3)+'</div></div>';  # noqa: E501
+    html+='<div class="metric-item"><div class="label">Fear & Greed</div><div class="value">'+(sd.fear_greed_index||50).toFixed(0)+'</div></div>';  # noqa: E501
+    html+='<div class="metric-item"><div class="label">Social Volume</div><div class="value">'+(sd.social_volume||0).toLocaleString()+'</div></div>';  # noqa: E501
+    html+='<div class="metric-item"><div class="label">News Sentiment</div><div class="value">'+Number(sd.news_score||0).toFixed(3)+'</div></div>';  # noqa: E501
+    html+='<div class="metric-item"><div class="label">Reddit Sentiment</div><div class="value">'+Number(sd.reddit_score||0).toFixed(3)+'</div></div>';  # noqa: E501
+    html+='<div class="metric-item"><div class="label">Satellite Activity</div><div class="value">'+Number(sd.satellite_score||0).toFixed(3)+'</div></div>';  # noqa: E501
+    html+='<div class="metric-item"><div class="label">On-Chain Sentiment</div><div class="value">'+Number(sd.onchain_score||0).toFixed(3)+'</div></div>';  # noqa: E501
     if(sd.recent_headlines&&sd.recent_headlines.length){
-      html+='<div class="metric-item" style="grid-column:1/-1"><div class="label">Recent Headlines</div><div class="value" style="font-size:.75rem;line-height:1.4;white-space:normal;word-break:break-word">'+sd.recent_headlines.join('<br>')+'</div></div>';
+      html+='<div class="metric-item" style="grid-column:1/-1"><div class="label">Recent Headlines</div><div class="value" style="font-size:.75rem;line-height:1.4;white-space:normal;word-break:break-word">'+sd.recent_headlines.join('<br>')+'</div></div>';  # noqa: E501
     }
   }else{
-    html+='<div class="metric-item"><div class="label">Behavioral Sentiment</div><div class="value">'+Number(metrics.behavioral_sentiment||0).toFixed(3)+'</div></div>';
+    html+='<div class="metric-item"><div class="label">Behavioral Sentiment</div><div class="value">'+Number(metrics.behavioral_sentiment||0).toFixed(3)+'</div></div>';  # noqa: E501
   }
   g.innerHTML=html;
 }

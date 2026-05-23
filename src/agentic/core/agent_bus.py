@@ -1,13 +1,12 @@
 """
-Agent Bus — inter-agent communication backbone with priority queuing, capability routing,
+Agent Bus — inter-agent communication backbone with priority queuing, capability routing,  # noqa: E501
 parallel dispatch, payload validation, and guaranteed delivery.
 """
 
 from __future__ import annotations
 import asyncio
 import time
-import json
-from typing import Dict, List, Set, Optional, Callable, Awaitable, Any
+from typing import Dict, List, Optional, Callable
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from loguru import logger
@@ -190,7 +189,7 @@ class AgentBus:
             except Exception as e:
                 logger.error(f"AgentBus worker {worker_id} error: {e}")
 
-    async def _dispatch(self, message: AgentMessage, worker_id: int):
+    async def _dispatch(self, message: AgentMessage, worker_id: int):  # noqa: C901
         if message.is_expired:
             self._dead_letter_queue.append(
                 {

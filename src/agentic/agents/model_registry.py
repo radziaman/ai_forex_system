@@ -9,8 +9,8 @@ from __future__ import annotations
 import os
 import re
 import glob
-from typing import Dict, Optional, Any
-from dataclasses import dataclass, field
+from typing import Dict
+from dataclasses import dataclass
 from loguru import logger
 
 
@@ -29,7 +29,7 @@ class SymbolModelRegistry:
     Maps symbols to their best available trained models.
 
     Convention: files named like `lstm_cnn_SYMBOL.keras` or `classifier_SYMBOL.keras`
-    are automatically discovered. Symbols without dedicated models use EURUSD as fallback.
+    are automatically discovered. Symbols without dedicated models use EURUSD as fallback.  # noqa: E501
     """
 
     def __init__(self, models_dir: str = "models"):
@@ -43,7 +43,7 @@ class SymbolModelRegistry:
         self._lstm_models.clear()
         self._classifier_models.clear()
 
-        # Match per-symbol models like lstm_cnn_EURUSD.keras but NOT generic lstm_cnn_model.keras
+        # Match per-symbol models like lstm_cnn_EURUSD.keras but NOT generic lstm_cnn_model.keras  # noqa: E501
         pattern = r"(lstm_cnn|classifier)_([A-Z]{2,6})\.keras$"
         for fpath in glob.glob(os.path.join(self.models_dir, "*.keras")):
             fname = os.path.basename(fpath)
@@ -69,7 +69,7 @@ class SymbolModelRegistry:
         if os.path.exists(generic_path) and "EURUSD" not in self._lstm_models:
             try:
                 # Check what symbol it was last saved from
-                import tensorflow as tf
+                pass
 
                 size_kb = os.path.getsize(generic_path) / 1024
                 # We know this was EURUSD

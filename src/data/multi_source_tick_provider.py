@@ -1,5 +1,5 @@
 """
-Multi-Source Tick Provider — Unified streaming from cTrader (FX/futures) + Yahoo (futures).
+Multi-Source Tick Provider — Unified streaming from cTrader (FX/futures) + Yahoo (futures).  # noqa: E501
 
 Combines multiple data sources into a single tick stream for the simulation.
 Supports any instrument the screener finds tradeable.
@@ -15,13 +15,14 @@ Usage:
     ticks = await provider.get_instrument_data("HO=F", days=5)
 """
 
-import os, sys, time, math, random
+import os
+import sys
+import time
+import random
 import asyncio
-import numpy as np
 import pandas as pd
-from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Optional, Callable, Any, Tuple
-from collections import defaultdict, deque
+from typing import List, Dict, Optional, Callable, Any
+from collections import defaultdict
 from dataclasses import dataclass
 from loguru import logger
 
@@ -205,7 +206,7 @@ class YahooFuturesProvider:
 
             if df is None or df.empty or len(df) < 10:
                 logger.warning(
-                    f"Insufficient 1m data for {symbol}: {len(df) if df is not None else 0} bars"
+                    f"Insufficient 1m data for {symbol}: {len(df) if df is not None else 0} bars"  # noqa: E501
                 )
                 return None
 
@@ -321,8 +322,8 @@ class MultiSourceTickProvider:
     def __init__(self, poll_interval: float = 1.0):
         self.poll_interval = poll_interval
         self._running = False
-        self._ctrader = None  # type: ignore[assignment]
-        self._dukascopy = None  # type: ignore[assignment]
+        self._ctrader: Optional[Any] = None
+        self._dukascopy: Optional[Any] = None
         self._yahoo = YahooFuturesProvider()
         self._subscribers: Dict[str, List[Callable]] = defaultdict(list)
         self._poll_tasks: Dict[str, asyncio.Task] = {}
@@ -367,16 +368,18 @@ class MultiSourceTickProvider:
         ctrader_available = False
         if native_syms:
             self._ctrader = CtradeDataOnly()
-            ctrader_available = await self._ctrader.connect()
-            if ctrader_available:
+            if self._ctrader is not None:
+                ctrader_available = await self._ctrader.connect()
+                if ctrader_available:
 
-                def ctrader_bridge(quote):
-                    tick = self._ctrader.convert_quote(quote)
-                    if tick:
-                        self._dispatch_tick(tick)
+                    def ctrader_bridge(quote):
+                        if self._ctrader is not None:
+                            tick = self._ctrader.convert_quote(quote)
+                            if tick:
+                                self._dispatch_tick(tick)
 
-                await self._ctrader.subscribe(native_syms, ctrader_bridge)
-                logger.info(f"  cTrader streaming {len(native_syms)} symbols")
+                    await self._ctrader.subscribe(native_syms, ctrader_bridge)
+                    logger.info(f"  cTrader streaming {len(native_syms)} symbols")
 
         # Fallback: Dukascopy for FX if cTrader failed
         if not ctrader_available and native_syms:
@@ -425,7 +428,8 @@ class MultiSourceTickProvider:
                 )
                 self._dispatch_tick(our_tick)
 
-            await self._dukascopy.stream_prices(symbols, dukascopy_callback)
+            if self._dukascopy is not None:
+                await self._dukascopy.stream_prices(symbols, dukascopy_callback)
         except Exception as e:
             logger.warning(f"Dukascopy failed: {e}. Using synthetic ticks for FX.")
 

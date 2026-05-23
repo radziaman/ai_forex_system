@@ -3,22 +3,19 @@ Performance Agent — autonomous trade analytics and performance tracking.
 
 Identity: I am the scorekeeper. I track every trade and measure system performance.
 Purpose: I answer: are we making money? What works? What doesn't?
-Autonomy: I independently compute Sharpe, profit factor, win rate, and per-symbol/regime breakdowns.
+Autonomy: I independently compute Sharpe, profit factor, win rate, and per-symbol/regime breakdowns.  # noqa: E501
 """
 
 from __future__ import annotations
 import time
 import numpy as np
-from typing import Dict, List, Optional, Any, Set
+from typing import Dict, List, Optional, Any
 from collections import defaultdict, deque
-from loguru import logger
 
 from agentic.core.base_agent import BaseAgent
 from agentic.core.agent_message import (
     AgentMessage,
     MessageType,
-    MessagePriority,
-    AgentIntention,
 )
 from agentic.core.agent_consciousness import ConsciousnessLevel
 
@@ -39,7 +36,7 @@ class PerformanceAgent(BaseAgent):
         super().__init__(
             name="performance_agent",
             role="Performance Analytics Engine",
-            purpose="Track, analyze, and report system trading performance across all dimensions",
+            purpose="Track, analyze, and report system trading performance across all dimensions",  # noqa: E501
             domain="performance",
             capabilities={
                 "trade_tracking",
@@ -110,7 +107,7 @@ class PerformanceAgent(BaseAgent):
             if degradation:
                 self.memory.remember(
                     event_type="performance_degradation",
-                    description=f"Win rate dropped {degradation['drop']:.1%} over last {degradation['window']} trades",
+                    description=f"Win rate dropped {degradation['drop']:.1%} over last {degradation['window']} trades",  # noqa: E501
                     importance=0.8,
                     emotion="warning",
                 )

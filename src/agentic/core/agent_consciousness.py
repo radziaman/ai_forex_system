@@ -15,9 +15,8 @@ Tracks:
 
 from __future__ import annotations
 import time
-import math
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any, Set, Tuple
+from typing import Dict, List, Any, Set, Tuple
 from enum import Enum, auto
 
 
@@ -108,7 +107,7 @@ class EmotionalState:
         }
         return names[max(names, key=names.get)]
 
-    def summary(self) -> Dict[str, float]:
+    def summary(self) -> Dict[str, Any]:
         return {
             "fatigue": round(self.fatigue, 3),
             "stress": round(self.stress, 3),

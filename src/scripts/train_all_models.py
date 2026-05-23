@@ -467,7 +467,7 @@ def train_base_model(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def train_ppo_regime_agents(
+def train_ppo_regime_agents(  # noqa: C901
     use_microstructure: bool = False,
     ppo_timesteps: int = 5000,
 ) -> Dict[str, dict]:
@@ -734,7 +734,7 @@ def _get_hmm_regime_labels(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def train_meta_learner(
+def train_meta_learner(  # noqa: C901
     use_microstructure: bool = False,
 ) -> Optional[dict]:
     """Train a meta-learner that predicts which regime agent to use.
@@ -949,7 +949,7 @@ def train_meta_learner(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def verify_all_models() -> Dict[str, list]:
+def verify_all_models() -> Dict[str, list]:  # noqa: C901
     """Verify all trained models exist and are functional."""
     logger.info("")
     logger.info("=" * 60)
@@ -1135,7 +1135,7 @@ def save_feature_norm(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def main():
+def main():  # noqa: C901
     import argparse
 
     parser = argparse.ArgumentParser(description="RTS AI Forex — Train All Models")

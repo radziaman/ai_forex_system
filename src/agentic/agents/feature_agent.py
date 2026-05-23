@@ -9,15 +9,12 @@ Autonomy: I independently compute, normalize, cache, and version all features.
 from __future__ import annotations
 import time
 import numpy as np
-from typing import Dict, List, Optional, Any, Set
-from loguru import logger
+from typing import Dict, List, Any
 
 from agentic.core.base_agent import BaseAgent
 from agentic.core.agent_message import (
     AgentMessage,
     MessageType,
-    MessagePriority,
-    AgentIntention,
 )
 from agentic.core.agent_consciousness import ConsciousnessLevel
 
@@ -40,7 +37,7 @@ class FeatureAgent(BaseAgent):
         super().__init__(
             name="feature_agent",
             role="Feature Engineering Pipeline",
-            purpose="Transform raw OHLCV into normalized multi-timeframe feature vectors",
+            purpose="Transform raw OHLCV into normalized multi-timeframe feature vectors",  # noqa: E501
             domain="features",
             capabilities={
                 "technical_indicators",
@@ -79,7 +76,7 @@ class FeatureAgent(BaseAgent):
         loaded = self._feature_pipeline.load_normalization()
         if loaded:
             self.log_state(
-                f"Loaded normalization: {len(self._feature_pipeline._means)} symbol-tf pairs"
+                f"Loaded normalization: {len(self._feature_pipeline._means)} symbol-tf pairs"  # noqa: E501
             )
         else:
             self.log_state("No normalization found — will fit on first data")

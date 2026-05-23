@@ -4,9 +4,8 @@ Uses PC-MCI (Peter-Clark Momentary Conditional Independence) for time series cau
 Only keeps features that CAUSE the target (not just correlate with it).
 """
 
-import numpy as np
 import pandas as pd
-from typing import List, Optional, Dict, Tuple
+from typing import List, Dict
 from loguru import logger
 
 try:
@@ -136,7 +135,7 @@ class CausalFeatureSelector:
         threshold = 0.05
         selected = corrs[corrs > threshold].index.tolist()
         logger.info(
-            f"Correlation fallback: {len(selected)}/{len(features.columns)} features kept"
+            f"Correlation fallback: {len(selected)}/{len(features.columns)} features kept"  # noqa: E501
         )
         return selected
 

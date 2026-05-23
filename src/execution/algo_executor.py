@@ -7,8 +7,8 @@ Enhanced with smart order routing and volume profile-based execution (Enhancemen
 import asyncio
 import numpy as np
 import time
-from typing import Dict, List, Optional, Tuple, Callable
-from dataclasses import dataclass, field
+from typing import Dict, List, Optional
+from dataclasses import dataclass
 from enum import Enum
 from loguru import logger
 
@@ -117,7 +117,7 @@ class AlgoExecutor:
         order_id = f"twap_{symbol}_{int(time.time())}"
 
         logger.info(
-            f"TWAP: {side} {volume} {symbol} over {duration_minutes}min ({chunks} chunks)"
+            f"TWAP: {side} {volume} {symbol} over {duration_minutes}min ({chunks} chunks)"  # noqa: E501
         )
 
         self.active_orders[order_id] = []
@@ -324,7 +324,7 @@ class AlgoExecutor:
         participation_rate = urgency_rates.get(urgency, 0.1)
 
         logger.info(
-            f"IS: {side} {volume} {symbol} @ target={target_price:.5f}, urgency={urgency}"
+            f"IS: {side} {volume} {symbol} @ target={target_price:.5f}, urgency={urgency}"  # noqa: E501
         )
 
         self.active_orders[order_id] = []

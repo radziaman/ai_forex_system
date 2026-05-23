@@ -2,22 +2,19 @@
 Position Agent — autonomous position lifecycle management.
 
 Identity: I watch over every open position. I manage their journey from open to close.
-Purpose: I optimize exits through trailing stops, partial closes, and correlation monitoring.
-Autonomy: I independently evaluate every position every cycle and take protective actions.
+Purpose: I optimize exits through trailing stops, partial closes, and correlation monitoring.  # noqa: E501
+Autonomy: I independently evaluate every position every cycle and take protective actions.  # noqa: E501
 """
 
 from __future__ import annotations
 import time
-import numpy as np
 from typing import Dict, List, Optional, Any, Set
-from loguru import logger
 
 from agentic.core.base_agent import BaseAgent
 from agentic.core.agent_message import (
     AgentMessage,
     MessageType,
     MessagePriority,
-    AgentIntention,
 )
 from agentic.core.agent_consciousness import ConsciousnessLevel
 
@@ -44,7 +41,7 @@ class PositionAgent(BaseAgent):
         super().__init__(
             name="position_agent",
             role="Position Lifecycle Manager",
-            purpose="Optimize open positions through trailing stops, partial closes, and risk monitoring",
+            purpose="Optimize open positions through trailing stops, partial closes, and risk monitoring",  # noqa: E501
             domain="positions",
             capabilities={
                 "trailing_stops",
@@ -163,7 +160,7 @@ class PositionAgent(BaseAgent):
                 self.memory.remember(
                     event_type="partial_take_profit",
                     description=(
-                        f"Position {pid} ({action['symbol']}): close {close_ratio*100:.0f}% "
+                        f"Position {pid} ({action['symbol']}): close {close_ratio*100:.0f}% "  # noqa: E501
                         f"{action.get('partial_close_reason', '')}"
                     ),
                     importance=0.7,
@@ -257,15 +254,15 @@ class PositionAgent(BaseAgent):
                 target=message.source_agent,
             )
 
-    def _check_trailing(
+    def _check_trailing(  # noqa: C901
         self, pid: int, entry: float, current: float, atr: float, direction: str
     ) -> Optional[float]:
         """ATR-based trailing stop check.
 
         Milestones (ATR-based):
           1. Price moved >= 1.0 × ATR in our favor  → move SL to breakeven
-          2. Price moved >= 2.0 × ATR in our favor  → trail SL at 1.0 × ATR behind best price
-          3. Price moved >= 3.0 × ATR in our favor  → trail SL tighter at 0.5 × ATR behind best price
+          2. Price moved >= 2.0 × ATR in our favor  → trail SL at 1.0 × ATR behind best price  # noqa: E501
+          3. Price moved >= 3.0 × ATR in our favor  → trail SL tighter at 0.5 × ATR behind best price  # noqa: E501
 
         Returns new SL price, or None if no change needed.
         """

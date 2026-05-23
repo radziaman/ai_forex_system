@@ -5,14 +5,13 @@ Execution Agent — G1: tick wiring, G3: position publishing, G5: delivery ack.
 from __future__ import annotations
 import time
 import asyncio
-from typing import Dict, List, Optional, Any, Set
+from typing import Dict, Any
 from loguru import logger
 
 from agentic.core.base_agent import BaseAgent
 from agentic.core.agent_message import (
     MessageType,
     MessagePriority,
-    AgentIntention,
     AgentMessage,
 )
 from agentic.core.agent_consciousness import ConsciousnessLevel
@@ -23,7 +22,7 @@ class ExecutionAgent(BaseAgent):
         super().__init__(
             name="execution_agent",
             role="Order Execution Engine",
-            purpose="Execute trades through broker, wire live ticks, publish position state",
+            purpose="Execute trades through broker, wire live ticks, publish position state",  # noqa: E501
             domain="execution",
             capabilities={
                 "order_execution",
@@ -61,7 +60,7 @@ class ExecutionAgent(BaseAgent):
         self._active_symbols = list(SYMBOLS)
         self._core_symbols = list(SYMBOLS)  # Preserved for subscription fallback
 
-    async def _on_start(self):
+    async def _on_start(self):  # noqa: C901
         self.consciousness.current_intention = "initializing execution provider"
         from api.provider_factory import create_execution_provider
         from execution.engine import ExecutionEngine
@@ -125,7 +124,7 @@ class ExecutionAgent(BaseAgent):
                         f"data.price.{symbol}", round(float((bid + ask) / 2), 5)
                     )
                     logger.debug(
-                        f"TICK {symbol}: bid={bid:.5f} ask={ask:.5f} spread={spread_pips:.2f}"
+                        f"TICK {symbol}: bid={bid:.5f} ask={ask:.5f} spread={spread_pips:.2f}"  # noqa: E501
                     )
 
                 await self.send(
@@ -142,6 +141,9 @@ class ExecutionAgent(BaseAgent):
                 )
             except Exception:
                 pass
+
+        # Publish market session state so all agents can check
+        await self._publish_market_state()
 
         if self.ctrader:
             self.ctrader.on_price = (
@@ -167,50 +169,55 @@ class ExecutionAgent(BaseAgent):
             raw = getattr(self.ctrader, "raw", None)
             if raw:
                 self.set_world("execution.ctrader_client", raw, ttl=3600)
-            from data.data_manager import SYMBOLS
             from api.symbol_map import get_symbol_id
 
             if raw:
-                depth_ok = 0
-                spot_ok = 0
-                # Subscribe to ALL core symbols — depth first, then spot.
-                #
-                # NOTE: Depth (Level II DOM) may not be available for all
-                # symbols or account types (IC Markets Raw Spread accounts
-                # often restrict depth).  If depth subscription fails or
-                # times out, we still have spot prices as fallback.
-                #
-                # Rate limiting: 1s between depth subs (cTrader allows
-                # max 50 req/s, but depth responses are heavyweight).
-                # Spot subs are fire-and-forget (no response expected),
-                # so they can be sent more aggressively.
-                for sym in self._core_symbols:
-                    try:
-                        sid = get_symbol_id(sym)
-                        # Check connection health — abort if disconnected
-                        # (the subscribe callback may have fired during a
-                        # previous subscription's await)
-                        if not self.get_world("execution.connected", True):
-                            self.log_state(
-                                f"Connection lost during subscription loop, "
-                                f"aborting ({sym} pending)", "warning"
-                            )
-                            break
-                        # Level II depth subscription (order book)
-                        if hasattr(raw, "subscribe_depth"):
-                            if await raw.subscribe_depth(sid):
-                                depth_ok += 1
-                            await asyncio.sleep(1.0)  # Rate limit: 1 depth req/s
-                        # Spot price subscription (fire-and-forget)
-                        if hasattr(raw, "subscribe_spots") and await raw.subscribe_spots(sid):
-                            spot_ok += 1
-                            await asyncio.sleep(0.2)
-                    except Exception as e:
-                        logger.debug(f"Subscribe failed for {sym}: {e}")
-                self.log_state(
-                    f"Subscriptions: depth={depth_ok}/{len(self._core_symbols)}, "
-                    f"spot={spot_ok}/{len(self._core_symbols)}"
-                )
+                # Skip subscription if market is closed (e.g. weekend)
+                market_open = await self._check_market_before_subscribe()
+                if market_open:
+                    depth_ok = 0
+                    spot_ok = 0
+                    # Subscribe to ALL core symbols — depth first, then spot.
+                    #
+                    # NOTE: Depth (Level II DOM) may not be available for all
+                    # symbols or account types (IC Markets Raw Spread accounts
+                    # often restrict depth).  If depth subscription fails or
+                    # times out, we still have spot prices as fallback.
+                    #
+                    # Rate limiting: 1s between depth subs (cTrader allows
+                    # max 50 req/s, but depth responses are heavyweight).
+                    # Spot subs are fire-and-forget (no response expected),
+                    # so they can be sent more aggressively.
+                    for sym in self._core_symbols:
+                        try:
+                            sid = get_symbol_id(sym)
+                            # Check connection health — abort if disconnected
+                            if not self.get_world("execution.connected", True):
+                                self.log_state(
+                                    f"Connection lost during subscription loop, "
+                                    f"aborting ({sym} pending)",
+                                    "warning",
+                                )
+                                break
+                            if hasattr(raw, "subscribe_depth"):
+                                if await raw.subscribe_depth(sid):
+                                    depth_ok += 1
+                                await asyncio.sleep(1.0)
+                            if hasattr(
+                                raw, "subscribe_spots"
+                            ) and await raw.subscribe_spots(sid):
+                                spot_ok += 1
+                                await asyncio.sleep(0.2)
+                        except Exception as e:
+                            logger.debug(f"Subscribe failed for {sym}: {e}")
+                    self.log_state(
+                        f"Subscriptions: depth={depth_ok}/{len(self._core_symbols)}, "
+                        f"spot={spot_ok}/{len(self._core_symbols)}"
+                    )
+                else:
+                    self.set_world("execution.connected", True)
+                    self.set_world("execution.subscriptions", "skipped_market_closed")
+                    self.log_state("Market closed — subscriptions deferred", "info")
         else:
             self.log_state(f"Running in {engine_mode} mode (simulation)", "warning")
             self.set_world("execution.connected", False)
@@ -218,15 +225,43 @@ class ExecutionAgent(BaseAgent):
         self.set_world("execution.mode", engine_mode)
         self.set_world("execution.status", "ready")
 
+    async def _publish_market_state(self):
+        """Publish market session info to world state for all agents."""
+        from data.market_session import MarketSession
+
+        is_open = MarketSession.is_market_open()
+        sessions = MarketSession.get_active_sessions()
+        is_high_liquidity, liq_reason = MarketSession.is_high_liquidity()
+
+        self.set_world("market.is_open", is_open, ttl=120)
+        self.set_world("market.sessions", sessions, ttl=120)
+        self.set_world("market.active_sessions", len(sessions), ttl=120)
+        self.set_world("market.is_high_liquidity", is_high_liquidity, ttl=120)
+        self.set_world("market.liquidity_reason", liq_reason, ttl=120)
+
+    async def _check_market_before_subscribe(self) -> bool:
+        """Check if market is open before subscribing. Logs and returns False if closed."""  # noqa: E501
+        from data.market_session import MarketSession
+
+        if not MarketSession.is_market_open():
+            sessions = MarketSession.get_active_sessions()
+            self.log_state(
+                f"Market closed — skipping subscriptions "
+                f"(sessions={'/'.join(sessions) if sessions else 'none'})",
+                "info",
+            )
+            return False
+        return True
+
     async def _on_disconnect(self):
-        """Called when cTrader connection drops — idempotent (safe to call multiple times)."""
+        """Called when cTrader connection drops — idempotent (safe to call multiple times)."""  # noqa: E501
         if not self.get_world("execution.connected", False):
             return  # Already disconnected
         self.log_state("cTrader disconnected", "warning")
         self.set_world("execution.connected", False)
         self.set_world("execution.ctrader_client", None)
 
-    async def _reconnect(self):
+    async def _reconnect(self):  # noqa: C901
         """Reconnect to cTrader and re-subscribe depth/spot subscriptions.
 
         Governed by a minimum 5s cooldown between attempts to prevent
@@ -270,7 +305,9 @@ class ExecutionAgent(BaseAgent):
             raw = getattr(self.ctrader, "raw", None)
 
             if not ok or raw is None:
-                self.log_state("Reconnect failed — cannot start broker client", "warning")
+                self.log_state(
+                    "Reconnect failed — cannot start broker client", "warning"
+                )
                 self.set_world("execution.connected", False)
                 return
 
@@ -289,7 +326,16 @@ class ExecutionAgent(BaseAgent):
             # Expose raw client for data_agent historical refreshes
             self.set_world("execution.ctrader_client", raw, ttl=3600)
 
-            # Re-subscribe to depth and spot for all core symbols
+            # Re-subscribe to depth and spot for all core symbols.
+            # Skip if market is closed (e.g. weekend reconnect attempt).
+            await self._publish_market_state()
+            if not await self._check_market_before_subscribe():
+                self.set_world("execution.connected", True)
+                self.log_state(
+                    "Reconnect OK — market closed, subscriptions deferred", "info"
+                )
+                return
+
             from api.symbol_map import get_symbol_id
 
             depth_ok = 0
@@ -302,7 +348,8 @@ class ExecutionAgent(BaseAgent):
                     if not self.get_world("execution.connected", True):
                         self.log_state(
                             f"Connection lost during re-subscribe, "
-                            f"aborting ({sym} pending)", "warning"
+                            f"aborting ({sym} pending)",
+                            "warning",
                         )
                         break
                     if hasattr(raw, "subscribe_depth"):
@@ -412,7 +459,7 @@ class ExecutionAgent(BaseAgent):
             self.memory.know("execution.executed", self._executed, ttl=3600)
             self.memory.know("execution.failed", self._failed, ttl=3600)
 
-    async def on_message(self, message: AgentMessage):
+    async def on_message(self, message: AgentMessage):  # noqa: C901
         if message.msg_type == MessageType.INSTRUMENTS_UPDATED:
             payload = message.payload if isinstance(message.payload, dict) else {}
             tradeable = payload.get("tradeable", [])
@@ -421,7 +468,6 @@ class ExecutionAgent(BaseAgent):
                     t.get("ticker", "") for t in tradeable if t.get("ticker")
                 ]
                 if new_symbols:
-                    old_count = len(self._active_symbols)
                     from data.data_manager import SYMBOLS as CORE_SYMBOLS
 
                     # Core symbols (EURUSD, GBPUSD, ...) are always tradeable.

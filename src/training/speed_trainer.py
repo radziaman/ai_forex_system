@@ -1,5 +1,5 @@
 """
-Speed-optimized training pipeline with M1 GPU, transfer learning, and progressive training.
+Speed-optimized training pipeline with M1 GPU, transfer learning, and progressive training.  # noqa: E501
 Trains all 7 pairs 3-5x faster than the standard approach.
 """
 
@@ -7,14 +7,13 @@ import os
 import time
 import asyncio
 import warnings
-from typing import Optional, Dict, List
+from typing import Optional, List
 from datetime import datetime, timezone
 from loguru import logger
 
 warnings.filterwarnings("ignore")
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
-import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 import tensorflow as tf  # noqa: E402
 from tensorflow.keras import Model, Input  # noqa: E402
@@ -119,7 +118,7 @@ class FastTrainer:
             )
             if not ohlcv or len(ohlcv) < 100:
                 logger.warning(
-                    f"Insufficient Dukascopy data for {symbol}: {len(ohlcv) if ohlcv else 0} bars"
+                    f"Insufficient Dukascopy data for {symbol}: {len(ohlcv) if ohlcv else 0} bars"  # noqa: E501
                 )
                 return None
             df = pd.DataFrame(

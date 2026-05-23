@@ -8,8 +8,7 @@ import json
 import os
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple
-from dataclasses import dataclass, field
-from loguru import logger
+from dataclasses import dataclass
 
 try:
     import requests
@@ -249,7 +248,7 @@ class EconomicCalendar:
         fred_api_key = os.getenv("FRED_API_KEY", "")
         if not fred_api_key:
             return []
-        url = f"https://api.stlouisfed.org/fred/releases?api_key={fred_api_key}&file_type=json"
+        url = f"https://api.stlouisfed.org/fred/releases?api_key={fred_api_key}&file_type=json"  # noqa: E501
         try:
             resp = requests.get(url, timeout=10)
             if resp.status_code == 200:

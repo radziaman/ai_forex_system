@@ -5,7 +5,7 @@ try:
 except ImportError:
     talib: Any = None  # type: ignore[no-redef]
 from loguru import logger
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 
 class FeatureEngine:
@@ -204,7 +204,6 @@ class FeatureEngine:
                 return talib.ATR(h, l, c, timeperiod=p)[-1]
         except (TypeError, ValueError, IndexError) as e:
             logger.debug(f"TA-Lib ATR failed: {e}")
-            pass
         tr = np.maximum(
             h[-p:] - l[-p:],
             np.maximum(
@@ -221,7 +220,6 @@ class FeatureEngine:
                 return talib.RSI(c, timeperiod=p)[-1]
         except (TypeError, ValueError, IndexError) as e:
             logger.debug(f"TA-Lib RSI failed: {e}")
-            pass
         return 50.0
 
     def _macd(self, c):
@@ -233,7 +231,6 @@ class FeatureEngine:
                 return (m[-1] or 0, s[-1] or 0, h2[-1] or 0)
         except (TypeError, ValueError, IndexError) as e:
             logger.debug(f"TA-Lib MACD failed: {e}")
-            pass
         return 0.0, 0.0, 0.0
 
     def _bb(self, c, p=20):
@@ -245,7 +242,6 @@ class FeatureEngine:
                 return (u[-1] or c[-1], m[-1] or c[-1], l[-1] or c[-1])
         except (TypeError, ValueError, IndexError) as e:
             logger.debug(f"TA-Lib BBANDS failed: {e}")
-            pass
         return c[-1], c[-1], c[-1]
 
     def _stoch(self, h, l, c):
@@ -257,7 +253,6 @@ class FeatureEngine:
                 return (k[-1] or 50.0, d[-1] or 50.0)
         except (TypeError, ValueError, IndexError) as e:
             logger.debug(f"TA-Lib STOCH failed: {e}")
-            pass
         return 50.0, 50.0
 
     def _adx(self, h, l, c):
@@ -271,7 +266,6 @@ class FeatureEngine:
                 return a, dp, dm
         except (TypeError, ValueError, IndexError) as e:
             logger.debug(f"TA-Lib ADX failed: {e}")
-            pass
         return 25.0, 25.0, 25.0
 
     def _cci(self, h, l, c, p=20):
@@ -282,7 +276,6 @@ class FeatureEngine:
                 return talib.CCI(h, l, c, timeperiod=p)[-1] or 0.0
         except (TypeError, ValueError, IndexError) as e:
             logger.debug(f"TA-Lib CCI failed: {e}")
-            pass
         return 0.0
 
     def _mfi(self, h, l, c, v, p=14):
@@ -293,7 +286,6 @@ class FeatureEngine:
                 return talib.MFI(h, l, c, v, timeperiod=p)[-1] or 50.0
         except (TypeError, ValueError, IndexError) as e:
             logger.debug(f"TA-Lib MFI failed: {e}")
-            pass
         return 50.0
 
     def _obv(self, c, v):

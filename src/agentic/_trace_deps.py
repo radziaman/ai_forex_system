@@ -18,7 +18,7 @@ src_packages = {
 
 all_imports = set()
 
-for py_file in sorted(agentic_dir.rglob("*.py")):
+for py_file in sorted(agentic_dir.rglob("*.py")):  # noqa: C901
     if py_file.name.startswith("_"):
         continue
     text = py_file.read_bytes().decode("utf-8", errors="replace")
@@ -51,5 +51,5 @@ for pkg, imports in sorted(by_pkg.items()):
 total_files = sum(len(v) for v in by_pkg.values())
 print(f"\n  Total: {len(by_pkg)} packages, {total_files} import paths")
 print(
-    f"  Agentic files: {sum(1 for f in agentic_dir.rglob('*.py') if not f.name.startswith('_'))}"
+    f"  Agentic files: {sum(1 for f in agentic_dir.rglob('*.py') if not f.name.startswith('_'))}"  # noqa: E501
 )

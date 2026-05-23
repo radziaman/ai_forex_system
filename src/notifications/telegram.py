@@ -4,10 +4,9 @@ Sends trade alerts, daily summaries, and risk warnings to a Telegram chat.
 Uses threading to avoid blocking the async trading loop.
 """
 
-import asyncio
 import threading
 import time
-from typing import Optional, Dict, List
+from typing import Optional, Dict
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -124,7 +123,7 @@ class TelegramNotifier:
                     last_error = "rate_limited"
                     continue
                 logger.warning(
-                    f"Telegram API error (attempt {attempt+1}): {resp.status_code} {resp.text[:100]}"
+                    f"Telegram API error (attempt {attempt+1}): {resp.status_code} {resp.text[:100]}"  # noqa: E501
                 )
                 last_error = f"HTTP {resp.status_code}"
                 time.sleep(2)
@@ -224,7 +223,7 @@ class TelegramNotifier:
             f"<b>| DAILY SUMMARY |</b>\n"
             f"{'─' * 30}\n"
             f"Date:    <code>{datetime.now().strftime('%Y-%m-%d')}</code>\n"
-            f"Trades:  <code>{trades_today}</code> | W/L: <code>{wins}/{losses}</code>\n"
+            f"Trades:  <code>{trades_today}</code> | W/L: <code>{wins}/{losses}</code>\n"  # noqa: E501
             f"WinRate: <code>{win_rate:.0%}</code>\n"
             f"PnL:     {_fmt_pnl(pnl)}\n"
             f"Balance: <code>${balance:,.0f}</code>\n"

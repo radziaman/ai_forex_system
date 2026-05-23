@@ -4,7 +4,7 @@ Permutation testing to determine if strategy edge is statistically significant.
 """
 
 import numpy as np
-from typing import List, Dict, Optional, Callable
+from typing import List, Dict
 from dataclasses import dataclass
 from loguru import logger
 
@@ -84,11 +84,11 @@ class MonteCarloSigTest:
         logger.info(f"  Actual Return: {actual_return:.2f} (p={p_return:.4f})")
         logger.info(
             f"  Sharpe percentile: {sharpe_pct:.1%} "
-            f"{'(SIGNIFICANT)' if result.is_significant_sharpe else '(NOT significant)'}"
+            f"{'(SIGNIFICANT)' if result.is_significant_sharpe else '(NOT significant)'}"  # noqa: E501
         )
         logger.info(
             f"  Return percentile: {return_pct:.1%} "
-            f"{'(SIGNIFICANT)' if result.is_significant_return else '(NOT significant)'}"
+            f"{'(SIGNIFICANT)' if result.is_significant_return else '(NOT significant)'}"  # noqa: E501
         )
         logger.info(f"  Permutations: {self.n_permutations}")
         logger.info("=" * 60)

@@ -5,15 +5,12 @@ End-to-end lifecycle test: boots minimal agents, verifies communication.
 import sys
 import os
 import asyncio
-import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
-from infrastructure.config_v2 import AppConfig  # noqa: E402
 from agentic.core.agent_bus import get_agent_bus  # noqa: E402
 from agentic.core.agent_registry import get_agent_registry  # noqa: E402
-from agentic.core.world_state import get_world_state  # noqa: E402
 from agentic.core.agent_message import MessageType  # noqa: E402
 
 from agentic.agents.master_agent import MasterAgent  # noqa: E402
@@ -64,7 +61,7 @@ async def test():
     for a in agents:
         c = a.consciousness.summary()
         print(
-            f"  [{c['agent']}] state={c['state']} cycles={c['cycles']} health={c['health']}"
+            f"  [{c['agent']}] state={c['state']} cycles={c['cycles']} health={c['health']}"  # noqa: E501
         )
 
     # Stop all

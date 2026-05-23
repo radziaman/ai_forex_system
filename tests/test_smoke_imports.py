@@ -21,35 +21,33 @@ def test_import_rts_ai_fx_package():
 
 
 def test_import_model():
-    from rts_ai_fx.model import LSTMCNNHybrid, ProfitabilityClassifier
+    from rts_ai_fx.model import LSTMCNNHybrid
 
     assert LSTMCNNHybrid is not None
 
 
 def test_import_drift_detector():
-    from rts_ai_fx.drift_detector import ADWIN, DriftMonitor
+    from rts_ai_fx.drift_detector import DriftMonitor
 
     assert DriftMonitor is not None
 
 
 def test_import_attention_fusion():
     from rts_ai_fx.attention_fusion import (
-        TimeframeAttention,
         TemporalAttentionFusion,
-        AttentionFusionPipeline,
     )
 
     assert TemporalAttentionFusion is not None
 
 
 def test_import_uncertainty():
-    from rts_ai_fx.uncertainty import monte_carlo_dropout, get_confidence
+    from rts_ai_fx.uncertainty import monte_carlo_dropout
 
     assert monte_carlo_dropout is not None
 
 
 def test_import_ensemble():
-    from rts_ai_fx.ensemble import MoEEnsemble, EnsemblePrediction, Expert
+    from rts_ai_fx.ensemble import MoEEnsemble
 
     assert MoEEnsemble is not None
 
@@ -61,7 +59,7 @@ def test_import_regime_detector():
 
 
 def test_import_causal_features():
-    from rts_ai_fx.causal_features import CausalFeatureSelector, CAUSAL_AVAILABLE
+    from rts_ai_fx.causal_features import CausalFeatureSelector
 
     assert CausalFeatureSelector is not None
 
@@ -74,7 +72,7 @@ def test_import_features_unified():
 
 @pytest.mark.skipif(not torch_available, reason="torch not installed")
 def test_import_ai_maml():
-    from ai.maml_agent import MAMLAgent, MAMLModel
+    from ai.maml_agent import MAMLAgent
 
     assert MAMLAgent is not None
 
@@ -99,7 +97,7 @@ def test_import_ai_regime_agents():
 
 
 def test_import_data_manager():
-    from data.data_manager import DataManager, MarketDepthData
+    from data.data_manager import DataManager
 
     assert DataManager is not None
 
@@ -153,13 +151,13 @@ def test_import_execution_algo():
 
 
 def test_import_validation_walk_forward():
-    from validation.walk_forward import PurgedWalkForward, WFResult
+    from validation.walk_forward import PurgedWalkForward
 
     assert PurgedWalkForward is not None
 
 
 def test_import_validation_monte_carlo():
-    from validation.monte_carlo import MonteCarloSigTest, SigTestResult
+    from validation.monte_carlo import MonteCarloSigTest
 
     assert MonteCarloSigTest is not None
 
@@ -179,15 +177,13 @@ def test_import_training_online_learner():
 def test_import_training_distributed():
     from training.distributed_trainer import (
         DistributedTrainer,
-        TrialConfig,
-        TrialResult,
     )
 
     assert DistributedTrainer is not None
 
 
 def test_import_infrastructure_config():
-    from infrastructure.config_v2 import AppConfig, SymbolsConfig
+    from infrastructure.config_v2 import AppConfig
 
     assert AppConfig is not None
 

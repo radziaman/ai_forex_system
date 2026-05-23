@@ -5,9 +5,8 @@ Full trading day simulation, emergency stop tests, P&L reconciliation.
 
 import asyncio
 import numpy as np
-import pandas as pd
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 from dataclasses import dataclass, field
 from loguru import logger
 from enum import Enum
@@ -126,14 +125,14 @@ class SmartIntegrationTestPipeline:
             self.results.append(test)
 
         total_time = time.time() - start_time
-        passed = sum(1 for t in self.results if t.passed)
+        passed_count = sum(1 for t in self.results if t.passed)
         total = len(self.results)
 
         summary = {
             "total_tests": total,
-            "passed": passed,
-            "failed": total - passed,
-            "pass_rate": passed / total if total > 0 else 0,
+            "passed": passed_count,
+            "failed": total - passed_count,
+            "pass_rate": passed_count / total if total > 0 else 0,
             "total_duration": total_time,
             "results": [
                 {
@@ -148,7 +147,7 @@ class SmartIntegrationTestPipeline:
         }
 
         logger.info(
-            f"Integration tests complete: {passed}/{total} passed ({summary['pass_rate']:.1%})"
+            f"Integration tests complete: {passed}/{total} passed ({summary['pass_rate']:.1%})"  # noqa: E501
         )
         return summary
 
@@ -219,7 +218,6 @@ class SmartIntegrationTestPipeline:
             try:
                 from ..risk.circuit_breaker import (
                     CircuitBreaker,
-                    MarketStressSnapshot,
                 )
 
                 cb = CircuitBreaker()

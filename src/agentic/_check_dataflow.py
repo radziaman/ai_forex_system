@@ -17,7 +17,7 @@ agentic_dir = pathlib.Path(__file__).parent
 key_flows = {}  # key -> {"writers": set, "readers": set}
 
 
-def extract_world_keys(filepath: str):
+def extract_world_keys(filepath: str):  # noqa: C901
     """Extract world state key patterns from agent source."""
     text = pathlib.Path(filepath).read_bytes().decode("utf-8", errors="replace")
     trees = ast.parse(text)
@@ -123,7 +123,7 @@ print("=" * 80)
 gaps = []
 orphans = []
 
-for key in sorted(all_keys):
+for key in sorted(all_keys):  # noqa: C901
     writers = {a for a, ks in all_writers.items() if key in ks}
     readers = {a for a, ks in all_readers.items() if key in ks}
 

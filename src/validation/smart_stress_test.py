@@ -3,9 +3,7 @@ Smart Stress Testing Suite (Enhancement #13).
 Pre-built crisis scenarios, correlated failure tests, slippage stress testing.
 """
 
-import numpy as np
-import pandas as pd
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List
 from dataclasses import dataclass, field
 from loguru import logger
 

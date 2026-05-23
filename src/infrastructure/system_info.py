@@ -1,6 +1,5 @@
 from __future__ import annotations
 import os
-import sys
 from typing import List, Tuple
 from dataclasses import dataclass, field
 
@@ -127,7 +126,7 @@ def collect_report(
         ComponentStatus(
             "Feature pipeline",
             ok=True,
-            detail=f"{len(config.features.timeframes)} timeframes, lookback={config.features.lookback}",
+            detail=f"{len(config.features.timeframes)} timeframes, lookback={config.features.lookback}",  # noqa: E501
         )
     )
 

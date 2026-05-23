@@ -2,7 +2,6 @@
 
 import sys
 import os
-import ast
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import pathlib  # noqa: E402

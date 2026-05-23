@@ -11,8 +11,7 @@ import torch.optim as optim
 from torch.distributions import Categorical
 from loguru import logger
 import os
-import pickle
-from typing import Optional, Tuple, Dict, List
+from typing import Optional, Tuple
 
 
 class ActorNetwork(nn.Module):

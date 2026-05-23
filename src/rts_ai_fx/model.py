@@ -4,12 +4,12 @@ Predicts FUTURE price direction, not past.
 """
 
 from __future__ import annotations
-import sys
 import numpy as np
-from typing import TYPE_CHECKING, Optional, Tuple
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from tensorflow.keras import Model
+    from typing import Optional  # noqa: F401
+    from tensorflow.keras import Model  # noqa: F401
 
 try:
     import tensorflow as tf
@@ -159,7 +159,7 @@ class LSTMCNNHybrid:
             self.model.save(path)
 
     @classmethod
-    def load(cls, path: str) -> "LSTMCNNHybrid":
+    def load(cls, path: str) -> "LSTMCNNHybrid":  # noqa: C901
         """
         Load a saved model. If the saved format is incompatible (e.g. Keras 3 vs 2),
         rebuilds the architecture and attempts weight transfer. Falls back to fresh

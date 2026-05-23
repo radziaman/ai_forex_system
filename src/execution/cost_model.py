@@ -3,9 +3,8 @@ Transaction cost model — spread, commission, slippage.
 Applies realistic costs to every simulated/executed trade.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, Optional, Callable
-import time
 
 
 @dataclass
@@ -85,7 +84,7 @@ class CostModel:
             rejection_reason = (
                 ""
                 if is_acceptable
-                else f"Spread {spread_pips:.1f} > {avg_spread * self._max_spread_multiplier:.1f} (3x avg)"
+                else f"Spread {spread_pips:.1f} > {avg_spread * self._max_spread_multiplier:.1f} (3x avg)"  # noqa: E501
             )
         else:
             spread_pips = normal_spread * volatility_mult

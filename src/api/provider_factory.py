@@ -1,5 +1,5 @@
 """
-Provider factory — auto-selects the right execution and data providers based on TRADING_PROVIDER.
+Provider factory — auto-selects the right execution and data providers based on TRADING_PROVIDER.  # noqa: E501
 """
 
 import logging
@@ -78,6 +78,7 @@ class CtraderExecutionAdapter(ExecutionProvider):
         from api.ctrader_client import TradeOrder
 
         from api.symbol_map import get_symbol_id
+
         trade_order = TradeOrder(
             symbol=order.symbol,
             symbol_id=get_symbol_id(order.symbol),

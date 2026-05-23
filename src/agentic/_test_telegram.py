@@ -1,7 +1,6 @@
 """Verify Telegram bot token and send direct test message."""
 
 import requests
-import os
 
 # Read from .env
 token = ""
@@ -28,7 +27,7 @@ else:
 # 2. Send direct synchronous test
 payload = {
     "chat_id": chat_id,
-    "text": "\u2705 Direct test — no background thread\nIf you see this, Telegram works.",
+    "text": "\u2705 Direct test — no background thread\nIf you see this, Telegram works.",  # noqa: E501
     "parse_mode": "HTML",
 }
 resp2 = requests.post(

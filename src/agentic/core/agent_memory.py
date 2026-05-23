@@ -1,5 +1,5 @@
 """
-Agent Memory — episodic, semantic, working memory + G12 cross-agent queries + G21 consolidation.
+Agent Memory — episodic, semantic, working memory + G12 cross-agent queries + G21 consolidation.  # noqa: E501
 """
 
 from __future__ import annotations
@@ -7,7 +7,7 @@ import time
 import json
 import numpy as np
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any, Tuple, Callable
+from typing import Dict, List, Optional, Any
 from collections import defaultdict, deque
 from pathlib import Path
 from loguru import logger
@@ -96,7 +96,7 @@ class AgentMemory:
         self,
         event_type: str,
         description: str,
-        data: Dict[str, Any] = None,
+        data: Optional[Dict[str, Any]] = None,
         importance: float = 0.5,
         emotion: str = "neutral",
     ) -> EpisodicMemoryEntry:

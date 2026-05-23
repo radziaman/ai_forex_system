@@ -7,8 +7,7 @@ import numpy as np
 import pandas as pd
 import os
 import json
-import pickle
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, Optional, Tuple
 from dataclasses import dataclass, field
 from loguru import logger
 
@@ -85,7 +84,7 @@ class RegimeTrainer:
             n_found = int(np.sum(mask))
             if n_found < self.min_samples:
                 logger.info(
-                    f"Regime '{regime}': only {n_found} samples (need {self.min_samples}), skipping"
+                    f"Regime '{regime}': only {n_found} samples (need {self.min_samples}), skipping"  # noqa: E501
                 )
                 continue
 

@@ -9,7 +9,6 @@ AI/ML Pipeline Fixes:
 import sys
 import os
 import time
-import json
 import zipfile
 import numpy as np
 
@@ -91,7 +90,7 @@ path_eurusd = "models/lstm_cnn_EURUSD.keras"
 
 
 # Strategy: Try each model file with aggressive fallback
-def robust_load(model_path, label="model"):
+def robust_load(model_path, label="model"):  # noqa: C901
     instance = LSTMCNNHybrid()
     instance.build()
 

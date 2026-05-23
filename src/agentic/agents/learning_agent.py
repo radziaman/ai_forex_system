@@ -3,13 +3,12 @@ Learning Agent — autonomous model training and adaptation.
 
 Identity: I am the student. I learn from every trade and adapt our models.
 Purpose: I keep our AI continuously improving by training on new data.
-Autonomy: I independently monitor model performance, detect when retraining is needed, and execute training.
+Autonomy: I independently monitor model performance, detect when retraining is needed, and execute training.  # noqa: E501
 """
 
 from __future__ import annotations
 import time
-from typing import Dict, List, Optional, Any, Set
-from loguru import logger
+from typing import Dict, List, Any
 
 from agentic.core.base_agent import BaseAgent
 from agentic.core.agent_message import (
@@ -37,7 +36,7 @@ class LearningAgent(BaseAgent):
         super().__init__(
             name="learning_agent",
             role="Model Training Manager",
-            purpose="Keep all AI models continuously learning and adapting to market changes",
+            purpose="Keep all AI models continuously learning and adapting to market changes",  # noqa: E501
             domain="learning",
             capabilities={
                 "drift_monitoring",
@@ -100,7 +99,7 @@ class LearningAgent(BaseAgent):
         }
 
     async def reason(self, perception: Dict[str, Any]) -> Dict[str, Any]:
-        actions = {}
+        actions: Dict[str, Any] = {}
 
         if (
             perception.get("needs_retrain")
@@ -145,7 +144,6 @@ class LearningAgent(BaseAgent):
             self.set_world("learning.status", "training")
             try:
                 from data.data_manager import SYMBOLS
-                from agentic.core.agent_bus import get_agent_bus
 
                 for sym in SYMBOLS[:3]:
                     df = self.get_world(f"data.ohlcv.{sym}.1h", None)
@@ -211,7 +209,6 @@ class LearningAgent(BaseAgent):
             from data.data_manager import SYMBOLS
             from rts_ai_fx.features_unified import FeaturePipeline
             from rts_ai_fx.model import ProfitabilityClassifier
-            import numpy as np
 
             fp = FeaturePipeline(
                 lookback=30, timeframes=["1h", "4h"], use_microstructure=True

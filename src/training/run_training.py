@@ -10,13 +10,12 @@ Usage:
 import argparse
 import json
 import sys
-import os
 from pathlib import Path
+from typing import Optional
 from loguru import logger
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
-import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 import tensorflow as tf  # noqa: E402
 from rts_ai_fx.model import LSTMCNNHybrid, ProfitabilityClassifier  # noqa: E402
@@ -29,7 +28,7 @@ async def load_training_data(
     symbol: str = "EURUSD",
     years: int = 5,
     lookback: int = 30,
-    timeframes: list = None,
+    timeframes: Optional[list] = None,
     frac: float = 1.0,
 ):
     timeframes = timeframes or ["1h", "4h"]

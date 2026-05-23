@@ -3,11 +3,9 @@ Model Versioning & A/B Testing Framework.
 Tracks model versions, auto-promotes winners, runs A/B tests.
 """
 
-import os
 import json
 import time
-import shutil
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 from pathlib import Path
 from loguru import logger
@@ -178,7 +176,7 @@ class ModelRegistry:
 
         return (
             False,
-            f"insufficient_improvement_{best_candidate.sharpe:.2f}_vs_{required_sharpe:.2f}",
+            f"insufficient_improvement_{best_candidate.sharpe:.2f}_vs_{required_sharpe:.2f}",  # noqa: E501
         )
 
     def start_ab_test(self, config: ABTestConfig) -> str:

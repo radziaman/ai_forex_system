@@ -1,5 +1,5 @@
 """
-Agent Registry — directory service with heartbeat health, capability discovery (G6), and hierarchy (G17).
+Agent Registry — directory service with heartbeat health, capability discovery (G6), and hierarchy (G17).  # noqa: E501
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ class AgentRegistry:
         role: str,
         domain: str,
         capabilities: Set[str],
-        dependencies: List[str] = None,
+        dependencies: Optional[List[str]] = None,
         supervisor: str = "",
     ) -> bool:
         if name in self._agents:

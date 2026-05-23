@@ -1,11 +1,10 @@
 """
-Master Agent — G9: human-in-loop halt, G17: hierarchy awareness, G22: error escalation handling.
+Master Agent — G9: human-in-loop halt, G17: hierarchy awareness, G22: error escalation handling.  # noqa: E501
 """
 
 from __future__ import annotations
 import time
-from typing import Dict, List, Optional, Any, Set
-from loguru import logger
+from typing import Dict, List, Any
 
 from agentic.core.base_agent import BaseAgent
 from agentic.core.agent_message import (
@@ -23,7 +22,7 @@ class MasterAgent(BaseAgent):
         super().__init__(
             name="master_agent",
             role="System Orchestrator",
-            purpose="Orchestrate all agents, monitor health, escalate errors, coordinate healing",
+            purpose="Orchestrate all agents, monitor health, escalate errors, coordinate healing",  # noqa: E501
             domain="orchestration",
             capabilities={
                 "system_health_monitoring",

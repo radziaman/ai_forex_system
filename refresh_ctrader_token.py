@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """cTrader Token Refresher — exchange authorization code for API tokens."""
-import re, requests, sys
+import re
+import requests
+import sys
 
 ENV_FILE = ".env"
 
@@ -22,7 +24,7 @@ print("=== cTrader Token Refresher ===")
 print()
 print("Step 1: Open this URL in your browser:")
 print(
-    f"  https://id.ctrader.com/my/settings/openapi/grantingaccess/?client_id={app_id}&redirect_uri=https://spotware.com&scope=trading&product=web"
+    f"  https://id.ctrader.com/my/settings/openapi/grantingaccess/?client_id={app_id}&redirect_uri=https://spotware.com&scope=trading&product=web"  # noqa: E501
 )
 print()
 print("Step 2: Authorize the application")
@@ -74,11 +76,11 @@ if access_token and len(access_token) > 100:
     print("Now start the system:")
     print(f"  cd {sys.path[0] or '.'}")
     print(
-        f"  nohup .venv/bin/python -m src.agentic.main_agentic --mode live > /tmp/agentic_live.log 2>&1 &"
+        "  nohup .venv/bin/python -m src.agentic.main_agentic --mode live > /tmp/agentic_live.log 2>&1 &"  # noqa: E501
     )
 else:
     print(f"\n❌ Failed to get valid tokens. Response: {data}")
     if resp.status_code == 400:
         print(
-            "The authorization code may have expired. Get a fresh one from the URL above."
+            "The authorization code may have expired. Get a fresh one from the URL above."  # noqa: E501
         )

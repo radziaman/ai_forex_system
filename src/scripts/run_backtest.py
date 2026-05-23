@@ -85,7 +85,7 @@ def load_and_prepare_data(path: str) -> Tuple[np.ndarray, pd.DataFrame, pd.DataF
     Returns:
         prices:      numpy array of close prices, shape (n,)
         df_raw:      DataFrame with columns [timestamp, open, high, low, close, volume]
-        df_features: DataFrame with all computed features (indicators + OHLCV + timestamp)
+        df_features: DataFrame with all computed features (indicators + OHLCV + timestamp)  # noqa: E501
     """
     df = pd.read_csv(path)
     df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s")
@@ -119,7 +119,7 @@ def load_and_prepare_4h_data(
     recent 4h bar's feature values.
 
     Returns:
-        DataFrame with 4h features aligned to 1h timestamps (same length as timestamps_1h).
+        DataFrame with 4h features aligned to 1h timestamps (same length as timestamps_1h).  # noqa: E501
     """
     df = pd.read_csv(path_4h)
     df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s")
@@ -189,7 +189,7 @@ def compute_regimes(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def make_signal_function(
+def make_signal_function(  # noqa: C901
     regime_names: np.ndarray,
     features_df: pd.DataFrame,
     burn_in: int = BURN_IN,
@@ -207,9 +207,9 @@ def make_signal_function(
       **Ranging / Volatile** (ADX < 20):
         Mean reversion — fade extreme moves within a range.
         - Long: z-score of close vs 20-bar SMA < -1.5 (price unusually low),
-                with RSI < 40 (oversold) and close > 200-bar SMA (don't fight major uptrend)
+                with RSI < 40 (oversold) and close > 200-bar SMA (don't fight major uptrend)  # noqa: E501
         - Short: z-score > +1.5 (price unusually high),
-                 with RSI > 60 (overbought) and close < 200-bar SMA (don't fight major downtrend)
+                 with RSI > 60 (overbought) and close < 200-bar SMA (don't fight major downtrend)  # noqa: E501
 
       **Crisis** (ATR/price > 2%):
         Always neutral (0).
@@ -224,7 +224,7 @@ def make_signal_function(
         - Prior consolidation: ATR must be contracting (volatility coiling)
 
       **Entry Filters (ranging/volatile only)**:
-        - Trend filter: Only long if close > 200-bar SMA; only short if close < 200-bar SMA
+        - Trend filter: Only long if close > 200-bar SMA; only short if close < 200-bar SMA  # noqa: E501
         - RSI confirmation: Long only if RSI < 40; short only if RSI > 60
     """
 
@@ -276,8 +276,6 @@ def make_signal_function(
     has_atr = "atr_14" in features_df.columns
     has_adx = "adx_14" in features_df.columns
     has_close = "close" in features_df.columns
-    has_bb_lower = "bb_lower" in features_df.columns
-    has_bb_upper = "bb_upper" in features_df.columns
     has_bb_width = "bb_width" in features_df.columns
     has_bb_mid = "bb_mid" in features_df.columns
     has_rsi = "rsi_14" in features_df.columns
@@ -387,6 +385,7 @@ def make_signal_function(
 
                 # ── ADX Rising Confirmation ──
                 if can_breakout and has_adx and i > burn_in:
+                    assert adx_vals is not None
                     adx_now = adx_vals.iloc[i]
                     adx_prev = adx_vals.iloc[i - 1]
                     if not pd.isna(adx_now) and not pd.isna(adx_prev):
@@ -424,7 +423,7 @@ def make_signal_function(
                     m5 = features_df["mom_5"].iloc[i]
                     m10 = features_df["mom_10"].iloc[i]
                     if not (pd.isna(m1) or pd.isna(m5) or pd.isna(m10)):
-                        # Multi-horizon agreement required (Moskowitz, Ooi & Pedersen 2012)
+                        # Multi-horizon agreement required (Moskowitz, Ooi & Pedersen 2012)  # noqa: E501
                         if m5 > 0 and m10 > 0 and m1 > 0:
                             signals[i] = 1  # Momentum long
                             strategy_counts["ts_momentum"] = (
@@ -453,7 +452,7 @@ def make_signal_function(
                     z_threshold = 1.5
 
                 # ── Bollinger Band Squeeze (volatility breakout) ──
-                # Research: Bollinger (2002) — BB width contraction precedes volatility expansion
+                # Research: Bollinger (2002) — BB width contraction precedes volatility expansion  # noqa: E501
                 if has_bb_width and has_bb_mid:
                     bb_width_vals = features_df["bb_width"].values
                     if len(bb_width_vals) > 100 and i >= 100:
@@ -500,6 +499,7 @@ def make_signal_function(
 
                     # ── 2. RSI confirmation ──
                     if has_rsi:
+                        assert rsi_vals is not None
                         rsi_val = rsi_vals.iloc[i]
                         if pd.isna(rsi_val):
                             continue
@@ -556,6 +556,7 @@ def make_signal_function(
 
                 # ── 2. RSI confirmation ──
                 if has_rsi:
+                    assert rsi_vals is not None
                     rsi_val = rsi_vals.iloc[i]
                     if pd.isna(rsi_val):
                         continue
@@ -577,7 +578,7 @@ def make_signal_function(
                     strategy_counts["mean_rev"] = strategy_counts.get("mean_rev", 0) + 1
 
                 # ── Volatility Mean Reversion (if no mean rev signal) ──
-                # Research: Bollerslev, Tauchen & Zhou (2009); Della Corte, Sarno & Tsiakas (2011)
+                # Research: Bollerslev, Tauchen & Zhou (2009); Della Corte, Sarno & Tsiakas (2011)  # noqa: E501
                 if signals[i] == 0 and has_vol_ratio and has_rsi:
                     vr = features_df["vol_ratio"].iloc[i]
                     if not pd.isna(vr) and vr > 1.5:  # Volatility 50% above normal
@@ -773,7 +774,7 @@ def make_walk_forward_strategy(
             test_feat_df = pd.DataFrame({"close": test_prices})
 
         # 2b. Slice 4h features to match the test window
-        # Test window start = len(train_prices) + embargo (since train always starts at index 0)
+        # Test window start = len(train_prices) + embargo (since train always starts at index 0)  # noqa: E501
         test_features_4h = None
         if features_4h_aligned is not None:
             te_s = len(train_prices) + embargo_val
@@ -895,7 +896,7 @@ def compute_trade_level_metrics(trade_pnls: np.ndarray) -> Dict:
     }
 
 
-def evaluate_verdict(
+def evaluate_verdict(  # noqa: C901
     backtest_result: Dict,
     wf_results: List[WFResult],
     mc_result: Optional[SigTestResult],
@@ -924,11 +925,11 @@ def evaluate_verdict(
             avg_wf_sharpe = float(np.mean(wf_sharpes))
             if avg_wf_sharpe >= THRESHOLDS["min_wf_avg_sharpe"]:
                 passes.append(
-                    f"WF Avg Sharpe >= {THRESHOLDS['min_wf_avg_sharpe']}: {avg_wf_sharpe:.3f}"
+                    f"WF Avg Sharpe >= {THRESHOLDS['min_wf_avg_sharpe']}: {avg_wf_sharpe:.3f}"  # noqa: E501
                 )
             else:
                 fails.append(
-                    f"WF Avg Sharpe < {THRESHOLDS['min_wf_avg_sharpe']}: {avg_wf_sharpe:.3f}"
+                    f"WF Avg Sharpe < {THRESHOLDS['min_wf_avg_sharpe']}: {avg_wf_sharpe:.3f}"  # noqa: E501
                 )
     else:
         fails.append("Walk-forward: No results")
@@ -978,7 +979,7 @@ def evaluate_verdict(
     return len(fails) == 0, passes, fails
 
 
-def print_report(
+def print_report(  # noqa: C901
     backtest_result: Dict,
     wf_results: List[WFResult],
     wf_summary: Dict,
@@ -1000,7 +1001,7 @@ def print_report(
     print("=" * 70)
     print("  [1] BACKTEST METRICS")
     print(
-        f"      ({SPREAD_PIPS} pip spread, ${COMMISSION_PER_LOT}/lot, moderate slippage)"
+        f"      ({SPREAD_PIPS} pip spread, ${COMMISSION_PER_LOT}/lot, moderate slippage)"  # noqa: E501
     )
     print("=" * 70)
     print(f"  Total Trades:            {trade_metrics['total_trades']}")
@@ -1051,7 +1052,7 @@ def print_report(
     print("=" * 70)
     print("  [4] WALK-FORWARD VALIDATION")
     print(
-        f"      ({WF_N_FOLDS} folds, {WF_TEST_WINDOW}-bar test window, {WF_EMBARGO}-bar embargo)"
+        f"      ({WF_N_FOLDS} folds, {WF_TEST_WINDOW}-bar test window, {WF_EMBARGO}-bar embargo)"  # noqa: E501
     )
     print("=" * 70)
     if wf_results:
@@ -1071,7 +1072,7 @@ def print_report(
             )
         if returns:
             print(
-                f"  {'Return %':<20s} {np.mean(returns):>+7.2f}% {np.std(returns):>7.2f}% "
+                f"  {'Return %':<20s} {np.mean(returns):>+7.2f}% {np.std(returns):>7.2f}% "  # noqa: E501
                 f"{np.min(returns):>+7.2f}% {np.max(returns):>+7.2f}%"
             )
         if dds:

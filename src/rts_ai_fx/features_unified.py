@@ -6,7 +6,7 @@ order flow dynamics, and cross-asset features.
 
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Optional, Tuple, Callable
+from typing import Dict, List, Optional, Tuple
 from loguru import logger
 
 
@@ -423,7 +423,7 @@ class FeaturePipeline:
             logger.warning(f"Could not load feature normalization: {e}")
             return False
 
-    def transform(
+    def transform(  # noqa: C901
         self,
         dfs: Dict[str, pd.DataFrame],
         symbol: str = "EURUSD",
@@ -496,7 +496,7 @@ class FeaturePipeline:
 
         Args:
             flatten: If True, returns 2D (batch, lookback*n_features) for Dense models.
-                     If False, returns 3D (batch, lookback, n_features) for LSTM/CNN models.
+                     If False, returns 3D (batch, lookback, n_features) for LSTM/CNN models.  # noqa: E501
         """
         symbol_data = self._extract_symbol_data(dfs, symbol)
         if not self._feature_cols:

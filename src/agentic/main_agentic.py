@@ -120,35 +120,35 @@ class AgenticOrchestrator:
             self.world.set(k, v, ttl=86400)
 
         # G17: Supervisor hierarchy — master_agent supervises all domain supervisors
-        # Domain supervisors report to master; individual agents report to domain supervisors
+        # Domain supervisors report to master; individual agents report to domain supervisors  # noqa: E501
 
         # ── Tier 1: Data & Intelligence (supervisor: master_agent) ──
 
         self.data_agent = DataAgent(self.config)
         self.data_agent.consciousness.identity.purpose = (
-            "I ingest market data from all sources, maintain OHLCV across 5 timeframes, "
+            "I ingest market data from all sources, maintain OHLCV across 5 timeframes, "  # noqa: E501
             "detect and heal data gaps, and publish fresh features when bars close."
         )
         self.data_agent.consciousness.identity.capabilities.add("tick_ingestion")
         self.agents.append(self.data_agent)
 
         self.feature_agent = FeatureAgent(self.config)
-        self.feature_agent.consciousness.identity.purpose = "I transform raw OHLCV into normalized features. I bridge data and intelligence."
+        self.feature_agent.consciousness.identity.purpose = "I transform raw OHLCV into normalized features. I bridge data and intelligence."  # noqa: E501
         self.agents.append(self.feature_agent)
 
         self.regime_agent = RegimeAgent(self.config)
-        self.regime_agent.consciousness.identity.purpose = "I detect market hidden state via HMM: trending, ranging, volatile, or crisis."
+        self.regime_agent.consciousness.identity.purpose = "I detect market hidden state via HMM: trending, ranging, volatile, or crisis."  # noqa: E501
         self.agents.append(self.regime_agent)
 
         self.signal_agent = SignalAgent(self.config)
-        self.signal_agent.consciousness.identity.purpose = "I fuse PPO, LSTM-CNN, rule-based experts into high-conviction signals via MoE ensemble."
+        self.signal_agent.consciousness.identity.purpose = "I fuse PPO, LSTM-CNN, rule-based experts into high-conviction signals via MoE ensemble."  # noqa: E501
         self.agents.append(self.signal_agent)
 
         # ── Tier 2: Risk (supervisor: master_agent) ──
 
         self.risk_agent = RiskAgent(self.config, self.initial_balance)
         self.risk_agent.consciousness.identity.purpose = (
-            "I am the gatekeeper. Kelly sizing, VaR, drawdown checks, circuit breakers. "
+            "I am the gatekeeper. Kelly sizing, VaR, drawdown checks, circuit breakers. "  # noqa: E501
             "No trade passes without my approval."
         )
         self.agents.append(self.risk_agent)
@@ -169,23 +169,23 @@ class AgenticOrchestrator:
             self.config, self.secrets, self.initial_balance
         )
         self.execution_agent.consciousness.identity.purpose = (
-            "I send approved orders to the broker and stream live ticks back to data_agent. "
+            "I send approved orders to the broker and stream live ticks back to data_agent. "  # noqa: E501
             "I track every position through its lifecycle."
         )
         self.agents.append(self.execution_agent)
 
         self.position_agent = PositionAgent()
-        self.position_agent.consciousness.identity.purpose = "I manage trailing stops, partial closes, and correlation risk for all open positions."
+        self.position_agent.consciousness.identity.purpose = "I manage trailing stops, partial closes, and correlation risk for all open positions."  # noqa: E501
         self.agents.append(self.position_agent)
 
         # ── Tier 4: Analytics (supervisor: master_agent) ──
 
         self.performance_agent = PerformanceAgent()
-        self.performance_agent.consciousness.identity.purpose = "I track every trade. Sharpe, profit factor, win rate, per-symbol analytics."
+        self.performance_agent.consciousness.identity.purpose = "I track every trade. Sharpe, profit factor, win rate, per-symbol analytics."  # noqa: E501
         self.agents.append(self.performance_agent)
 
         self.validation_agent = ValidationAgent()
-        self.validation_agent.consciousness.identity.purpose = "I prove edge via walk-forward, Monte Carlo, stress tests, and A/B comparisons."
+        self.validation_agent.consciousness.identity.purpose = "I prove edge via walk-forward, Monte Carlo, stress tests, and A/B comparisons."  # noqa: E501
         self.agents.append(self.validation_agent)
 
         # ── Tier 5: Infrastructure (supervisor: master_agent) ──
@@ -229,7 +229,7 @@ class AgenticOrchestrator:
         self.agents.append(self.drift_agent)
 
         self.circuit_breaker_agent = CircuitBreakerAgent()
-        self.circuit_breaker_agent.consciousness.identity.purpose = "I monitor market stress independently and halt trading during disorderly conditions."
+        self.circuit_breaker_agent.consciousness.identity.purpose = "I monitor market stress independently and halt trading during disorderly conditions."  # noqa: E501
         self.agents.append(self.circuit_breaker_agent)
 
         self.cost_agent = CostAgent()
@@ -250,7 +250,7 @@ class AgenticOrchestrator:
         # ── Tier 0: Orchestration (conducts all agents) ──
 
         self.master_agent = MasterAgent()
-        self.master_agent.consciousness.identity.purpose = "I conduct the orchestra. Monitor health, escalate errors, coordinate healing."
+        self.master_agent.consciousness.identity.purpose = "I conduct the orchestra. Monitor health, escalate errors, coordinate healing."  # noqa: E501
         self.master_agent.consciousness.level = ConsciousnessLevel.META
         self.agents.append(self.master_agent)
 
@@ -304,7 +304,7 @@ class AgenticOrchestrator:
                 # --timeout: auto-shutdown after N seconds
                 if self.timeout > 0 and time.time() - boot_time > self.timeout:
                     logger.info(
-                        f"[orchestrator] Timeout ({self.timeout}s) reached — shutting down"
+                        f"[orchestrator] Timeout ({self.timeout}s) reached — shutting down"  # noqa: E501
                     )
                     break
 

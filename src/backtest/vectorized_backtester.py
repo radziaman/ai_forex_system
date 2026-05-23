@@ -60,7 +60,7 @@ class VectorizedBacktester:
         self.pip_size = pip_size
         self.lot_size = lot_size
 
-    def run(
+    def run(  # noqa: C901
         self,
         prices: np.ndarray,
         signal_fn: Callable,

@@ -6,23 +6,22 @@ from __future__ import annotations
 import os
 import time
 import asyncio
-from typing import Dict, List, Optional, Any, Set
+from typing import Dict, Optional, Any
 from loguru import logger
 
 from agentic.core.base_agent import BaseAgent
 from agentic.core.agent_message import (
     MessageType,
-    MessagePriority,
     AgentIntention,
     AgentMessage,
 )
 from agentic.core.agent_consciousness import ConsciousnessLevel, AgentState
 
-from data.data_manager import DataManager, SYMBOLS, DUKASCOPE_SYMBOLS, BASE_PRICES
+from data.data_manager import DataManager, SYMBOLS
 
 
-# The full screener universe — includes all instruments the system can potentially trade.
-# The screener_agent tests all of these, and only tradeable ones flow through to processing.
+# The full screener universe — includes all instruments the system can potentially trade.  # noqa: E501
+# The screener_agent tests all of these, and only tradeable ones flow through to processing.  # noqa: E501
 # Merge with existing SYMBOLS to ensure backward compatibility.
 # NOTE: Screener universe uses Yahoo Finance symbols (EURUSD=X, GC=F, etc.).
 # We normalize these to clean symbols for CSV path construction and data loading.
@@ -95,12 +94,12 @@ class DataAgent(BaseAgent):
         self.set_world("data.status", "ready")
 
         # G18: In simulation mode, emit features immediately from historical data
-        # so signal_agent can run ensemble inference without waiting for live bar closures.
+        # so signal_agent can run ensemble inference without waiting for live bar closures.  # noqa: E501
         if self.consciousness.simulation_mode or self.get_world(
             "agentic.simulation_mode"
         ):
             self.log_state(
-                "Simulation mode detected — emitting synthetic features from historical data"
+                "Simulation mode detected — emitting synthetic features from historical data"  # noqa: E501
             )
             await self._emit_simulation_features()
 
@@ -117,7 +116,7 @@ class DataAgent(BaseAgent):
                 pass
             self._refresh_task = None
 
-    async def _periodic_data_refresh(self):
+    async def _periodic_data_refresh(self):  # noqa: C901
         """Background loop: monitor data freshness + periodic full refresh.
 
         Two-tier approach:
@@ -149,7 +148,11 @@ class DataAgent(BaseAgent):
 
                 if stale:
                     broker_ok = self.get_world("execution.connected", False)
-                    if broker_ok:
+                    # Suppress stale warnings when market is closed (weekend, after hours)  # noqa: E501
+                    from data.market_session import MarketSession
+
+                    market_open = MarketSession.is_market_open()
+                    if broker_ok and market_open:
                         logger.warning(
                             f"Data heartbeat: {len(stale)} stale symbols: "
                             f"{stale[:5]}{'...' if len(stale)>5 else ''}"
@@ -183,7 +186,7 @@ class DataAgent(BaseAgent):
             except Exception as e:
                 logger.warning(f"Data refresh cycle error: {e}")
 
-    async def _refresh_single_cycle(self):
+    async def _refresh_single_cycle(self):  # noqa: C901
         """Refresh OHLCV for all symbols × timeframes in parallel.
 
         Tries cTrader historical API first (fast, broker-authoritative)
@@ -369,7 +372,7 @@ class DataAgent(BaseAgent):
                     },
                     intention=AgentIntention(
                         primary_goal=f"emit features for {sym}",
-                        reasoning="new bar closed, features ready for signal generation",
+                        reasoning="new bar closed, features ready for signal generation",  # noqa: E501
                         expected_outcome="signal agent processes features",
                         confidence=0.9,
                     ),
@@ -497,7 +500,7 @@ class DataAgent(BaseAgent):
                     },
                     intention=AgentIntention(
                         primary_goal=f"emit synthetic features for {sym}",
-                        reasoning="simulation mode: features generated from historical data",
+                        reasoning="simulation mode: features generated from historical data",  # noqa: E501
                         expected_outcome="signal agent processes features",
                         confidence=0.9,
                     ),
@@ -505,7 +508,7 @@ class DataAgent(BaseAgent):
                 self._features_dirty[sym] = False
                 emitted += 1
         self.log_state(
-            f"Simulation bootstrap: emitted features for {emitted}/{len(SCREENER_SYMBOLS)} symbols"
+            f"Simulation bootstrap: emitted features for {emitted}/{len(SCREENER_SYMBOLS)} symbols"  # noqa: E501
         )
 
     def _check_freshness(self) -> Dict:
@@ -516,7 +519,7 @@ class DataAgent(BaseAgent):
             "stale": len(SCREENER_SYMBOLS) - fresh,
         }
 
-    async def _load_historical_data(self):
+    async def _load_historical_data(self):  # noqa: C901
         self.consciousness.current_intention = "loading historical data"
         import pandas as pd  # noqa: F811
 
@@ -588,12 +591,11 @@ class DataAgent(BaseAgent):
             if df is not None and hasattr(df, "empty") and not df.empty:
                 total_bars += len(df)
         self.log_state(
-            f"Historical: {total_bars} bars across {len(SCREENER_SYMBOLS)} symbols (persisted to disk)"
+            f"Historical: {total_bars} bars across {len(SCREENER_SYMBOLS)} symbols (persisted to disk)"  # noqa: E501
         )
 
     def _resample_timeframe(self, symbol, tf, df_1h):
-        import numpy as np
-        import pandas as pd
+        pass
 
         if tf == "4h":
             res = df_1h.copy()

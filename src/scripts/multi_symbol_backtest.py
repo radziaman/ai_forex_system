@@ -156,7 +156,7 @@ def compute_regimes(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def make_symbol_signal_function(
+def make_symbol_signal_function(  # noqa: C901
     regime_names: np.ndarray,
     features_df: pd.DataFrame,
     pip_size: float,
@@ -406,7 +406,7 @@ def run_symbol_backtest(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def main():
+def main():  # noqa: C901
     t_start = time.time()
 
     print()

@@ -2,7 +2,7 @@ import asyncio
 import time
 from loguru import logger
 from typing import Optional, Dict, List
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from api.ctrader_client import TradeOrder
 from data.data_manager import BASE_PRICES
 
@@ -140,7 +140,7 @@ class ExecutionEngine:
                 self.open_positions[trade.position_id] = trade
                 self.total_trades += 1
                 logger.success(
-                    f"OPENED: {direction} {volume:.0f} {symbol} @ {trade.entry_price:.5f}"
+                    f"OPENED: {direction} {volume:.0f} {symbol} @ {trade.entry_price:.5f}"  # noqa: E501
                 )
                 return trade
         except Exception as e:
@@ -168,7 +168,7 @@ class ExecutionEngine:
         return trade
 
     async def close_position(
-        self, position_id, reason="AI close", exit_price: float = None
+        self, position_id, reason="AI close", exit_price: Optional[float] = None
     ):
         if position_id not in self.open_positions:
             return False
@@ -280,7 +280,7 @@ class ExecutionEngine:
         return pnl
 
     async def modify_position(
-        self, position_id: int, sl: float = None, tp: float = None
+        self, position_id: int, sl: Optional[float] = None, tp: Optional[float] = None
     ) -> bool:
         """Modify SL/TP on an existing position.
 

@@ -1,5 +1,5 @@
 """
-cTrader Open API Client — Async-safe SSL+Protobuf with retry, Level II DOM, and order lifecycle tracking.
+cTrader Open API Client — Async-safe SSL+Protobuf with retry, Level II DOM, and order lifecycle tracking.  # noqa: E501
 """
 
 import ssl
@@ -7,7 +7,7 @@ import asyncio
 import time
 import logging
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Callable, Any, List, Tuple
+from typing import Optional, Dict, Callable, Any, List
 from concurrent.futures import ThreadPoolExecutor
 
 try:
@@ -40,10 +40,6 @@ try:
         ProtoOAReconcileRes,
         ProtoOAGetPositionUnrealizedPnLReq,
         ProtoOAGetPositionUnrealizedPnLRes,
-    )
-    from ctrader_open_api.messages.OpenApiModelMessages_pb2 import (
-        ProtoOATrendbar,
-        ProtoOAAsset,
     )
 
     _HAS_PROTOBUF = True
@@ -224,6 +220,7 @@ class CtraderClient:
         self.app_secret = app_secret
         self.access_token = access_token
         self.account_id = account_id
+        self._trader_login = account_id  # Preserve original login for re-auth matching
         self.demo = demo
         self.use_websocket = use_websocket
         self.host = "demo.ctraderapi.com" if demo else "live.ctraderapi.com"
@@ -239,11 +236,12 @@ class CtraderClient:
         self._last_market_depth: Dict[int, MarketDepth] = {}
         self._subscribed_depth: Dict[int, bool] = {}  # symbol_id -> subscribed
 
-        # Pending request-response futures keyed by clientMsgId (string).
-        # Using unique per-request IDs prevents key collisions when multiple
-        # requests of the same payload type are in flight (e.g. subscribe_depth
-        # for 11 symbols in a loop).
-        self._pending_responses: Dict[str, asyncio.Future] = {}
+        # Pending request-response futures keyed by payloadType (int).
+        # All requests are sequential (each await-s its response before next),
+        # so no key collision occurs between requests of different types.
+        # subscribe_depth uses a compound key (int, int) via tuple to allow
+        # multiple sequential depth subscriptions without collision.
+        self._pending_responses: Dict[Any, asyncio.Future] = {}
         self._next_id = 0
 
         # Heartbeat health tracking
@@ -287,23 +285,41 @@ class CtraderClient:
                 logger.warning("Account auth failed, using simulation")
                 await self.disconnect()
                 return self._start_simulation()
-            await self._fetch_account_info()
-            # Asset list / currency mapping: best-effort, may not be supported
-            # on all servers.  Don't re-fetch account info — currency stays
-            # as "USD" fallback if the request fails.
-            try:
-                await asyncio.wait_for(self._fetch_asset_list(), timeout=3.0)
-            except (asyncio.TimeoutError, Exception):
-                logger.debug("Asset list skipped (not supported on this server)")
+
+            # Start background listener BEFORE fetching account info.
+            # This is critical: after account auth, the server may push
+            # unsolicited events (margin changed, spot prices, etc.).
+            # If we use _recv_msg synchronously, it may consume these
+            # events instead of the expected response.  By starting the
+            # listener first, all messages go through _handle_message
+            # which routes events to handlers and resolves futures.
             self._is_connected = True
-            # Start background listener for DOM and other events
+            # Start background listener for DOM and other events.
+            # CRITICAL: await the cancelled old listener to avoid a race
+            # where the old listener is still in readexactly() when the
+            # new one starts reading from the same StreamReader.
             if self._listener_task and not self._listener_task.done():
                 self._listener_task.cancel()
+                try:
+                    await self._listener_task
+                except (asyncio.CancelledError, Exception):
+                    pass
             self._listener_task = asyncio.create_task(self._background_listener())
             # Start heartbeat sender (required by cTrader — every 10s)
             if self._heartbeat_task and not self._heartbeat_task.done():
                 self._heartbeat_task.cancel()
+                try:
+                    await self._heartbeat_task
+                except (asyncio.CancelledError, Exception):
+                    pass
             self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+
+            # Now fetch account info via future-based pattern (listener resolves it)
+            await self._fetch_account_info()
+
+            # Asset list / currency mapping: best-effort, may not be supported
+            await self._fetch_asset_list()
+
             logger.info("cTrader client connected, authenticated, and listening")
             return True
         except Exception as e:
@@ -346,37 +362,41 @@ class CtraderClient:
         payload_type: int,
         payload_obj,
         client_msg_id: Optional[str] = None,
-    ) -> Optional[str]:
+    ):
         """Serialize and send a protobuf message over the SSL stream.
 
         Args:
             payload_type: The ProtoOAPayloadType value for the message.
             payload_obj: The protobuf message instance to serialize.
-            client_msg_id: Optional unique request ID. If omitted, an auto-
-                incrementing ID is generated and returned.
+            client_msg_id: Optional unique request ID for response matching.
+                When provided, the ProtoMessage.clientMsgId field is set,
+                and the function returns the ID string on success.
+                When omitted, returns True on success (backward compatible).
 
         Returns:
-            The clientMsgId string on success, or None on failure.
-            Callers use this ID to register a future in _pending_responses
-            before calling _send_msg (race-safe: register BEFORE send).
+            client_msg_id string if provided (for future-based callers),
+            True if no client_msg_id (legacy callers),
+            None on failure.
         """
+        if self._writer is None:
+            return None
         try:
-            if client_msg_id is None:
-                client_msg_id = str(self._next_id)
-                self._next_id += 1
             proto_msg = ProtoMessage()
             proto_msg.payloadType = payload_type
             proto_msg.payload = payload_obj.SerializeToString()
-            proto_msg.clientMsgId = client_msg_id
+            if client_msg_id is not None:
+                proto_msg.clientMsgId = client_msg_id
             data = proto_msg.SerializeToString()
             self._writer.write(len(data).to_bytes(4, "big") + data)
             await self._writer.drain()
-            return client_msg_id
+            return client_msg_id if client_msg_id is not None else True
         except Exception as e:
             logger.debug(f"Send failed: {e}")
             return None
 
     async def _recv_msg(self, timeout: int = 15):
+        if self._reader is None:
+            return None
         try:
             length_bytes = await asyncio.wait_for(
                 self._reader.readexactly(4), timeout=timeout
@@ -490,25 +510,26 @@ class CtraderClient:
 
         response = await self._recv_msg()
         logger.info(
-            f"Account list response: payloadType={response.payloadType if response else 'None'}"
+            f"Account list response: payloadType={response.payloadType if response else 'None'}"  # noqa: E501
         )
         if response and response.payloadType == 2150:
             res = ProtoOAGetAccountListByAccessTokenRes()
             res.ParseFromString(response.payload)
 
-            # Find the account by traderLogin (or use first)
+            # Find the account by traderLogin (the original login number, not
+            # the ctidTraderAccountId which was set during a previous auth).
             matching = [
-                a for a in res.ctidTraderAccount if a.traderLogin == self.account_id
+                a for a in res.ctidTraderAccount if a.traderLogin == self._trader_login
             ]
             if matching:
                 self.account_id = matching[0].ctidTraderAccountId
                 logger.info(
-                    f"Matched account: traderLogin={matching[0].traderLogin} -> ctidTraderAccountId={self.account_id}"
+                    f"Matched account: traderLogin={matching[0].traderLogin} -> ctidTraderAccountId={self.account_id}"  # noqa: E501
                 )
             elif res.ctidTraderAccount and len(res.ctidTraderAccount) > 0:
                 self.account_id = res.ctidTraderAccount[0].ctidTraderAccountId
                 logger.info(
-                    f"Using first available account: ctidTraderAccountId={self.account_id}"
+                    f"Using first available account: ctidTraderAccountId={self.account_id}"  # noqa: E501
                 )
         elif response:
             logger.warning(f"Unexpected response type: {response.payloadType}")
@@ -553,13 +574,28 @@ class CtraderClient:
             ProtoOATraderRes,
             ProtoOAErrorRes,
         )
-        from ctrader_open_api.messages.OpenApiModelMessages_pb2 import ProtoOATrader
 
         trader_req = ProtoOATraderReq()
         trader_req.ctidTraderAccountId = self.account_id
+
+        # Use future-based pattern (listener is already running).
+        # _recv_msg would race with the listener for data — the listener
+        # might consume unsolicited events (margin, spot) that the server
+        # pushes after auth, leaving _recv_msg with the wrong response.
+        fut = asyncio.get_event_loop().create_future()
+        self._pending_responses[2122] = fut
+
         if not await self._send_msg(2121, trader_req):
+            self._pending_responses.pop(2122, None)
             return
-        response = await self._recv_msg()
+
+        try:
+            response = await asyncio.wait_for(fut, timeout=10.0)
+        except asyncio.TimeoutError:
+            self._pending_responses.pop(2122, None)
+            logger.warning("Trader info request timed out")
+            return
+
         if response and response.payloadType == 2122:
             trader_res = ProtoOATraderRes()
             trader_res.ParseFromString(response.payload)
@@ -569,7 +605,7 @@ class CtraderClient:
             # Only balance, leverageInCents, and depositAssetId are available.
             # - equity is compensated by ExecutionEngine (balance + unrealised PnL)
             # - margin comes from ProtoOAMarginChangedEvent push events
-            # - currency comes from _asset_id_to_currency (populated by _fetch_asset_list)
+            # - currency comes from _asset_id_to_currency (populated by _fetch_asset_list)  # noqa: E501
             money_div = 10**trader.moneyDigits
             dep_id = trader.depositAssetId if hasattr(trader, "depositAssetId") else 0
             currency = self._asset_id_to_currency.get(dep_id, "USD")
@@ -610,19 +646,17 @@ class CtraderClient:
         req = ProtoOAAssetListReq()
         req.ctidTraderAccountId = self.account_id
 
-        # Register future before send (same race-safe pattern)
-        cid = "asset_list"
         fut = asyncio.get_event_loop().create_future()
-        self._pending_responses[cid] = fut
+        self._pending_responses[PROTO_OA_ASSET_LIST_RES] = fut
 
-        if not await self._send_msg(PROTO_OA_ASSET_LIST_REQ, req, client_msg_id=cid):
-            self._pending_responses.pop(cid, None)
+        if not await self._send_msg(PROTO_OA_ASSET_LIST_REQ, req):
+            self._pending_responses.pop(PROTO_OA_ASSET_LIST_RES, None)
             return
 
         try:
             response = await asyncio.wait_for(fut, timeout=5.0)
         except asyncio.TimeoutError:
-            self._pending_responses.pop(cid, None)
+            self._pending_responses.pop(PROTO_OA_ASSET_LIST_RES, None)
             logger.debug("Asset list request timed out (non-critical)")
             return
 
@@ -687,7 +721,7 @@ class CtraderClient:
         return result
 
     async def modify_position(
-        self, position_id: int, sl: float = None, tp: float = None
+        self, position_id: int, sl: Optional[float] = None, tp: Optional[float] = None
     ) -> bool:
         """Modify stop loss and/or take profit on an existing position.
 
@@ -724,6 +758,8 @@ class CtraderClient:
         self._is_connected = False
         self._authenticated = False
         self._subscribed_depth.clear()
+        self._account_info = None  # Force refresh on next start()
+        self._pending_responses.clear()  # Clean up stale futures
         if self._listener_task and not self._listener_task.done():
             self._listener_task.cancel()
         if self._heartbeat_task and not self._heartbeat_task.done():
@@ -773,18 +809,17 @@ class CtraderClient:
         req.count = count
 
         # Register future BEFORE send to win the race with background listener
-        cid = f"trendbar_{symbol_id}_{from_ms}"
         fut = asyncio.get_event_loop().create_future()
-        self._pending_responses[cid] = fut
+        self._pending_responses[2138] = fut
 
-        if not await self._send_msg(2137, req, client_msg_id=cid):
-            self._pending_responses.pop(cid, None)
+        if not await self._send_msg(2137, req):
+            self._pending_responses.pop(2138, None)
             return None
 
         try:
             response = await asyncio.wait_for(fut, timeout=60.0)
         except asyncio.TimeoutError:
-            self._pending_responses.pop(cid, None)
+            self._pending_responses.pop(2138, None)
             logger.warning("cTrader trendbar request timed out")
             return None
 
@@ -852,7 +887,7 @@ class CtraderClient:
                 batch_from = batch_to - int(window_secs * 1000)
             except asyncio.TimeoutError:
                 logger.debug(
-                    f"cTrader batch timeout for {sym}, using {len(all_bars)} bars so far"
+                    f"cTrader batch timeout for {sym}, using {len(all_bars)} bars so far"  # noqa: E501
                 )
                 break
             except Exception as e:
@@ -897,7 +932,22 @@ class CtraderClient:
         on_disconnect callback (with safety guard to prevent double-fire).
         The existing reconnect infrastructure (ConnectionAgent →
         ExecutionAgent._reconnect) handles full reconnection + resubscription.
+
+        CancelledError handling (CRITICAL):
+          When start() cancels the OLD listener during a reconnect, the
+          cancellation is ASYNCHRONOUS — the old task's cleanup code still
+          runs after start() returns and after the new listener started.
+
+          We use a PER-TASK flag (_was_cancelled) to distinguish:
+            - CancelledError → reconnect in progress → DON'T fire on_disconnect
+            - Other Exception → genuine connection loss → DO fire on_disconnect
+
+          Without this flag, the old listener's cleanup would fire on_disconnect
+          after the new connection is already established, falsely reporting
+          a disconnect and triggering a reconnect loop.
         """
+        was_cancelled = False
+
         while self._is_connected and self._reader:
             try:
                 length_bytes = await asyncio.wait_for(
@@ -914,23 +964,39 @@ class CtraderClient:
                 # Normal: no message within 30s keepalive window
                 continue
             except asyncio.CancelledError:
-                # Task was cancelled during graceful shutdown
+                # Task was cancelled during graceful shutdown (reconnect).
+                # DO NOT fire on_disconnect — the new listener owns the
+                # connection now.  See docstring above.
+                was_cancelled = True
+                break
+            except RuntimeError as e:
+                if "already waiting for incoming data" in str(e):
+                    # Race condition during reconnect: the old listener was
+                    # cancelled but its readexactly() hadn't fully released
+                    # the StreamReader before the new listener started.
+                    # Exit silently — the new listener handles everything.
+                    was_cancelled = True
+                    break
+                logger.warning(f"Background listener runtime error: {e}")
                 break
             except Exception as e:
                 # Connection lost, stream error, protocol error, etc.
                 logger.warning(
-                    f"Background listener disconnected: {type(e).__name__}: {e}"
+                    f"Background listener disconnected: {type(e).__name__}: {e}",
+                    exc_info=True,
                 )
                 break
 
-        # Connection is dead — notify the system (once)
-        was_connected = self._is_connected
-        self._is_connected = False
-        if was_connected and self.on_disconnect:
-            try:
-                await self.on_disconnect()
-            except Exception as e:
-                logger.warning(f"Disconnect callback error: {e}")
+        # Connection is dead — notify the system (once).
+        # Skip notification if we were cancelled (reconnect case).
+        if not was_cancelled:
+            was_connected = self._is_connected
+            self._is_connected = False
+            if was_connected and self.on_disconnect:
+                try:
+                    await self.on_disconnect()
+                except Exception as e:
+                    logger.warning(f"Disconnect callback error: {e}")
 
     async def _heartbeat_loop(self):
         """Send ProtoHeartbeatEvent to the server every 8 seconds.
@@ -981,20 +1047,26 @@ class CtraderClient:
         """Dispatch incoming messages to appropriate handlers.
 
         Routes to:
-          - Request-response futures (by clientMsgId, priority)
+          - Request-response futures (by payloadType key)
           - Market data (depth events, spot events)
           - Account/margin updates (margin changed, trader updated)
           - Order lifecycle events (execution, errors)
           - Heartbeat events (keepalive from server — acknowledged silently)
-          - Error responses (ProtoErrorRes — logged for diagnostics)
         """
-        # 1. Check for pending request-response futures by clientMsgId
-        cid = msg.clientMsgId
-        if cid and cid in self._pending_responses:
-            fut = self._pending_responses.pop(cid)
-            if not fut.done():
-                fut.set_result(msg)
-                return
+        # 1. Check for pending request-response futures by payloadType.
+        #    Simple int keys for all requests (they're sequential so no
+        #    collision).  subscribe_depth uses (int, symbol_id) tuples.
+        pt = msg.payloadType
+        fut = self._pending_responses.pop(pt, None)
+        if fut is None:
+            # Try compound key (payloadType, symbol_id) for depth subs
+            for key in list(self._pending_responses.keys()):
+                if isinstance(key, tuple) and key[0] == pt:
+                    fut = self._pending_responses.pop(key)
+                    break
+        if fut is not None and not fut.done():
+            fut.set_result(msg)
+            return
 
         # 2. Route by payload type
         if msg.payloadType == PROTO_OA_DEPTH_EVENT:
@@ -1018,18 +1090,15 @@ class CtraderClient:
             # the client-to-server direction.
             pass
         else:
-            # Check if it's a ProtoErrorRes (payload type from error codes)
-            try:
-                from ctrader_open_api.messages.OpenApiCommonMessages_pb2 import (
-                    ProtoErrorRes,
+            # Log unhandled message type — don't try to parse as ProtoErrorRes
+            # unless the payload type actually signals an error (2155+ range).
+            # Some unhandled messages are legitimate responses we don't care
+            # about (e.g. ProtoOASubscribeDepthQuotesRes routed by clientMsgId).
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    f"Unhandled message: payloadType={msg.payloadType}, "
+                    f"payload={len(msg.payload)}B"
                 )
-                err = ProtoErrorRes()
-                err.ParseFromString(msg.payload)
-                logger.warning(
-                    f"cTrader error: code={err.errorCode} desc={err.description}"
-                )
-            except Exception:
-                logger.debug(f"Unhandled message type: {msg.payloadType}")
 
     async def _handle_depth_event(self, msg):
         """Process Level II DOM update from ProtoOADepthEvent."""
@@ -1125,7 +1194,9 @@ class CtraderClient:
 
             # Notify callbacks
             if self.on_depth_update:
-                self.on_depth_update(md)
+                result = self.on_depth_update(md)
+                if hasattr(result, "__await__"):
+                    await result
             if self.on_market_data and md.bid > 0:
                 await self.on_market_data(md)
 
@@ -1151,21 +1222,18 @@ class CtraderClient:
             req.ctidTraderAccountId = self.account_id
             req.symbolId.append(symbol_id)
 
-            # Register future with unique clientMsgId BEFORE send
-            # (race-safe: listener may receive response before we await)
-            client_msg_id = f"depth_sub_{symbol_id}"
+            # Register future with compound key (payloadType, symbol_id)
+            # to prevent collision between multiple sequential depth subs.
+            depth_key = (PROTO_OA_SUBSCRIBE_DEPTH_QUOTES_RES, symbol_id)
             fut = asyncio.get_event_loop().create_future()
-            self._pending_responses[client_msg_id] = fut
+            self._pending_responses[depth_key] = fut
 
-            sent_id = await self._send_msg(
-                PROTO_OA_SUBSCRIBE_DEPTH_QUOTES_REQ, req,
-                client_msg_id=client_msg_id,
-            )
-            if sent_id is None:
-                self._pending_responses.pop(client_msg_id, None)
+            if not await self._send_msg(PROTO_OA_SUBSCRIBE_DEPTH_QUOTES_REQ, req):
+                self._pending_responses.pop(depth_key, None)
                 return False
 
             response = await asyncio.wait_for(fut, timeout=10.0)
+            self._pending_responses.pop(depth_key, None)
             if response and response.payloadType == PROTO_OA_SUBSCRIBE_DEPTH_QUOTES_RES:
                 self._subscribed_depth[symbol_id] = True
                 logger.info(
@@ -1176,9 +1244,11 @@ class CtraderClient:
             return False
         except asyncio.TimeoutError:
             logger.debug(f"Depth subscribe timeout for symbol {symbol_id}")
+            self._pending_responses.pop(depth_key, None)
             return False
         except Exception as e:
             logger.warning(f"Failed to subscribe to depth: {e}")
+            self._pending_responses.pop(depth_key, None)
             return False
 
     async def unsubscribe_depth(self, symbol_id: int) -> bool:
@@ -1192,7 +1262,7 @@ class CtraderClient:
             if await self._send_msg(PROTO_OA_UNSUBSCRIBE_DEPTH_QUOTES_REQ, req):
                 del self._subscribed_depth[symbol_id]
                 logger.info(
-                    f"Unsubscribed from Level II DOM for {REVERSE_SYMBOL_MAP.get(symbol_id, symbol_id)}"
+                    f"Unsubscribed from Level II DOM for {REVERSE_SYMBOL_MAP.get(symbol_id, symbol_id)}"  # noqa: E501
                 )
                 return True
             return False
@@ -1343,7 +1413,6 @@ class CtraderClient:
             # subscription status.
             if self.on_market_data and bid > 0:
                 symbol = REVERSE_SYMBOL_MAP.get(symbol_id, str(symbol_id))
-                from dataclasses import dataclass
 
                 spot_depth = MarketDepth(
                     symbol=symbol,
@@ -1382,18 +1451,17 @@ class CtraderClient:
         req = ProtoOAReconcileReq()
         req.ctidTraderAccountId = self.account_id
 
-        cid = f"reconcile_{int(time.time())}"
         fut = asyncio.get_event_loop().create_future()
-        self._pending_responses[cid] = fut
+        self._pending_responses[PROTO_OA_RECONCILE_RES] = fut
 
-        if not await self._send_msg(PROTO_OA_RECONCILE_REQ, req, client_msg_id=cid):
-            self._pending_responses.pop(cid, None)
+        if not await self._send_msg(PROTO_OA_RECONCILE_REQ, req):
+            self._pending_responses.pop(PROTO_OA_RECONCILE_RES, None)
             return None
 
         try:
             response = await asyncio.wait_for(fut, timeout=30.0)
         except asyncio.TimeoutError:
-            self._pending_responses.pop(cid, None)
+            self._pending_responses.pop(PROTO_OA_RECONCILE_RES, None)
             logger.warning("Reconcile request timed out")
             return None
 
@@ -1434,20 +1502,17 @@ class CtraderClient:
         req.ctidTraderAccountId = self.account_id
         req.positionId = position_id
 
-        cid = f"upnl_{position_id}"
         fut = asyncio.get_event_loop().create_future()
-        self._pending_responses[cid] = fut
+        self._pending_responses[PROTO_OA_GET_POSITION_UNREALIZED_PNL_RES] = fut
 
-        if not await self._send_msg(
-            PROTO_OA_GET_POSITION_UNREALIZED_PNL_REQ, req, client_msg_id=cid
-        ):
-            self._pending_responses.pop(cid, None)
+        if not await self._send_msg(PROTO_OA_GET_POSITION_UNREALIZED_PNL_REQ, req):
+            self._pending_responses.pop(PROTO_OA_GET_POSITION_UNREALIZED_PNL_RES, None)
             return None
 
         try:
             response = await asyncio.wait_for(fut, timeout=15.0)
         except asyncio.TimeoutError:
-            self._pending_responses.pop(cid, None)
+            self._pending_responses.pop(PROTO_OA_GET_POSITION_UNREALIZED_PNL_RES, None)
             logger.debug("Unrealized PnL request timed out")
             return None
 

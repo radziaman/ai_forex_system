@@ -8,7 +8,7 @@ import struct
 import lzma
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional, Callable
+from typing import List, Callable
 from pathlib import Path
 
 import cloudscraper
@@ -28,7 +28,7 @@ DUKASCOPE_SYMBOLS = {
     "XAUUSD": "XAUUSD",
 }
 
-BASE_URL = "https://www.dukascopy.com/datafeed/{symbol}/{year}/{month:02d}/{day:02d}/{hour:02d}h_ticks.bi5"
+BASE_URL = "https://www.dukascopy.com/datafeed/{symbol}/{year}/{month:02d}/{day:02d}/{hour:02d}h_ticks.bi5"  # noqa: E501
 CACHE_DIR = Path("data/dukascopy_cache")
 TICK_RECORD_SIZE = 20
 
@@ -206,5 +206,5 @@ class DukascopyDataProvider(DataProvider):
 
     async def stream_prices(self, symbols: List[str], callback: Callable):
         raise NotImplementedError(
-            "Dukascopy does not provide real-time streaming. Use cTrader for live prices."
+            "Dukascopy does not provide real-time streaming. Use cTrader for live prices."  # noqa: E501
         )

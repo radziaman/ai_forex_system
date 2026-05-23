@@ -1,24 +1,20 @@
 """
 Adaptive Risk Agent — autonomous dynamic risk adjustment.
 
-Identity: I am the thermostat for risk. I turn risk up or down based on market conditions.
+Identity: I am the thermostat for risk. I turn risk up or down based on market conditions.  # noqa: E501
 Purpose: I protect the account by dynamically adjusting position sizing in real-time.
-Autonomy: I independently monitor volatility, drawdown, and win rate trends to tune Kelly.
+Autonomy: I independently monitor volatility, drawdown, and win rate trends to tune Kelly.  # noqa: E501
 """
 
 from __future__ import annotations
-import time
-import numpy as np
-from typing import Dict, List, Optional, Any, Set
+from typing import Dict, Optional, Any
 from collections import deque
-from loguru import logger
 
 from agentic.core.base_agent import BaseAgent
 from agentic.core.agent_message import (
     AgentMessage,
     MessageType,
     MessagePriority,
-    AgentIntention,
 )
 from agentic.core.agent_consciousness import ConsciousnessLevel
 
@@ -40,7 +36,7 @@ class AdaptiveRiskAgent(BaseAgent):
         super().__init__(
             name="adaptive_risk_agent",
             role="Dynamic Risk Adjuster",
-            purpose="Protect capital by dynamically adjusting risk parameters to market conditions",
+            purpose="Protect capital by dynamically adjusting risk parameters to market conditions",  # noqa: E501
             domain="risk",
             capabilities={
                 "dynamic_kelly_adjustment",

@@ -1,15 +1,14 @@
 """
 Regime Agent — autonomous market regime detection and transition awareness.
 
-Identity: I see the market's hidden state. I classify every moment into trending/ranging/volatile/crisis.
+Identity: I see the market's hidden state. I classify every moment into trending/ranging/volatile/crisis.  # noqa: E501
 Purpose: I tell every other agent what kind of market we are in right now.
-Autonomy: I independently learn regime transition probabilities from data and detect regime shifts.
+Autonomy: I independently learn regime transition probabilities from data and detect regime shifts.  # noqa: E501
 """
 
 from __future__ import annotations
 import time
-import numpy as np
-from typing import Dict, List, Optional, Any, Set
+from typing import Dict, List, Any
 from loguru import logger
 
 from agentic.core.base_agent import BaseAgent
@@ -221,7 +220,7 @@ class RegimeAgent(BaseAgent):
                 priority=MessagePriority.HIGH,
                 intention=AgentIntention(
                     primary_goal="notify all agents of regime change",
-                    reasoning=f"market regime shifted from {self._previous_regime} to {decision['regime']}",
+                    reasoning=f"market regime shifted from {self._previous_regime} to {decision['regime']}",  # noqa: E501
                     expected_outcome="agents adjust strategies for new regime",
                     confidence=0.85,
                 ),

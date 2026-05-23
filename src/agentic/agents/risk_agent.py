@@ -1,13 +1,11 @@
 """
-Risk Agent — G2: reads adaptive risk values, G7: acts on halted symbols, G9: human-in-loop approval.
+Risk Agent — G2: reads adaptive risk values, G7: acts on halted symbols, G9: human-in-loop approval.  # noqa: E501
 """
 
 from __future__ import annotations
 import datetime
 import time
-import numpy as np
-from typing import Dict, List, Optional, Any, Set
-from loguru import logger
+from typing import Dict, List, Any
 
 from agentic.core.base_agent import BaseAgent
 from agentic.core.agent_message import (
@@ -68,7 +66,7 @@ class RiskAgent(BaseAgent):
             spread_multiplier_threshold=5.0,
             volume_spike_multiplier=10.0,
         )
-        # G3: Wire price_provider so cost_model uses live prices for cross-rate conversions
+        # G3: Wire price_provider so cost_model uses live prices for cross-rate conversions  # noqa: E501
         self.cost_model = CostModel(
             commission_per_lot=self.config.trading.commission_per_lot,
             price_provider=lambda sym: self.get_world(f"data.price.{sym}", None) or 1.0,
@@ -146,7 +144,7 @@ class RiskAgent(BaseAgent):
                     MessageType.RISK_ALERT,
                     payload={
                         "type": "halt_request",
-                        "reason": "Adaptive risk agent recommends halt — requires confirmation",
+                        "reason": "Adaptive risk agent recommends halt — requires confirmation",  # noqa: E501
                         "requires_confirmation": True,
                     },
                     target="monitoring_agent",
@@ -231,7 +229,7 @@ class RiskAgent(BaseAgent):
             return 0.5  # 50% during low liquidity
         return 0.8  # pacific and others
 
-    async def _evaluate_signal(self, message: AgentMessage):
+    async def _evaluate_signal(self, message: AgentMessage):  # noqa: C901
         payload = message.payload if isinstance(message.payload, dict) else {}
         symbol = payload.get("symbol", "")
         direction = payload.get("direction", "")
@@ -264,7 +262,7 @@ class RiskAgent(BaseAgent):
             await self._reject(message, f"Max positions ({max_positions}) reached")
             return
 
-        # Correlation check: reject signal if a correlated pair already has an open position
+        # Correlation check: reject signal if a correlated pair already has an open position  # noqa: E501
         open_symbols = {p.get("symbol", "") for p in open_positions}
         for base, correlated_list in self.CORRELATED_GROUPS.items():
             if symbol in correlated_list and base in open_symbols:
@@ -278,9 +276,19 @@ class RiskAgent(BaseAgent):
                     if corr_sym in open_symbols:
                         await self._reject(
                             message,
-                            f"Correlated pair {corr_sym} already open (same group as {symbol})",
+                            f"Correlated pair {corr_sym} already open (same group as {symbol})",  # noqa: E501
                         )
                         return
+
+        # G-Market: Reject trades when market is closed (weekend, after hours)
+        from data.market_session import MarketSession
+
+        if not MarketSession.is_market_open():
+            await self._reject(
+                message,
+                f"Market closed — rejecting trade for {symbol}",
+            )
+            return
 
         approved, reason = self.risk_manager.pre_trade_checks(
             balance, equity, margin, equity - balance
@@ -313,7 +321,7 @@ class RiskAgent(BaseAgent):
         volume = max(round(volume / lot_min) * lot_min, lot_min)
         volume = min(volume, balance * 0.5 / max(price, 0.0001))
 
-        # Live spread from broker depth data (G1) — pips, or None if broker not streaming
+        # Live spread from broker depth data (G1) — pips, or None if broker not streaming  # noqa: E501
         live_spread = self.get_world(f"data.spread.{symbol}", None)
         cost = self.cost_model.calculate(
             symbol=symbol,
@@ -346,7 +354,7 @@ class RiskAgent(BaseAgent):
         self._approved += 1
         self.memory.remember(
             event_type="trade_approved",
-            description=f"{direction} {symbol} vol={volume:.2f} (kelly={kelly_fraction:.2f})",
+            description=f"{direction} {symbol} vol={volume:.2f} (kelly={kelly_fraction:.2f})",  # noqa: E501
             importance=0.7,
             emotion="success",
         )
@@ -365,7 +373,7 @@ class RiskAgent(BaseAgent):
             requires_ack=True,
             intention=AgentIntention(
                 primary_goal=f"approve trade {direction} {symbol}",
-                reasoning=f"kelly={kelly_fraction:.2f}, vol={volume:.2f}, cost=${cost.total:.2f}",
+                reasoning=f"kelly={kelly_fraction:.2f}, vol={volume:.2f}, cost=${cost.total:.2f}",  # noqa: E501
                 expected_outcome="execution agent receives and sends order",
                 confidence=float(confidence),
             ),

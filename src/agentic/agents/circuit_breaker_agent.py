@@ -35,6 +35,13 @@ class CircuitBreakerAgent(BaseAgent):
     async def perceive(self) -> Dict[str, Any]:
         if not self._breaker:
             return {"skip": True}
+
+        # Skip circuit breaker checks when market is closed
+        from data.market_session import MarketSession
+
+        if not MarketSession.is_market_open():
+            return {"skip": True, "reason": "market_closed"}
+
         halted_symbols = []
         market_healthy = True
         from data.data_manager import SYMBOLS

@@ -3,21 +3,19 @@ Connection Agent — autonomous broker connectivity management.
 
 Identity: I am the lifeline. I keep the connection to the broker alive.
 Purpose: Without me, no orders reach the market.
-Autonomy: I independently monitor connection health, reconnect with backoff, and report outages.
+Autonomy: I independently monitor connection health, reconnect with backoff, and report outages.  # noqa: E501
 """
 
 from __future__ import annotations
 import time
 import asyncio
-from typing import Dict, List, Optional, Any, Set
-from loguru import logger
+from typing import Dict, List, Any
 
 from agentic.core.base_agent import BaseAgent
 from agentic.core.agent_message import (
     AgentMessage,
     MessageType,
     MessagePriority,
-    AgentIntention,
 )
 from agentic.core.agent_consciousness import ConsciousnessLevel
 
@@ -38,7 +36,7 @@ class ConnectionAgent(BaseAgent):
         super().__init__(
             name="connection_agent",
             role="Broker Connection Manager",
-            purpose="Maintain persistent, healthy connection to the broker at all times",
+            purpose="Maintain persistent, healthy connection to the broker at all times",  # noqa: E501
             domain="connectivity",
             capabilities={
                 "connection_monitoring",
@@ -156,7 +154,7 @@ class ConnectionAgent(BaseAgent):
 
         if decision.get("give_up"):
             self.log_state(
-                f"Max retries ({self._max_retries}) reached. Manual intervention needed.",
+                f"Max retries ({self._max_retries}) reached. Manual intervention needed.",  # noqa: E501
                 "critical",
             )
             self.set_world("connection.gave_up", True)

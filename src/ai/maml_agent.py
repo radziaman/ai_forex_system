@@ -8,7 +8,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from typing import Dict, List, Optional, Tuple, Callable, Iterator
+from typing import Dict, List, Optional, Tuple
 from loguru import logger
 
 
@@ -139,7 +139,7 @@ class MAMLAgent:
         support_set: Tuple[torch.Tensor, torch.Tensor],
         steps: Optional[int] = None,
     ) -> nn.Module:
-        """Quickly adapt to new regime with few gradient steps. Returns adapted model."""
+        """Quickly adapt to new regime with few gradient steps. Returns adapted model."""  # noqa: E501
         orig_steps = self.inner_steps
         if steps is not None:
             self.inner_steps = steps

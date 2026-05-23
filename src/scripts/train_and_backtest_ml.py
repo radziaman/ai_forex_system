@@ -563,7 +563,7 @@ def run_monte_carlo(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def print_comparison_report(
+def print_comparison_report(  # noqa: C901
     untrained: Dict,
     trained: Dict,
     training_metrics: Dict[str, Dict],
