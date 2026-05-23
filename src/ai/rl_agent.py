@@ -148,6 +148,7 @@ class PPOAgent:
         self.max_grad_norm = max_grad_norm
         self.hidden_dims = hidden_dims
         self.max_memory = max_memory  # Fix 3
+        self.online_trainer = None
 
         self.actor = ActorNetwork(
             state_dim, n_actions, hidden_dims, recurrent=recurrent
@@ -199,9 +200,55 @@ class PPOAgent:
             },
         )
 
-    def store_transition(self, reward: float, done: bool):
-        self.rewards.append(reward)
-        self.dones.append(done)
+    def store_transition(self, *args):
+        """Store transition.
+
+        Supports two calling conventions:
+        - store_transition(reward, done) — legacy batch training
+        - store_transition(state, action, reward, next_state, done=False)
+          — online learning with full transition
+        """
+        if len(args) == 2:
+            reward, done = args
+            self.rewards.append(reward)
+            self.dones.append(done)
+        elif len(args) == 4:
+            state, action, reward, next_state = args
+            self._store_online(state, action, reward, next_state, False)
+        elif len(args) == 5:
+            state, action, reward, next_state, done = args
+            self._store_online(state, action, reward, next_state, done)
+        else:
+            raise ValueError(
+                "store_transition takes (reward, done) or "
+                "(state, action, reward, next_state, done=False)"
+            )
+
+    def _store_online(self, state, action, reward, next_state, done):
+        if self.online_trainer is not None:
+            shaped = self.online_trainer.shape_reward(
+                pnl=reward, holding_time=0, drawdown=0.0
+            )
+            self.online_trainer.record_experience(
+                state, action, shaped, next_state, done
+            )
+            if self.online_trainer.should_update():
+                self.online_trainer.update_policy()
+
+    def enable_online_learning(self, trainer):
+        """Attach an OnlinePPOTrainer for real-time policy updates."""
+        self.online_trainer = trainer
+
+    def act(self, state, env):
+        """Select action, step environment, and store full transition.
+
+        If online learning is enabled, the transition is recorded and the
+        policy is updated when the buffer is full.
+        """
+        action, sl_raw, tp_raw, size_raw, info = self.select_action(state)
+        next_state, reward, done, info_env = env.step(action, sl_raw, tp_raw, size_raw)
+        self.store_transition(state, action, reward, next_state, done)
+        return action, next_state, reward, done, {**info, **info_env}
 
     def train(
         self, next_value: float = 0.0, n_epochs: int = 10, batch_size: int = 64

@@ -16,7 +16,14 @@ from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
 
+from .cross_asset_features import CrossAssetEngine
+from .macroeconomic_features import MacroEconomicEngine
 from .microstructure_features import MicrostructureEngine, PriceTick
+from .multi_venue_provider import MultiVenueProvider
+from .dom_analyzer import DOMAnalyzer
+from .alternative_data import AlternativeDataEngine
+from .options_data import OptionsDataProvider
+from .session_features import SessionBehaviorEngine
 
 # ---------------------------------------------------------------------------
 # Symbol registry (single source of truth)
@@ -159,8 +166,17 @@ class DataManager:
         self._last_aggregate_time: float = time.time()
         self._aggregate_interval: float = 1.0  # batch & process every 1s max
 
-        # --- Microstructure engine ---
+        # --- Feature engines ---
         self.microstructure = MicrostructureEngine()
+        self.session_engine = SessionBehaviorEngine()
+        self.cross_asset_engine = CrossAssetEngine()
+        self.macro_engine = MacroEconomicEngine()
+
+        # --- New data infrastructure (v2.1) ---
+        self.multi_venue = MultiVenueProvider()
+        self.dom_analyzer: Dict[str, DOMAnalyzer] = {}
+        self.alternative_data = AlternativeDataEngine()
+        self.options_data = OptionsDataProvider()
 
         # --- Initialize structures for all symbols ---
         for sym in SYMBOLS:
@@ -173,6 +189,7 @@ class DataManager:
             self.market_depth[sym] = MarketDepthData(symbol=sym)
             self._feature_cache[sym] = {}
             self.freshness[sym] = DataFreshness()
+            self.dom_analyzer[sym] = DOMAnalyzer(symbol=sym, depth_levels=5)
             for tf in TIMEFRAMES:
                 self.ohlcv[sym][tf] = pd.DataFrame(
                     columns=["timestamp", "open", "high", "low", "close", "volume"]
@@ -1030,6 +1047,11 @@ class DataManager:
                 md.asks = [
                     DepthLevelData(price=a.price, size=a.size) for a in depth.asks
                 ]
+                dom = self.dom_analyzer.get(sym)
+                if dom is not None:
+                    bids_t = [(b.price, b.size) for b in depth.bids]
+                    asks_t = [(a.price, a.size) for a in depth.asks]
+                    dom.ingest_dom(bids_t, asks_t)
                 return
         except ImportError:
             pass
@@ -1037,6 +1059,11 @@ class DataManager:
         if isinstance(depth, MarketDepthData):
             sym = depth.symbol
             self.market_depth[sym] = depth
+            dom = self.dom_analyzer.get(sym)
+            if dom is not None:
+                bids_t = [(b.price, b.size) for b in depth.bids]
+                asks_t = [(a.price, a.size) for a in depth.asks]
+                dom.ingest_dom(bids_t, asks_t)
             return
 
         if (
@@ -1056,6 +1083,19 @@ class DataManager:
                 md.bids = [DepthLevelData(price=p, size=s) for p, s in depth.bids]
             if depth.asks and isinstance(depth.asks[0], (tuple, list)):
                 md.asks = [DepthLevelData(price=p, size=s) for p, s in depth.asks]
+            dom = self.dom_analyzer.get(sym)
+            if dom is not None:
+                bids_t = (
+                    depth.bids
+                    if depth.bids and isinstance(depth.bids[0], (tuple, list))
+                    else [(b.price, b.size) for b in depth.bids]
+                )
+                asks_t = (
+                    depth.asks
+                    if depth.asks and isinstance(depth.asks[0], (tuple, list))
+                    else [(a.price, a.size) for a in depth.asks]
+                )
+                dom.ingest_dom(bids_t, asks_t)
             return
 
         logger.debug(f"update_market_depth: unknown type {type(depth).__name__}")
@@ -1082,6 +1122,27 @@ class DataManager:
         ms_snapshot = self.microstructure.get_snapshot(
             symbol, self._last_realtime_price.get(symbol, 0.0)
         )
+        dom = self.dom_analyzer.get(symbol)
+        dom_metrics = {}
+        if dom is not None:
+            dom_metrics = {
+                "dom_depth_imbalance": dom.get_depth_imbalance(),
+                "liquidity_score": dom.get_liquidity_score(),
+                "book_pressure": dom.get_book_pressure(),
+                "spoofing_detected": dom.detect_spoofing(),
+                "iceberg_detected": dom.detect_iceberg(),
+                "support": dom.get_support_resistance()[0],
+                "resistance": dom.get_support_resistance()[1],
+            }
+        alt_scores = self.alternative_data.compute_fx_impact_scores()
+        opt_metrics = {}
+        if self.options_data.is_available():
+            opt_metrics = {
+                "risk_reversal_25d": self.options_data.get_25d_risk_reversal(symbol),
+                "butterfly_spread": self.options_data.get_butterfly_spread(symbol),
+                "skew_index": self.options_data.get_skew_index(symbol),
+                "term_structure": self.options_data.get_term_structure(symbol),
+            }
         return {
             "cvd": of.get("cvd", 0.0),
             "cvd_slope": of.get("cvd_slope", 0.0),
@@ -1089,6 +1150,9 @@ class DataManager:
             "dom_imbalance": self.get_dom_imbalance(symbol),
             "cvd_hist": cvd_hist[-100:] if cvd_hist else [],
             "microstructure": ms_snapshot,
+            "dom": dom_metrics,
+            "alternative": alt_scores,
+            "options": opt_metrics,
         }
 
     def calculate_gamma_exposure(self, symbol: str) -> Dict:
@@ -1107,6 +1171,9 @@ class DataManager:
             from .feature_engine import FeatureEngine
 
             fe = FeatureEngine()
+            prices_dict = self.all_prices()
+            ts = time.time()
+            dom = self.dom_analyzer.get(symbol)
             features = fe.compute_features(
                 self.ohlcv.get(symbol, {}),
                 self.order_flow.get(symbol, {}),
@@ -1115,6 +1182,12 @@ class DataManager:
                 microstructure=self.microstructure,
                 symbol=symbol,
                 current_price=self._last_realtime_price.get(symbol, 0.0),
+                prices_dict=prices_dict,
+                timestamp=ts,
+                multi_venue=self.multi_venue,
+                dom_analyzer=dom,
+                alternative_data=self.alternative_data,
+                options_data=self.options_data,
             )
             fnames = fe.feature_names
         except Exception:

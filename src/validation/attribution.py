@@ -142,6 +142,9 @@ class StrategyAttributionEngine:
             total_slippage = sum(t.slippage for t in trades)
             total_luck = sum(t.luck for t in trades)
             n = len(trades)
+            wins = sum(1 for t in trades if t.total_pnl > 0)
+            win_rate = wins / n if n > 0 else 0.0
+            recent_pnl = [round(t.total_pnl, 4) for t in trades[-10:]]
             decay = self.calculate_alpha_decay(strategy, window=20)
             report[strategy] = {
                 "trades": n,
@@ -150,6 +153,8 @@ class StrategyAttributionEngine:
                 "execution_quality": round(total_exec, 4),
                 "slippage": round(total_slippage, 4),
                 "luck": round(total_luck, 4),
+                "win_rate": round(win_rate, 4),
+                "recent_pnl": recent_pnl,
                 "alpha_decay": decay,
                 "should_disable": self.should_disable(strategy),
             }

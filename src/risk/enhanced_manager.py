@@ -192,7 +192,35 @@ class EnhancedRiskManager:
         )
         if not approved and "drawdown" in reason.lower():
             self._base.kill_switch_triggered = True
+            logger.warning("KILL SWITCH: Auto-close all positions triggered")
+            from agentic.core.world_state import get_world_state
+
+            ws = get_world_state()
+            ws.set("risk.kill_switch", True)
+            drawdown = (
+                (self._base.peak_balance - equity) / self._base.peak_balance
+                if self._base.peak_balance > 0
+                else 0.0
+            )
+            ws.set("risk.drawdown", drawdown)
         return approved, reason
+
+    def release_kill_switch(self, equity: float) -> bool:
+        """Release kill switch if drawdown recovered to < 3%."""
+        peak = self._base.peak_balance
+        if peak <= 0:
+            return False
+        drawdown = (peak - equity) / peak
+        if drawdown < 0.03:
+            self._base.kill_switch_triggered = False
+            logger.info("Kill switch released: drawdown recovered to < 3%")
+            from agentic.core.world_state import get_world_state
+
+            ws = get_world_state()
+            ws.set("risk.kill_switch", False)
+            ws.set("risk.drawdown", drawdown)
+            return True
+        return False
 
     def stress_test_flash_crash(
         self, symbol: str, current_price: float

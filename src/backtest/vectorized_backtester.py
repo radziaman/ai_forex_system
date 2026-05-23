@@ -53,12 +53,23 @@ class VectorizedBacktester:
         slippage_model: str = "moderate",
         pip_size: float = 0.0001,
         lot_size: float = 100_000,
+        impact_tracker=None,
+        symbol: str = "EURUSD",
     ):
         self.spread_pips = spread_pips
         self.commission_per_lot = commission_per_lot
         self.slippage_model = slippage_model
         self.pip_size = pip_size
         self.lot_size = lot_size
+        self.impact_tracker = impact_tracker
+        self.symbol = symbol
+        self._adv: Dict[str, float] = {}
+
+    def set_adv(self, symbol: str, adv: float) -> None:
+        """Set average daily volume for a symbol."""
+        self._adv[symbol.upper()] = adv
+        if self.impact_tracker is not None:
+            self.impact_tracker.set_adv(symbol, adv)
 
     def run(  # noqa: C901
         self,
@@ -72,6 +83,7 @@ class VectorizedBacktester:
         cost_multiplier: float = 1.0,
         breakeven_atr: float = 0.0,
         max_hold_bars: int = 0,
+        volume: Optional[float] = None,
     ) -> BacktestResult:
         signals = signal_fn(prices, features)
         n = len(prices)
@@ -170,6 +182,15 @@ class VectorizedBacktester:
                     cost = self._transaction_cost(
                         abs(entry_price - exit_price), entry_price
                     )
+                    # Market impact integration
+                    if self.impact_tracker is not None and atr is not None:
+                        vol = volume if volume is not None else self.lot_size
+                        impact_bps = self.impact_tracker.calculate_market_impact(
+                            self.symbol, vol, atr[i], prices[i]
+                        )
+                        position_value = prices[i] * vol
+                        impact_cost = position_value * impact_bps / 10_000
+                        cost = cost + impact_cost
                     net_pnl = raw_pnl - cost * cost_multiplier
                     trades_pnls.append(net_pnl)
                     trade_entry_idx.append(entry_idx)

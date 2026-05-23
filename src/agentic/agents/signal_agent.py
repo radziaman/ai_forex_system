@@ -108,6 +108,11 @@ class SignalAgent(BaseAgent):
         from validation.attribution import StrategyAttributionEngine
 
         self._attribution_engine = StrategyAttributionEngine()
+        self._attribution_trade_counter = 0
+
+        # Kill switch tracking
+        self._kill_switch_since: Optional[float] = None
+        self._kill_switch_alerted: bool = False
 
         # G16: Confidence calibration
         self._confidence_buckets: Dict[str, deque] = defaultdict(
@@ -149,6 +154,60 @@ class SignalAgent(BaseAgent):
         self.log_state(
             f"Signal engine ready: {'experts loaded' if self._models_loaded else 'rule-based only'}"  # noqa: E501
         )
+
+    def _check_kill_switch(self) -> bool:
+        """Return True if kill switch is active in world state."""
+        active = bool(self.get_world("risk.kill_switch", False))
+        if active and self._kill_switch_since is None:
+            self._kill_switch_since = time.time()
+        return active
+
+    async def _handle_kill_switch(self):
+        """Log warning, alert Telegram, and attempt recovery after 30 min."""
+        if not self._kill_switch_alerted:
+            logger.warning("Kill switch active — all signals blocked")
+            await self.send(
+                MessageType.RISK_ALERT,
+                payload={
+                    "type": "kill_switch",
+                    "reason": "Kill switch active — all signals blocked",
+                },
+                priority=MessagePriority.CRITICAL,
+            )
+            self._kill_switch_alerted = True
+        else:
+            elapsed = time.time() - self._kill_switch_since
+            if elapsed > 30 * 60:
+                drawdown = self.get_world("risk.drawdown", 0.0)
+                if drawdown < 0.03:
+                    logger.info(
+                        "Kill switch recovery: drawdown recovered, "
+                        "attempting release"
+                    )
+                    self._kill_switch_since = None
+                    self._kill_switch_alerted = False
+                    self.set_world("risk.kill_switch_release_requested", True)
+                else:
+                    logger.warning(
+                        f"Kill switch still active after {elapsed / 60:.0f}min, "
+                        f"drawdown={drawdown:.1%}"
+                    )
+
+    def _clear_kill_switch_state(self):
+        """Reset local kill switch tracking when world state clears."""
+        self._kill_switch_since = None
+        self._kill_switch_alerted = False
+
+    def _maybe_publish_attribution(self):
+        """Publish attribution report to world state every 5 trades."""
+        self._attribution_trade_counter += 1
+        if (
+            self._attribution_trade_counter % 5 == 0
+            and self._attribution_engine is not None
+        ):
+            report = self._attribution_engine.get_report()
+            if report:
+                self.set_world("strategy_attribution", report)
 
     def _per_symbol_weight_fn(self, name: str, regime: str) -> float:
         """Dynamic weight incorporating per-symbol strategy performance."""
@@ -242,6 +301,13 @@ class SignalAgent(BaseAgent):
         price = payload.get("price", 0)
         if features is None:
             return
+
+        # Task 2: Pre-trade kill switch check
+        if self._check_kill_switch():
+            await self._handle_kill_switch()
+            return
+        if self._kill_switch_since is not None:
+            self._clear_kill_switch_state()
 
         # Per-symbol: skip symbols with no profitable strategy yet
         if not self._per_symbol_tracker.is_symbol_tradeable(symbol):
@@ -425,11 +491,8 @@ class SignalAgent(BaseAgent):
         ]
         self.set_world("signal.tradeable_symbols", tradeable)
 
-        # Publish attribution report to world state
-        if self._attribution_engine is not None:
-            attr_report = self._attribution_engine.get_report()
-            if attr_report:
-                self.set_world("signal.attribution_report", attr_report)
+        # Publish attribution report to world state every 5 trades
+        self._maybe_publish_attribution()
 
     # G16: Log calibration report
     def _log_calibration(self):

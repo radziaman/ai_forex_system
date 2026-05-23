@@ -20,7 +20,7 @@ import sys
 import time
 import warnings
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 warnings.filterwarnings("ignore")
@@ -465,6 +465,188 @@ def train_base_model(
 # ═══════════════════════════════════════════════════════════════════════════════
 # Section 5: PPO Regime Agents
 # ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _build_ppo_states(df) -> Tuple[int, np.ndarray]:
+    """Build normalized state vectors from a DataFrame."""
+    df_features = compute_features(df)
+    feature_cols = [
+        c
+        for c in df_features.columns
+        if c not in {"open", "high", "low", "close", "volume", "timestamp"}
+    ]
+    features_np = df_features[feature_cols].values.astype(np.float64)
+    prices = df["close"].values.astype(np.float64)
+
+    n_total = len(features_np)
+    normed = np.empty_like(features_np, dtype=np.float64)
+    for i in range(n_total):
+        window = features_np[: i + 1]
+        mu = np.mean(window, axis=0)
+        sigma = np.std(window, axis=0)
+        sigma = np.where(sigma < 1e-12, 1.0, sigma)
+        normed[i] = (features_np[i] - mu) / sigma
+
+    state_dim = 1 + normed.shape[1]
+    states = np.column_stack([prices.reshape(-1, 1), normed]).astype(np.float32)
+    return state_dim, states
+
+
+def _train_ppo_level(agent, env, states, ppo_timesteps, level):
+    """Run PPO training loop for a single curriculum level."""
+    n_steps = 0
+    total_reward = 0.0
+    episode_reward = 0.0
+    env.reset()
+    env.update_state(states[0])
+
+    train_interval = 128
+    n_epochs = 5
+    burn_in = 100
+    max_steps = min(len(states), ppo_timesteps)
+
+    for step in range(max_steps):
+        if step < burn_in:
+            env.update_state(states[step])
+            continue
+
+        env.update_state(states[step])
+        action, sl_raw, tp_raw, size_raw, _ = agent.select_action(states[step])
+        next_state, reward, done, _ = env.step(action, sl_raw, tp_raw, size_raw)
+        agent.store_transition(reward, done)
+
+        episode_reward += reward
+        n_steps += 1
+
+        if done:
+            env.reset()
+            env.update_state(states[step])
+            total_reward += episode_reward
+            episode_reward = 0.0
+        else:
+            env.update_state(next_state)
+
+        if n_steps % train_interval == 0:
+            metrics = agent.train(next_value=0.0, n_epochs=n_epochs)
+            if metrics:
+                logger.debug(f"  [{level}] train: {metrics}")
+
+    if agent.states and len(agent.states) >= 2:
+        metrics = agent.train(next_value=0.0, n_epochs=n_epochs)
+        if metrics:
+            logger.debug(f"  [{level}] final train: {metrics}")
+
+    return n_steps, total_reward
+
+
+def _curriculum_summary(results: Dict[str, Any]):
+    """Log curriculum training summary."""
+    logger.info("")
+    logger.info("-" * 60)
+    logger.info("  Curriculum Training Summary:")
+    for lvl, r in results.items():
+        if lvl == "final_model" or not isinstance(r, dict):
+            continue
+        logger.info(
+            f"  {lvl:<12s} steps={r['n_steps']:<6d} "
+            f"win_rate={r['performance']['win_rate']:<7.1%} "
+            f"sharpe={r['performance']['sharpe']:.3f}"
+        )
+
+
+def train_ppo_curriculum(
+    use_microstructure: bool = False,
+    ppo_timesteps: int = 5000,
+) -> Dict[str, Any]:
+    """Train a PPO agent with curriculum learning.
+
+    Progressively increases environment difficulty:
+      easy → medium → hard → extreme.
+    Saves a checkpoint at each level and the final model.
+    """
+    from training.curriculum_manager import CurriculumManager  # noqa: E402
+
+    logger.info("")
+    logger.info("=" * 60)
+    logger.info("  STEP 4: PPO Curriculum Training")
+    logger.info("=" * 60)
+
+    symbol = "EURUSD"
+    data = load_csv_data(symbol)
+    if not data:
+        logger.error("  Cannot load EURUSD data, skipping curriculum PPO")
+        return {}
+
+    df = data[TIMEFRAMES[0]]
+
+    try:
+        logger.info("  Computing features for curriculum PPO...")
+        state_dim, states = _build_ppo_states(df)
+        logger.info(f"  State vectors: {states.shape} ({state_dim} dims)")
+
+        curriculum = CurriculumManager()
+        agent = PPOAgent(
+            state_dim=state_dim,
+            n_actions=5,
+            lr=3e-4,
+            gamma=0.99,
+            clip_range=0.2,
+        )
+
+        results: Dict[str, Any] = {}
+
+        while True:
+            level = curriculum.get_current_level()
+            env_params = curriculum.get_env_params()
+            logger.info(f"\n  [{level}] Training with {env_params}...")
+
+            env = TradingEnvironment(
+                state_dim=state_dim,
+                spread_pips=0.5 * env_params["volatility_multiplier"],
+                commission_per_lot=7.0 * (1 + env_params["slippage_multiplier"]),
+            )
+
+            n_steps, total_reward = _train_ppo_level(
+                agent, env, states, ppo_timesteps, level
+            )
+
+            perf = curriculum.evaluate_performance(agent, env, test_episodes=20)
+            results[level] = {
+                "env_params": env_params,
+                "performance": perf,
+                "n_steps": n_steps,
+            }
+
+            ckpt_path = str(MODEL_DIR / f"ppo_curriculum_{level}.pth")
+            agent.save(ckpt_path)
+            logger.info(f"  Saved checkpoint: {ckpt_path}")
+
+            if curriculum.should_advance():
+                if not curriculum.advance():
+                    logger.success("  Curriculum complete!")
+                    break
+            else:
+                logger.info(
+                    f"  Need more training on {level} "
+                    f"(win_rate={perf['win_rate']:.1%}, sharpe={perf['sharpe']:.3f})"
+                )
+                if level == curriculum.difficulty_levels[-1]:
+                    break
+
+        final_path = str(MODEL_DIR / "ppo_curriculum_final.pth")
+        agent.save(final_path)
+        results["final_model"] = final_path
+        logger.info(f"  Final curriculum model saved: {final_path}")
+
+        _curriculum_summary(results)
+        return results
+
+    except Exception as e:
+        logger.error(f"  Curriculum PPO training FAILED: {e}")
+        import traceback
+
+        traceback.print_exc()
+        return {}
 
 
 def train_ppo_regime_agents(  # noqa: C901
@@ -1177,6 +1359,11 @@ def main():  # noqa: C901
     parser.add_argument(
         "--quick", action="store_true", help="Quick mode: fewer epochs, skip meta"
     )
+    parser.add_argument(
+        "--curriculum",
+        action="store_true",
+        help="Enable curriculum learning for PPO training",
+    )
     args = parser.parse_args()
 
     t_start = time.time()
@@ -1237,14 +1424,22 @@ def main():  # noqa: C901
     if not args.skip_norm:
         save_feature_norm(use_microstructure=use_microstructure)
 
-    # Step 5: PPO Regime Agents
+    # Step 5: PPO Regime Agents (or Curriculum)
     if not args.skip_ppo:
-        ppo_results = train_ppo_regime_agents(
-            use_microstructure=use_microstructure,
-            ppo_timesteps=ppo_timesteps,
-        )
-        overall_results["ppo_agents"] = ppo_results
-        RESULTS["ppo_agents"] = ppo_results
+        if args.curriculum:
+            ppo_results = train_ppo_curriculum(
+                use_microstructure=use_microstructure,
+                ppo_timesteps=ppo_timesteps,
+            )
+            overall_results["ppo_curriculum"] = ppo_results
+            RESULTS["ppo_curriculum"] = ppo_results
+        else:
+            ppo_results = train_ppo_regime_agents(
+                use_microstructure=use_microstructure,
+                ppo_timesteps=ppo_timesteps,
+            )
+            overall_results["ppo_agents"] = ppo_results
+            RESULTS["ppo_agents"] = ppo_results
     else:
         logger.info("Skipping PPO training (--skip-ppo)")
 

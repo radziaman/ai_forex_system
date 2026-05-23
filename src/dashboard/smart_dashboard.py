@@ -101,6 +101,23 @@ def verify_credentials(credentials: HTTPBasicCredentials) -> bool:
     )
 
 
+def _compute_strategy_status(report: Dict[str, Any]) -> Dict[str, str]:
+    """Compute dashboard status color per strategy from attribution report."""
+    statuses: Dict[str, str] = {}
+    for name, data in report.items():
+        decay = data.get("alpha_decay", {})
+        sharpe = decay.get("sharpe", 0.0)
+        win_rate = data.get("win_rate", 0.0)
+        disabled = data.get("should_disable", False)
+        if disabled or sharpe < 0:
+            statuses[name] = "🔴 Disabled"
+        elif sharpe > 0.5 and win_rate > 0.5:
+            statuses[name] = "🟢 Active"
+        else:
+            statuses[name] = "🟡 Warning"
+    return statuses
+
+
 def update_state(**kwargs):
     """Update dashboard state."""
     global latest_state
@@ -238,6 +255,11 @@ tr:hover td{background:rgba(255,255,255,.02)}
   <div class="metrics-grid" id="aiMetricsGrid"></div>
 </div>
 
+<div class="card" style="margin-bottom:12px">
+  <div class="card-title">Strategy Alpha Decay Monitor</div>
+  <div id="alphaDecayGrid"></div>
+</div>
+
 </div>
 
 <script>
@@ -276,6 +298,7 @@ function updateDashboard(d){
   }
   if(d.market_data&&d.market_data.prices) renderPrices(d.market_data.prices);
   if(d.open_positions) renderPositions(d.open_positions);
+  if(d.strategy_attribution) renderAlphaDecay(d.strategy_attribution);
 }
 function setText(id,v){
   const el=document.getElementById(id);
@@ -325,6 +348,34 @@ function renderAIMetrics(metrics){
   }else{
     html+='<div class="metric-item"><div class="label">Behavioral Sentiment</div><div class="value">'+Number(metrics.behavioral_sentiment||0).toFixed(3)+'</div></div>';  # noqa: E501
   }
+  g.innerHTML=html;
+}
+function renderAlphaDecay(report){
+  const g=document.getElementById('alphaDecayGrid');
+  if(!g)return;
+  const strategies=Object.keys(report);
+  if(strategies.length===0){g.innerHTML='<span style="color:var(--muted);font-size:.8rem">No attribution data...</span>';return}
+  let html='<table><thead><tr><th>Strategy</th><th>Sharpe</th><th>Win %</th><th>Alpha PnL</th><th>Status</th><th>Last 10 Trades</th></tr></thead><tbody>';
+  strategies.forEach(name=>{
+    const data=report[name];
+    const decay=data.alpha_decay||{};
+    const sharpe=decay.sharpe!=null?decay.sharpe:0;
+    const winRate=(data.win_rate||0)*100;
+    const alphaPnl=data.alpha_signal||0;
+    const disabled=data.should_disable||false;
+    let status='🟡 Warning';
+    if(disabled||sharpe<0) status='🔴 Disabled';
+    else if(sharpe>0.5&&winRate>50) status='🟢 Active';
+    const recent=data.recent_pnl||[];
+    const bars=recent.map(v=>{
+      const h=Math.min(Math.abs(v)*20,24);
+      const color=v>=0?'var(--green)':'var(--red)';
+      return '<div style="flex:1;background:'+color+';height:'+h+'px;border-radius:2px;min-width:4px;opacity:.85"></div>';
+    }).join('');
+    const barChart='<div style="display:flex;gap:2px;height:28px;align-items:flex-end;width:100px">'+bars+'</div>';
+    html+='<tr><td>'+name+'</td><td>'+sharpe.toFixed(2)+'</td><td>'+winRate.toFixed(1)+'%</td><td>'+(alphaPnl>=0?'+':'')+alphaPnl.toFixed(2)+'</td><td>'+status+'</td><td>'+barChart+'</td></tr>';
+  });
+  html+='</tbody></table>';
   g.innerHTML=html;
 }
 function updateTimer(){

@@ -5,9 +5,17 @@ and degradation tracking for robust model validation.
 """
 
 import numpy as np
+import pandas as pd
 from typing import Dict, List, Optional, Callable, Any
 from dataclasses import dataclass, field
 from loguru import logger
+
+try:
+    from rts_ai_fx.regime_detector import HMMRegimeDetector
+
+    HMM_AVAILABLE = True
+except ImportError:
+    HMM_AVAILABLE = False
 
 
 @dataclass
@@ -39,6 +47,7 @@ class OptimizationResult:
     stability_score: float = 0.0  # Inverse of degradation variance
     passed: bool = False
     fold_results: List[WalkForwardResult] = field(default_factory=list)
+    regime_robustness_score: Dict[str, float] = field(default_factory=dict)
 
 
 class SmartWalkForward:
@@ -70,6 +79,7 @@ class SmartWalkForward:
         features_fn: Callable,  # fn(prices, features) -> List[float]
         features: np.ndarray,
         regimes: Optional[np.ndarray] = None,
+        regime_split: bool = False,
     ) -> OptimizationResult:
         """
         Run smart walk-forward optimization.
@@ -82,8 +92,13 @@ class SmartWalkForward:
             return OptimizationResult(total_folds=0)
 
         fold_results = []
+        regime_robustness = {}
 
-        if self.use_cpcv:
+        if regime_split:
+            fold_results, regime_robustness = self._run_regime_split(
+                prices, features_fn, features
+            )
+        elif self.use_cpcv:
             fold_results = self._run_cpcv(prices, features_fn, features, regimes)
         else:
             fold_results = self._run_standard(prices, features_fn, features, regimes)
@@ -109,6 +124,7 @@ class SmartWalkForward:
             stability_score=stability,
             passed=passed,
             fold_results=fold_results,
+            regime_robustness_score=regime_robustness,
         )
 
     def _run_standard(
@@ -185,6 +201,168 @@ class SmartWalkForward:
             fold_id += 1
 
         return fold_results
+
+    @staticmethod
+    def _map_states_to_regimes(states, detector):
+        """Map HMM hidden states to regime names."""
+        if detector.model is None or detector.model.means_ is None:
+            return [
+                detector.REGIME_NAMES[s % len(detector.REGIME_NAMES)] for s in states
+            ]
+        mean_returns = detector.model.means_[:, 0]
+        state_order = np.argsort(mean_returns)
+        regime_names = []
+        for s in states:
+            regime_idx = np.where(state_order == s)[0][0]
+            if regime_idx >= len(detector.REGIME_NAMES):
+                regime_idx = len(detector.REGIME_NAMES) - 1
+            regime_names.append(detector.REGIME_NAMES[regime_idx])
+        return regime_names
+
+    @staticmethod
+    def _build_regime_df(prices: np.ndarray, features: np.ndarray):
+        """Build DataFrame for HMM regime detection."""
+        df = pd.DataFrame({"close": prices})
+        if features is not None:
+            if features.ndim == 1:
+                df["feature_0"] = features
+            else:
+                for i in range(features.shape[1]):
+                    df[f"feature_{i}"] = features[:, i]
+        return df
+
+    @staticmethod
+    def _pad_regime_names(regime_names: List[str], n: int) -> np.ndarray:
+        """Pad or trim regime names to length n."""
+        regime_names = ["ranging"] + regime_names
+        if len(regime_names) < n:
+            regime_names.extend(["ranging"] * (n - len(regime_names)))
+        elif len(regime_names) > n:
+            regime_names = regime_names[:n]
+        return np.array(regime_names, dtype=object)
+
+    def _detect_regimes(self, prices: np.ndarray, features: np.ndarray) -> np.ndarray:
+        """Detect regimes on full dataset using HMMRegimeDetector."""
+        if not HMM_AVAILABLE:
+            return np.full(len(prices), "ranging", dtype=object)
+
+        df = self._build_regime_df(prices, features)
+        detector = HMMRegimeDetector(n_regimes=4)
+        detector.fit(df)
+
+        if detector.model is None:
+            return np.full(len(prices), "ranging", dtype=object)
+
+        features_arr = detector._extract_features(df)
+        if len(features_arr) < 1:
+            return np.full(len(prices), "ranging", dtype=object)
+
+        try:
+            states = detector.model.predict(features_arr)
+        except Exception:
+            return np.full(len(prices), "ranging", dtype=object)
+
+        regime_names = self._map_states_to_regimes(states, detector)
+        return self._pad_regime_names(regime_names, len(prices))
+
+    def _run_regime_split(
+        self, prices: np.ndarray, features_fn: Callable, features: np.ndarray
+    ):
+        """
+        Regime-aware walk-forward: train on one regime, test on others.
+        Ensures cross-regime robustness (e.g. train trending → test ranging).
+        """
+        regime_labels = self._detect_regimes(prices, features)
+        unique_regimes = sorted(set(regime_labels))
+
+        fold_results = []
+        fold_id = 0
+
+        for train_regime in unique_regimes:
+            for test_regime in unique_regimes:
+                if train_regime == test_regime:
+                    continue
+
+                train_mask = regime_labels == train_regime
+                test_mask = regime_labels == test_regime
+
+                train_count = int(np.sum(train_mask))
+                test_count = int(np.sum(test_mask))
+
+                if train_count < self.min_train_window or test_count < 10:
+                    continue
+
+                result = self._evaluate_regime_fold(
+                    fold_id,
+                    prices,
+                    features_fn,
+                    features,
+                    regime_labels,
+                    train_mask,
+                    test_mask,
+                )
+                fold_results.append(result)
+                fold_id += 1
+
+        regime_robustness = {}
+        if fold_results:
+            test_sharpes = [r.test_sharpe for r in fold_results]
+            regime_robustness = {
+                "avg_regime_sharpe": float(np.mean(test_sharpes)),
+                "worst_regime_sharpe": float(np.min(test_sharpes)),
+                "regime_consistency": float(np.std(test_sharpes)),
+            }
+
+        return fold_results, regime_robustness
+
+    def _evaluate_regime_fold(
+        self,
+        fold_id,
+        prices,
+        features_fn,
+        features,
+        regimes,
+        train_mask,
+        test_mask,
+    ) -> WalkForwardResult:
+        """Evaluate a single regime-based fold using boolean masks."""
+        train_prices = prices[train_mask]
+        train_features = features[train_mask] if features is not None else None
+        train_regimes = regimes[train_mask] if regimes is not None else None
+
+        test_prices = prices[test_mask]
+        test_features = features[test_mask] if features is not None else None
+        test_regimes = regimes[test_mask] if regimes is not None else None
+
+        train_returns = (
+            features_fn(train_prices, train_features, train_regimes)
+            if callable(features_fn)
+            else []
+        )
+        test_returns = (
+            features_fn(test_prices, test_features, test_regimes)
+            if callable(features_fn)
+            else []
+        )
+
+        train_sharpe = self._calculate_sharpe(train_returns)
+        test_sharpe = self._calculate_sharpe(test_returns)
+        degradation = test_sharpe - train_sharpe
+        is_overfit = degradation < -0.5
+
+        return WalkForwardResult(
+            fold_id=fold_id,
+            train_start=0,
+            train_end=len(train_prices),
+            test_start=0,
+            test_end=len(test_prices),
+            train_sharpe=train_sharpe,
+            test_sharpe=test_sharpe,
+            degradation=degradation,
+            is_overfit=is_overfit,
+            train_returns=train_returns,
+            test_returns=test_returns,
+        )
 
     def _evaluate_fold(
         self,

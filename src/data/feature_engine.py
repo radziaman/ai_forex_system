@@ -7,6 +7,10 @@ except ImportError:
 from loguru import logger
 from typing import Any, Dict, List, Optional
 
+from .cross_asset_features import CrossAssetEngine
+from .macroeconomic_features import MacroEconomicEngine
+from .session_features import SessionBehaviorEngine
+
 
 class FeatureEngine:
     """222+ features across 5 timeframes (TICQ AI research)."""
@@ -15,6 +19,9 @@ class FeatureEngine:
     TF_MULT = {"1m": 1, "5m": 5, "15m": 15, "1h": 60, "4h": 240}
 
     def __init__(self):
+        self.session_engine = SessionBehaviorEngine()
+        self.cross_asset_engine = CrossAssetEngine()
+        self.macro_engine = MacroEconomicEngine()
         self.feature_names: List[str] = []
         self._build_names()
         logger.info(f"FeatureEngine | {len(self.feature_names)} features")
@@ -61,6 +68,40 @@ class FeatureEngine:
             "ms_twap_deviation",
             "ms_dom_depth_imbalance",
         ]
+        names += [
+            "session_type",
+            "london_vol_expansion",
+            "ny_overlap_volume_surge",
+            "asian_range_contraction",
+            "weekend_gap_risk",
+            "session_momentum_bias",
+        ]
+        names += [
+            "dxy_impact",
+            "eurusd_gbpusd_lag30",
+            "gold_oil_ratio",
+            "commodity_fx_lead",
+            "us500_risk_on",
+        ]
+        names += [
+            "rate_differential",
+            "rate_slope_1m",
+            "forward_divergence",
+            "hawkish_dovish_score",
+            "yield_carry_annualized",
+        ]
+        names += [
+            "venue_spread",
+            "dom_imbalance",
+            "aud_agriculture_score",
+            "cad_oil_score",
+            "jpy_safe_haven_score",
+            "usd_fed_divergence_score",
+            "opt_risk_reversal",
+            "opt_butterfly",
+            "opt_skew_index",
+            "opt_term_slope",
+        ]
         self.feature_names = names
 
     def compute_features(
@@ -72,6 +113,12 @@ class FeatureEngine:
         microstructure: Optional[Any] = None,
         symbol: str = "",
         current_price: float = 0.0,
+        prices_dict: Optional[Dict[str, float]] = None,
+        timestamp: Optional[float] = None,
+        multi_venue: Optional[Any] = None,
+        dom_analyzer: Optional[Any] = None,
+        alternative_data: Optional[Any] = None,
+        options_data: Optional[Any] = None,
     ) -> np.ndarray:
         feats = []
         for tf in self.TIMEFRAMES:
@@ -216,6 +263,109 @@ class FeatureEngine:
             feats.extend(ms_vec.tolist())
         else:
             feats.extend([0.0] * 11)
+
+        # Session behavior features
+        session_df = ohlcv.get("1m") if ohlcv else None
+        if session_df is None:
+            session_df = ohlcv.get("5m") if ohlcv else None
+        session_feats = self.session_engine.compute_session_features(
+            session_df, timestamp=timestamp
+        )
+        for k in [
+            "session_type",
+            "london_vol_expansion",
+            "ny_overlap_volume_surge",
+            "asian_range_contraction",
+            "weekend_gap_risk",
+            "session_momentum_bias",
+        ]:
+            feats.append(session_feats.get(k, 0.0))
+
+        # Cross-asset lead-lag features
+        if prices_dict:
+            cross_feats = self.cross_asset_engine.compute_lead_lag_features(
+                symbol, prices_dict
+            )
+        else:
+            cross_feats = {
+                k: 0.0
+                for k in [
+                    "dxy_impact",
+                    "eurusd_gbpusd_lag30",
+                    "gold_oil_ratio",
+                    "commodity_fx_lead",
+                    "us500_risk_on",
+                ]
+            }
+        for k in [
+            "dxy_impact",
+            "eurusd_gbpusd_lag30",
+            "gold_oil_ratio",
+            "commodity_fx_lead",
+            "us500_risk_on",
+        ]:
+            feats.append(cross_feats.get(k, 0.0))
+
+        # Macroeconomic divergence features
+        macro_feats = self.macro_engine.compute_divergence_features(symbol)
+        for k in [
+            "rate_differential",
+            "rate_slope_1m",
+            "forward_divergence",
+            "hawkish_dovish_score",
+            "yield_carry_annualized",
+        ]:
+            feats.append(macro_feats.get(k, 0.0))
+
+        # Multi-venue, DOM, alternative data, and options features
+        venue_spread = 0.0
+        if multi_venue is not None:
+            best = multi_venue.get_best_quote(symbol)
+            if best is not None and current_price > 0:
+                venue_spread = best.spread / current_price
+        feats.append(venue_spread)
+
+        dom_imb = 0.5
+        if dom_analyzer is not None:
+            dom_imb = dom_analyzer.get_depth_imbalance()
+        feats.append(dom_imb)
+
+        alt_scores = {
+            "aud_agriculture_score": 0.0,
+            "cad_oil_score": 0.0,
+            "jpy_safe_haven_score": 0.0,
+            "usd_fed_divergence_score": 0.0,
+        }
+        if alternative_data is not None:
+            try:
+                alt_scores = alternative_data.compute_fx_impact_scores()
+            except Exception:
+                pass
+        feats.append(alt_scores.get("aud_agriculture_score", 0.0))
+        feats.append(alt_scores.get("cad_oil_score", 0.0))
+        feats.append(alt_scores.get("jpy_safe_haven_score", 0.0))
+        feats.append(alt_scores.get("usd_fed_divergence_score", 0.0))
+
+        rr = 0.0
+        bf = 0.0
+        sk = 0.5
+        ts_slope = 0.0
+        if options_data is not None:
+            try:
+                rr = options_data.get_25d_risk_reversal(symbol)
+                bf = options_data.get_butterfly_spread(symbol)
+                sk = options_data.get_skew_index(symbol)
+                term = options_data.get_term_structure(symbol)
+                if len(term) >= 2:
+                    vals = list(term.values())
+                    ts_slope = (vals[-1] - vals[0]) / max(len(vals) - 1, 1)
+            except Exception:
+                pass
+        feats.append(rr)
+        feats.append(bf)
+        feats.append(sk)
+        feats.append(ts_slope)
+
         return np.array(feats, dtype=np.float32)
 
     def _atr(self, h, l, c, p=14):
