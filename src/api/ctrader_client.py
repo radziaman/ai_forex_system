@@ -24,8 +24,24 @@ try:
         ProtoOADepthEvent,
         ProtoOAGetTrendbarsReq,
         ProtoOAGetTrendbarsRes,
+        # Additional protobuf message types for richer account + market data
+        ProtoOAAssetListReq,
+        ProtoOAAssetListRes,
+        ProtoOAMarginChangedEvent,
+        ProtoOATraderUpdatedEvent,
+        ProtoOAOrderErrorEvent,
+        ProtoOASpotEvent,
+        ProtoOASubscribeSpotsReq,
+        ProtoOAUnsubscribeSpotsReq,
+        ProtoOAReconcileReq,
+        ProtoOAReconcileRes,
+        ProtoOAGetPositionUnrealizedPnLReq,
+        ProtoOAGetPositionUnrealizedPnLRes,
     )
-    from ctrader_open_api.messages.OpenApiModelMessages_pb2 import ProtoOATrendbar
+    from ctrader_open_api.messages.OpenApiModelMessages_pb2 import (
+        ProtoOATrendbar,
+        ProtoOAAsset,
+    )
 
     _HAS_PROTOBUF = True
     print("cTrader Open API protobuf loaded successfully")
@@ -54,12 +70,75 @@ SYMBOL_MAP = {
 
 REVERSE_SYMBOL_MAP = {v: k for k, v in SYMBOL_MAP.items()}
 
-# Message type constants
-PROTO_OA_DEPTH_EVENT = 2155
-PROTO_OA_SUBSCRIBE_DEPTH_QUOTES_REQ = 2156
-PROTO_OA_SUBSCRIBE_DEPTH_QUOTES_RES = 2157
-PROTO_OA_UNSUBSCRIBE_DEPTH_QUOTES_REQ = 2158
-PROTO_OA_UNSUBSCRIBE_DEPTH_QUOTES_RES = 2159
+# Message type constants — use the ProtoOAPayloadType enum from the installed
+# protobuf package.  DO NOT hardcode values here; they differ between
+# ctrader-open-api package versions.
+try:
+    from ctrader_open_api.messages.OpenApiModelMessages_pb2 import (
+        ProtoOAPayloadType as _PT,
+    )
+
+    PROTO_OA_DEPTH_EVENT = _PT.Value("PROTO_OA_DEPTH_EVENT")
+    PROTO_OA_SUBSCRIBE_DEPTH_QUOTES_REQ = _PT.Value(
+        "PROTO_OA_SUBSCRIBE_DEPTH_QUOTES_REQ"
+    )
+    PROTO_OA_SUBSCRIBE_DEPTH_QUOTES_RES = _PT.Value(
+        "PROTO_OA_SUBSCRIBE_DEPTH_QUOTES_RES"
+    )
+    PROTO_OA_UNSUBSCRIBE_DEPTH_QUOTES_REQ = _PT.Value(
+        "PROTO_OA_UNSUBSCRIBE_DEPTH_QUOTES_REQ"
+    )
+    PROTO_OA_UNSUBSCRIBE_DEPTH_QUOTES_RES = _PT.Value(
+        "PROTO_OA_UNSUBSCRIBE_DEPTH_QUOTES_RES"
+    )
+    PROTO_OA_MARGIN_CHANGED_EVENT = _PT.Value("PROTO_OA_MARGIN_CHANGED_EVENT")
+    PROTO_OA_SPOT_EVENT = _PT.Value("PROTO_OA_SPOT_EVENT")
+    PROTO_OA_SUBSCRIBE_SPOTS_REQ = _PT.Value("PROTO_OA_SUBSCRIBE_SPOTS_REQ")
+    PROTO_OA_SUBSCRIBE_SPOTS_RES = _PT.Value("PROTO_OA_SUBSCRIBE_SPOTS_RES")
+    PROTO_OA_UNSUBSCRIBE_SPOTS_REQ = _PT.Value("PROTO_OA_UNSUBSCRIBE_SPOTS_REQ")
+    PROTO_OA_UNSUBSCRIBE_SPOTS_RES = _PT.Value("PROTO_OA_UNSUBSCRIBE_SPOTS_RES")
+    PROTO_OA_TRADER_UPDATED_EVENT = _PT.Value("PROTO_OA_TRADER_UPDATE_EVENT")
+    PROTO_OA_ORDER_ERROR_EVENT = _PT.Value("PROTO_OA_ORDER_ERROR_EVENT")
+    PROTO_OA_ASSET_LIST_REQ = _PT.Value("PROTO_OA_ASSET_LIST_REQ")
+    PROTO_OA_ASSET_LIST_RES = _PT.Value("PROTO_OA_ASSET_LIST_RES")
+    PROTO_OA_RECONCILE_REQ = _PT.Value("PROTO_OA_RECONCILE_REQ")
+    PROTO_OA_RECONCILE_RES = _PT.Value("PROTO_OA_RECONCILE_RES")
+    PROTO_OA_GET_POSITION_UNREALIZED_PNL_REQ = _PT.Value(
+        "PROTO_OA_GET_POSITION_UNREALIZED_PNL_REQ"
+    )
+    PROTO_OA_GET_POSITION_UNREALIZED_PNL_RES = _PT.Value(
+        "PROTO_OA_GET_POSITION_UNREALIZED_PNL_RES"
+    )
+    PROTO_OA_NEW_ORDER_REQ = _PT.Value("PROTO_OA_NEW_ORDER_REQ")
+    PROTO_OA_EXECUTION_EVENT = _PT.Value("PROTO_OA_EXECUTION_EVENT")
+    PROTO_OA_ACCOUNT_AUTH_RES = _PT.Value("PROTO_OA_ACCOUNT_AUTH_RES")
+    PROTO_OA_APPLICATION_AUTH_RES = _PT.Value("PROTO_OA_APPLICATION_AUTH_RES")
+except (ImportError, AttributeError) as _e:
+    logger.warning(f"Failed to load ProtoOAPayloadType enum: {_e}")
+    # Fallback defaults (may be wrong for some server versions)
+    PROTO_OA_DEPTH_EVENT = 2155
+    PROTO_OA_SUBSCRIBE_DEPTH_QUOTES_REQ = 2156
+    PROTO_OA_SUBSCRIBE_DEPTH_QUOTES_RES = 2157
+    PROTO_OA_UNSUBSCRIBE_DEPTH_QUOTES_REQ = 2158
+    PROTO_OA_UNSUBSCRIBE_DEPTH_QUOTES_RES = 2159
+    PROTO_OA_MARGIN_CHANGED_EVENT = 2141
+    PROTO_OA_SPOT_EVENT = 2131
+    PROTO_OA_SUBSCRIBE_SPOTS_REQ = 2127
+    PROTO_OA_SUBSCRIBE_SPOTS_RES = 2128
+    PROTO_OA_UNSUBSCRIBE_SPOTS_REQ = 2129
+    PROTO_OA_UNSUBSCRIBE_SPOTS_RES = 2130
+    PROTO_OA_TRADER_UPDATED_EVENT = 2123
+    PROTO_OA_ORDER_ERROR_EVENT = 2132
+    PROTO_OA_ASSET_LIST_REQ = 2112
+    PROTO_OA_ASSET_LIST_RES = 2113
+    PROTO_OA_RECONCILE_REQ = 2124
+    PROTO_OA_RECONCILE_RES = 2125
+    PROTO_OA_GET_POSITION_UNREALIZED_PNL_REQ = 2187
+    PROTO_OA_GET_POSITION_UNREALIZED_PNL_RES = 2188
+    PROTO_OA_NEW_ORDER_REQ = 2106
+    PROTO_OA_EXECUTION_EVENT = 2126
+    PROTO_OA_ACCOUNT_AUTH_RES = 2103
+    PROTO_OA_APPLICATION_AUTH_RES = 2101
 
 
 @dataclass
@@ -152,6 +231,7 @@ class CtraderClient:
         self._thread_pool = ThreadPoolExecutor(max_workers=2)
         self._is_connected = False
         self._authenticated = False
+        self._simulation = False  # True when running in simulation fallback mode
         self._account_info: Optional[AccountInfo] = None
         self._last_market_depth: Dict[int, MarketDepth] = {}
         self._subscribed_depth: Dict[int, bool] = {}  # symbol_id -> subscribed
@@ -165,6 +245,18 @@ class CtraderClient:
         self.on_depth_update: Optional[Callable] = None  # Callback for DOM updates
         self.on_disconnect: Optional[Callable] = None  # Called when connection drops
         self._listener_task: Optional[asyncio.Task] = None
+        self._heartbeat_task: Optional[asyncio.Task] = None
+
+        # Asset ID → currency name mapping (populated by _fetch_asset_list)
+        self._asset_id_to_currency: Dict[int, str] = {}
+        # Spot price tracking
+        self._subscribed_spots: Dict[int, bool] = {}
+        self._last_spot_prices: Dict[int, Dict[str, float]] = {}
+        # Correction factor: depth_price → spot_price multiplier per symbol
+        # Used in _handle_depth_event to fix mis-scaled depth prices.
+        self._depth_correction: Dict[int, float] = {}
+        # Position cache (populated by reconcile)
+        self._cached_positions: List[Dict] = []
 
     async def start(self) -> bool:
         try:
@@ -183,11 +275,22 @@ class CtraderClient:
                 await self.disconnect()
                 return self._start_simulation()
             await self._fetch_account_info()
+            # Asset list / currency mapping: best-effort, may not be supported
+            # on all servers.  Don't re-fetch account info — currency stays
+            # as "USD" fallback if the request fails.
+            try:
+                await asyncio.wait_for(self._fetch_asset_list(), timeout=3.0)
+            except (asyncio.TimeoutError, Exception):
+                logger.debug("Asset list skipped (not supported on this server)")
             self._is_connected = True
             # Start background listener for DOM and other events
             if self._listener_task and not self._listener_task.done():
                 self._listener_task.cancel()
             self._listener_task = asyncio.create_task(self._background_listener())
+            # Start heartbeat sender (required by cTrader — every 10s)
+            if self._heartbeat_task and not self._heartbeat_task.done():
+                self._heartbeat_task.cancel()
+            self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
             logger.info("cTrader client connected, authenticated, and listening")
             return True
         except Exception as e:
@@ -195,7 +298,8 @@ class CtraderClient:
             return self._start_simulation()
 
     def _start_simulation(self) -> bool:
-        self._is_connected = True
+        self._simulation = True
+        self._is_connected = False  # NOT connected — no background listener runs
         self._account_info = AccountInfo(
             account_id=str(self.account_id),
             ctid_trader_account_id=self.account_id,
@@ -283,12 +387,12 @@ class CtraderClient:
             with open(env_path) as f:
                 env = f.read()
 
-            refresh_token = re.search(r"CTRADER_REFRESH_TOKEN=(\S+)", env)
-            if not refresh_token:
+            match = re.search(r"CTRADER_REFRESH_TOKEN=(\S+)", env)
+            if not match:
                 logger.warning("Cannot refresh token: no refresh token in .env")
                 return False
 
-            refresh_token = refresh_token.group(1)
+            refresh_token = match.group(1)
             resp = http_requests.post(
                 "https://openapi.ctrader.com/apps/token",
                 data={
@@ -425,15 +529,24 @@ class CtraderClient:
             trader_res = ProtoOATraderRes()
             trader_res.ParseFromString(response.payload)
             trader = trader_res.trader
+            # NOTE: ProtoOATrader (cTrader Open API v0.9.2) does NOT expose
+            # equity, margin, freeMargin, or marginLevel fields.
+            # Only balance, leverageInCents, and depositAssetId are available.
+            # - equity is compensated by ExecutionEngine (balance + unrealised PnL)
+            # - margin comes from ProtoOAMarginChangedEvent push events
+            # - currency comes from _asset_id_to_currency (populated by _fetch_asset_list)
+            money_div = 10**trader.moneyDigits
+            dep_id = trader.depositAssetId if hasattr(trader, "depositAssetId") else 0
+            currency = self._asset_id_to_currency.get(dep_id, "USD")
             self._account_info = AccountInfo(
                 account_id=str(trader.traderLogin),
                 ctid_trader_account_id=trader.ctidTraderAccountId,
-                balance=trader.balance / (10**trader.moneyDigits),
-                equity=trader.balance / (10**trader.moneyDigits),
-                margin=0.0,
-                free_margin=0.0,
-                margin_level=0.0,
-                currency="USD",
+                balance=trader.balance / money_div,
+                equity=trader.balance / money_div,  # placeholder — see engine.py
+                margin=0.0,  # populated by _handle_margin_changed_event
+                free_margin=0.0,  # recalculated by _handle_margin_changed_event
+                margin_level=0.0,  # recalculated by _handle_margin_changed_event
+                currency=currency,
                 leverage=(
                     f"1:{int(trader.leverageInCents / 100)}"
                     if trader.leverageInCents
@@ -449,6 +562,42 @@ class CtraderClient:
             err.ParseFromString(response.payload)
             logger.warning(
                 f"Trader info fetch failed: {err.errorCode} - {err.description}"
+            )
+
+    async def _fetch_asset_list(self):
+        """Fetch asset list from broker to map depositAssetId → currency name.
+
+        Populates self._asset_id_to_currency so _fetch_account_info can
+        resolve the deposit currency instead of hardcoding "USD".
+        """
+        if not self._authenticated:
+            return
+        req = ProtoOAAssetListReq()
+        req.ctidTraderAccountId = self.account_id
+
+        # Register future before send (same race-safe pattern as _fetch_trendbar_batch)
+        fut = asyncio.get_event_loop().create_future()
+        self._pending_responses[PROTO_OA_ASSET_LIST_RES] = fut
+
+        if not await self._send_msg(PROTO_OA_ASSET_LIST_REQ, req):
+            self._pending_responses.pop(PROTO_OA_ASSET_LIST_RES, None)
+            return
+
+        try:
+            response = await asyncio.wait_for(fut, timeout=5.0)
+        except asyncio.TimeoutError:
+            self._pending_responses.pop(PROTO_OA_ASSET_LIST_RES, None)
+            logger.debug("Asset list request timed out (non-critical)")
+            return
+
+        if response and response.payloadType == PROTO_OA_ASSET_LIST_RES:
+            res = ProtoOAAssetListRes()
+            res.ParseFromString(response.payload)
+            for asset in res.asset:
+                self._asset_id_to_currency[asset.assetId] = asset.name
+            logger.info(
+                f"Loaded {len(self._asset_id_to_currency)} assets: "
+                f"{dict(list(self._asset_id_to_currency.items())[:5])}..."
             )
 
     def get_account_info(self) -> Optional[AccountInfo]:
@@ -468,9 +617,9 @@ class CtraderClient:
                 order_req.volume = order.volume
                 order_req.stopLoss = int(order.sl * 100)
                 order_req.takeProfit = int(order.tp * 100)
-                if await self._send_msg(203, order_req):
+                if await self._send_msg(PROTO_OA_NEW_ORDER_REQ, order_req):
                     response = await self._recv_msg()
-                    if response and response.payloadType == 204:
+                    if response and response.payloadType == PROTO_OA_EXECUTION_EVENT:
                         exec_event = ProtoOAExecutionEvent()
                         exec_event.ParseFromString(response.payload)
                         result = TradeResult(
@@ -541,6 +690,8 @@ class CtraderClient:
         self._subscribed_depth.clear()
         if self._listener_task and not self._listener_task.done():
             self._listener_task.cancel()
+        if self._heartbeat_task and not self._heartbeat_task.done():
+            self._heartbeat_task.cancel()
         if self._writer:
             try:
                 self._writer.close()
@@ -552,7 +703,11 @@ class CtraderClient:
         logger.info("cTrader client disconnected")
 
     def is_connected(self) -> bool:
-        return self._is_connected
+        return self._is_connected and not self._simulation
+
+    def is_simulation(self) -> bool:
+        """True when running in simulation fallback (no real broker connection)."""
+        return self._simulation
 
     async def _fetch_trendbar_batch(
         self,
@@ -560,9 +715,19 @@ class CtraderClient:
         period: int,
         from_ms: int,
         to_ms: int,
-        count: int = 500,
+        count: int = 10000,
     ) -> Optional[List]:
-        """Single trendbar request with future-based response."""
+        """Single trendbar request with future-based response.
+
+        IMPORTANT: The future is registered in _pending_responses BEFORE
+        _send_msg to eliminate a race condition with _background_listener.
+        If the response arrives before we await the future, _handle_message
+        will find and resolve it.  Cleanup is performed on send failure or
+        timeout to prevent future leaks.
+
+        count: Max bars per request. cTrader supports up to 10000,
+        but may return fewer based on server limits.
+        """
         req = ProtoOAGetTrendbarsReq()
         req.ctidTraderAccountId = self.account_id
         req.symbolId = symbol_id
@@ -570,11 +735,22 @@ class CtraderClient:
         req.toTimestamp = to_ms
         req.period = period
         req.count = count
-        if not await self._send_msg(2137, req):
-            return None
+
+        # Register future BEFORE send to win the race with background listener
         fut = asyncio.get_event_loop().create_future()
         self._pending_responses[2138] = fut
-        response = await asyncio.wait_for(fut, timeout=60.0)
+
+        if not await self._send_msg(2137, req):
+            self._pending_responses.pop(2138, None)
+            return None
+
+        try:
+            response = await asyncio.wait_for(fut, timeout=60.0)
+        except asyncio.TimeoutError:
+            self._pending_responses.pop(2138, None)
+            logger.warning("cTrader trendbar request timed out")
+            return None
+
         if response is None or response.payloadType != 2138:
             return None
         res = ProtoOAGetTrendbarsRes()
@@ -650,9 +826,9 @@ class CtraderClient:
             return None
 
         # Sort and convert
+        # Per cTrader docs: all trendbar prices are in 1/100,000 format
         sorted_minutes = sorted(all_bars.keys())
-        first_low = abs(all_bars[sorted_minutes[0]].low)
-        divisor = 100000.0 if first_low > 10000 else 100.0
+        divisor = 100000.0
 
         result = []
         for ts_min in sorted_minutes:
@@ -678,7 +854,13 @@ class CtraderClient:
         asyncio.create_task(self._background_listener())
 
     async def _background_listener(self):
-        """Continuously read messages and dispatch to handlers."""
+        """Continuously read messages and dispatch to handlers.
+
+        On connection loss, sets _is_connected = False and fires the
+        on_disconnect callback (with safety guard to prevent double-fire).
+        The existing reconnect infrastructure (ConnectionAgent →
+        ExecutionAgent._reconnect) handles full reconnection + resubscription.
+        """
         while self._is_connected and self._reader:
             try:
                 length_bytes = await asyncio.wait_for(
@@ -692,29 +874,86 @@ class CtraderClient:
                 response.ParseFromString(data)
                 await self._handle_message(response)
             except asyncio.TimeoutError:
+                # Normal: no message within 30s keepalive window
                 continue
+            except asyncio.CancelledError:
+                # Task was cancelled during graceful shutdown
+                break
             except Exception as e:
-                if self._is_connected:
-                    logger.debug(f"Background listener error: {e}")
+                # Connection lost, stream error, protocol error, etc.
+                logger.warning(
+                    f"Background listener disconnected: {type(e).__name__}: {e}"
+                )
                 break
 
+        # Connection is dead — notify the system (once)
+        was_connected = self._is_connected
         self._is_connected = False
-        if self.on_disconnect:
-            await self.on_disconnect()
+        if was_connected and self.on_disconnect:
+            try:
+                await self.on_disconnect()
+            except Exception as e:
+                logger.warning(f"Disconnect callback error: {e}")
+
+    async def _heartbeat_loop(self):
+        """Send ProtoHeartbeatEvent to the server every 8 seconds.
+
+        Required by cTrader Open API — without heartbeats the server
+        closes the connection after a period of inactivity.
+        See: https://help.ctrader.com/open-api/faq/
+
+        Interval is 8s (not 10s) to provide safety margin against
+        network jitter and server-side timeouts (~100-120s).
+        """
+        count = 0
+        while self._is_connected:
+            try:
+                await asyncio.sleep(8)
+                if self._is_connected and self._writer:
+                    heartbeat = ProtoHeartbeatEvent()
+                    ok = await self._send_msg(51, heartbeat)
+                    count += 1
+                    if count % 10 == 0:  # Log every ~80s
+                        logger.debug(f"Heartbeat #{count} sent (ok={ok})")
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug(f"Heartbeat error: {e}")
 
     async def _handle_message(self, msg):
-        """Dispatch incoming messages to appropriate handlers."""
-        # Check for pending request-response futures first
+        """Dispatch incoming messages to appropriate handlers.
+
+        Routes to:
+          - Request-response futures (priority)
+          - Market data (depth events, spot events)
+          - Account/margin updates (margin changed, trader updated)
+          - Order lifecycle events (execution, errors)
+          - Heartbeat events (keepalive from server — acknowledged silently)
+        """
+        # 1. Check for pending request-response futures first
         fut = self._pending_responses.pop(msg.payloadType, None)
         if fut is not None and not fut.done():
             fut.set_result(msg)
             return
+
+        # 2. Route by payload type
         if msg.payloadType == PROTO_OA_DEPTH_EVENT:
             await self._handle_depth_event(msg)
-        elif msg.payloadType == 2103:  # ProtoOAAccountAuthRes
+        elif msg.payloadType == PROTO_OA_SPOT_EVENT:
+            await self._handle_spot_event(msg)
+        elif msg.payloadType == PROTO_OA_MARGIN_CHANGED_EVENT:
+            await self._handle_margin_changed_event(msg)
+        elif msg.payloadType == PROTO_OA_TRADER_UPDATED_EVENT:
+            await self._handle_trader_updated_event(msg)
+        elif msg.payloadType == PROTO_OA_ORDER_ERROR_EVENT:
+            await self._handle_order_error_event(msg)
+        elif msg.payloadType == PROTO_OA_ACCOUNT_AUTH_RES:
             logger.debug("Received account auth response")
-        elif msg.payloadType == 2101:  # ProtoOAApplicationAuthRes
+        elif msg.payloadType == PROTO_OA_APPLICATION_AUTH_RES:
             logger.debug("Received app auth response")
+        elif msg.payloadType == 51:
+            # ProtoHeartbeatEvent — server keepalive, silently acknowledge
+            pass
         else:
             logger.debug(f"Unhandled message type: {msg.payloadType}")
 
@@ -772,6 +1011,44 @@ class CtraderClient:
             md.spread = (md.ask - md.bid) if (md.ask and md.bid) else 0.0
             md.volume = sum(b.size for b in md.bids) + sum(a.size for a in md.asks)
 
+            # Spot-price-based depth correction
+            # ----------------------------------------
+            # Depth events use _price_divisor to guess the raw→decimal scaling,
+            # which can be wrong for some symbols (e.g. XAUUSD where none of
+            # the standard power-of-10 divisors give ~$2000).  Spot events
+            # carry moneyDigits → exact scaling → correct prices.
+            #
+            # Strategy:
+            #   1. Compare depth bid to last-known spot bid.
+            #   2. If ratio is off by >10%, compute and cache a correction
+            #      factor for this symbol.
+            #   3. Apply the cached correction factor (default 1.0 = no-op)
+            #      to every price level in the order book.
+            spot = self._last_spot_prices.get(symbol_id)
+            if spot and spot["bid"] > 0 and md.bid > 0:
+                ratio = md.bid / spot["bid"]
+                if not (0.9 <= ratio <= 1.1):
+                    corr = spot["bid"] / md.bid
+                    self._depth_correction[symbol_id] = corr
+                    logger.info(
+                        f"Depth correction for {symbol}: × {corr:.4f} "
+                        f"(depth={md.bid:.2f}, spot={spot['bid']:.2f})"
+                    )
+                elif ratio >= 0.99 and ratio <= 1.01:
+                    # Prices are already aligned — clear any stale correction
+                    self._depth_correction.pop(symbol_id, None)
+
+            # Apply cached correction to all depth levels
+            corr = self._depth_correction.get(symbol_id, 1.0)
+            if corr != 1.0:
+                for level in md.bids:
+                    level.price *= corr
+                for level in md.asks:
+                    level.price *= corr
+                md.bid *= corr
+                md.ask *= corr
+                md.spread = md.ask - md.bid
+
             # Notify callbacks
             if self.on_depth_update:
                 self.on_depth_update(md)
@@ -785,7 +1062,12 @@ class CtraderClient:
             logger.warning(f"Failed to parse depth event: {e}")
 
     async def subscribe_depth(self, symbol_id: int) -> bool:
-        """Subscribe to Level II DOM for a symbol."""
+        """Subscribe to Level II DOM for a symbol.
+
+        Waits for the server's response before returning success.
+        Uses the future-based pattern (same as _fetch_trendbar_batch)
+        to avoid race conditions with _background_listener.
+        """
         if not _HAS_PROTOBUF or not self._authenticated:
             return False
         if symbol_id in self._subscribed_depth:
@@ -794,12 +1076,26 @@ class CtraderClient:
             req = ProtoOASubscribeDepthQuotesReq()
             req.ctidTraderAccountId = self.account_id
             req.symbolId.append(symbol_id)
-            if await self._send_msg(PROTO_OA_SUBSCRIBE_DEPTH_QUOTES_REQ, req):
+
+            # Register future before send
+            fut = asyncio.get_event_loop().create_future()
+            self._pending_responses[PROTO_OA_SUBSCRIBE_DEPTH_QUOTES_RES] = fut
+
+            if not await self._send_msg(PROTO_OA_SUBSCRIBE_DEPTH_QUOTES_REQ, req):
+                self._pending_responses.pop(PROTO_OA_SUBSCRIBE_DEPTH_QUOTES_RES, None)
+                return False
+
+            response = await asyncio.wait_for(fut, timeout=10.0)
+            if response and response.payloadType == PROTO_OA_SUBSCRIBE_DEPTH_QUOTES_RES:
                 self._subscribed_depth[symbol_id] = True
                 logger.info(
-                    f"Subscribed to Level II DOM for {REVERSE_SYMBOL_MAP.get(symbol_id, symbol_id)}"
+                    f"Subscribed to Level II DOM for "
+                    f"{REVERSE_SYMBOL_MAP.get(symbol_id, symbol_id)}"
                 )
                 return True
+            return False
+        except asyncio.TimeoutError:
+            logger.debug(f"Depth subscribe timeout for symbol {symbol_id}")
             return False
         except Exception as e:
             logger.warning(f"Failed to subscribe to depth: {e}")
@@ -824,25 +1120,280 @@ class CtraderClient:
             logger.warning(f"Failed to unsubscribe from depth: {e}")
             return False
 
+    # ------------------------------------------------------------------
+    # Spot price subscription (simpler alternative to Level II DOM)
+    # ------------------------------------------------------------------
+
+    async def subscribe_spots(self, symbol_id: int) -> bool:
+        """Subscribe to spot price updates for a symbol (lighter than depth).
+
+        NOTE: cTrader does NOT send ProtoOASubscribeSpotsRes for spot
+        subscriptions.  Instead, the server immediately starts pushing
+        ProtoOASpotEvent messages.  We fire-and-forget the request and
+        mark as subscribed; errors arrive as ProtoOAErrorRes which are
+        picked up by _handle_message.
+        """
+        if not _HAS_PROTOBUF or not self._authenticated:
+            return False
+        if symbol_id in self._subscribed_spots:
+            return True
+        try:
+            req = ProtoOASubscribeSpotsReq()
+            req.ctidTraderAccountId = self.account_id
+            req.symbolId.append(symbol_id)
+            if await self._send_msg(PROTO_OA_SUBSCRIBE_SPOTS_REQ, req):
+                self._subscribed_spots[symbol_id] = True
+                sym_name = REVERSE_SYMBOL_MAP.get(symbol_id, str(symbol_id))
+                logger.info(f"Subscribed to spot prices for {sym_name}")
+                return True
+            return False
+        except Exception as e:
+            logger.warning(f"Failed to subscribe to spot: {e}")
+            return False
+
+    async def unsubscribe_spots(self, symbol_id: int) -> bool:
+        """Unsubscribe from spot price updates."""
+        if not _HAS_PROTOBUF or symbol_id not in self._subscribed_spots:
+            return False
+        try:
+            req = ProtoOAUnsubscribeSpotsReq()
+            req.ctidTraderAccountId = self.account_id
+            req.symbolId.append(symbol_id)
+            if await self._send_msg(PROTO_OA_UNSUBSCRIBE_SPOTS_REQ, req):
+                del self._subscribed_spots[symbol_id]
+                return True
+            return False
+        except Exception as e:
+            logger.warning(f"Failed to unsubscribe spot: {e}")
+            return False
+
+    # ------------------------------------------------------------------
+    # Event handlers (push messages from broker)
+    # ------------------------------------------------------------------
+
+    async def _handle_margin_changed_event(self, msg):
+        """Process ProtoOAMarginChangedEvent → updates _account_info.margin."""
+        try:
+            event = ProtoOAMarginChangedEvent()
+            event.ParseFromString(msg.payload)
+            if self._account_info is None:
+                return
+            money_div = 10**event.moneyDigits
+            used_margin = event.usedMargin / money_div
+            self._account_info.margin = used_margin
+            # Recalculate free_margin and margin_level
+            eq = self._account_info.equity or self._account_info.balance
+            self._account_info.free_margin = max(eq - used_margin, 0.0)
+            self._account_info.margin_level = (
+                (eq / used_margin * 100) if used_margin > 0 else 0.0
+            )
+            self._account_info.timestamp = time.time()
+            logger.debug(
+                f"Margin changed: {used_margin:.2f} "
+                f"(free={self._account_info.free_margin:.2f}, "
+                f"level={self._account_info.margin_level:.2f}%)"
+            )
+            if self.on_account_update:
+                await self._on_account_update_safe()
+        except Exception as e:
+            logger.warning(f"Failed to parse margin changed event: {e}")
+
+    async def _handle_trader_updated_event(self, msg):
+        """Process ProtoOATraderUpdatedEvent → updated balance/equity/etc."""
+        try:
+            event = ProtoOATraderUpdatedEvent()
+            event.ParseFromString(msg.payload)
+            if self._account_info is None:
+                return
+            trader = event.trader  # ProtoOATrader nested message
+            if trader is None:
+                return
+            money_div = 10**trader.moneyDigits
+            old_balance = self._account_info.balance
+            self._account_info.balance = trader.balance / money_div
+            self._account_info.timestamp = time.time()
+            if old_balance != self._account_info.balance:
+                logger.info(
+                    f"Balance updated: {old_balance:.2f} → "
+                    f"{self._account_info.balance:.2f}"
+                )
+            if self.on_account_update:
+                await self._on_account_update_safe()
+        except Exception as e:
+            logger.warning(f"Failed to parse trader updated event: {e}")
+
+    async def _handle_order_error_event(self, msg):
+        """Process ProtoOAOrderErrorEvent → log order rejection details."""
+        try:
+            from ctrader_open_api.messages.OpenApiMessages_pb2 import (
+                ProtoOAOrderErrorEvent,
+            )
+
+            event = ProtoOAOrderErrorEvent()
+            event.ParseFromString(msg.payload)
+            logger.warning(
+                f"Order error: orderId={event.orderId} "
+                f"errorCode={event.errorCode} "
+                f"description={getattr(event, 'description', '')}"
+            )
+        except Exception as e:
+            logger.debug(f"Failed to parse order error event: {e}")
+
+    async def _handle_spot_event(self, msg):
+        """Process ProtoOASpotEvent → store latest spot bid/ask per symbol.
+
+        Per cTrader docs, spot event prices are in '1/100,000' format,
+        same as depth events.  Divisor is always 100000 for ALL symbols.
+        """
+        try:
+            event = ProtoOASpotEvent()
+            event.ParseFromString(msg.payload)
+            symbol_id = event.symbolId
+            bid = event.bid / 100000.0 if event.bid else 0.0
+            ask = event.ask / 100000.0 if event.ask else 0.0
+            self._last_spot_prices[symbol_id] = {
+                "bid": bid,
+                "ask": ask,
+                "timestamp": time.time(),
+            }
+            # Forward spot prices as market data.  Spot events have moneyDigits
+            # which gives EXACT price scaling (unlike depth events where
+            # _price_divisor may guess wrong).  We forward unconditionally so
+            # downstream consumers get accurate prices regardless of depth
+            # subscription status.
+            if self.on_market_data and bid > 0:
+                symbol = REVERSE_SYMBOL_MAP.get(symbol_id, str(symbol_id))
+                from dataclasses import dataclass
+
+                spot_depth = MarketDepth(
+                    symbol=symbol,
+                    bid=bid,
+                    ask=ask,
+                    spread=(ask - bid) if ask > bid else 0.0,
+                    volume=0,
+                    timestamp=time.time(),
+                    symbol_id=symbol_id,
+                )
+                await self.on_market_data(spot_depth)
+        except Exception as e:
+            logger.debug(f"Failed to parse spot event: {e}")
+
+    async def _on_account_update_safe(self):
+        """Fire on_account_update callback with error guarding."""
+        try:
+            if self.on_account_update:
+                result = self.on_account_update(self._account_info)
+                if hasattr(result, "__await__"):
+                    await result
+        except Exception as e:
+            logger.warning(f"Account update callback error: {e}")
+
+    # ------------------------------------------------------------------
+    # Position reconciliation
+    # ------------------------------------------------------------------
+
+    async def reconcile(self) -> Optional[List[Dict]]:
+        """Send ProtoOAReconcileReq to get current positions from broker.
+
+        Returns a list of position dicts or None on failure.
+        """
+        if not self._authenticated or not self._is_connected:
+            return None
+        req = ProtoOAReconcileReq()
+        req.ctidTraderAccountId = self.account_id
+
+        fut = asyncio.get_event_loop().create_future()
+        self._pending_responses[PROTO_OA_RECONCILE_RES] = fut
+
+        if not await self._send_msg(PROTO_OA_RECONCILE_REQ, req):
+            self._pending_responses.pop(PROTO_OA_RECONCILE_RES, None)
+            return None
+
+        try:
+            response = await asyncio.wait_for(fut, timeout=30.0)
+        except asyncio.TimeoutError:
+            self._pending_responses.pop(PROTO_OA_RECONCILE_RES, None)
+            logger.warning("Reconcile request timed out")
+            return None
+
+        if response and response.payloadType == PROTO_OA_RECONCILE_RES:
+            res = ProtoOAReconcileRes()
+            res.ParseFromString(response.payload)
+            positions = []
+            for pos in res.position:
+                positions.append(
+                    {
+                        "position_id": pos.positionId,
+                        "symbol_id": pos.symbolId,
+                        "volume": pos.volume,
+                        "price": pos.price,
+                        "direction": "BUY" if pos.tradeSide == 1 else "SELL",
+                        "swap": pos.swap,
+                    }
+                )
+            self._cached_positions = positions
+            if self.on_positions_update:
+                try:
+                    self.on_positions_update(positions)
+                except Exception:
+                    pass
+            logger.debug(f"Reconcile: {len(positions)} positions")
+            return positions
+        return None
+
+    # ------------------------------------------------------------------
+    # Unrealized PnL query
+    # ------------------------------------------------------------------
+
+    async def fetch_unrealized_pnl(self, position_id: int) -> Optional[float]:
+        """Query broker for unrealized PnL of a specific position."""
+        if not self._authenticated or not self._is_connected:
+            return None
+        req = ProtoOAGetPositionUnrealizedPnLReq()
+        req.ctidTraderAccountId = self.account_id
+        req.positionId = position_id
+
+        fut = asyncio.get_event_loop().create_future()
+        self._pending_responses[PROTO_OA_GET_POSITION_UNREALIZED_PNL_RES] = fut
+
+        if not await self._send_msg(PROTO_OA_GET_POSITION_UNREALIZED_PNL_REQ, req):
+            self._pending_responses.pop(PROTO_OA_GET_POSITION_UNREALIZED_PNL_RES, None)
+            return None
+
+        try:
+            response = await asyncio.wait_for(fut, timeout=15.0)
+        except asyncio.TimeoutError:
+            self._pending_responses.pop(PROTO_OA_GET_POSITION_UNREALIZED_PNL_RES, None)
+            logger.debug("Unrealized PnL request timed out")
+            return None
+
+        if (
+            response
+            and response.payloadType == PROTO_OA_GET_POSITION_UNREALIZED_PNL_RES
+        ):
+            res = ProtoOAGetPositionUnrealizedPnLRes()
+            res.ParseFromString(response.payload)
+            pnl = res.positionUnrealizedPnL
+            money_div = 10 ** res.moneyDigits if hasattr(res, "moneyDigits") else 1
+            return pnl / money_div
+        return None
+
     @staticmethod
     def _price_divisor(symbol: str, raw: float) -> float:
-        """Determine the correct divisor for cTrader depth price scaling.
+        """Return the divisor for cTrader price scaling.
 
-        Uses per-symbol thresholds since raw values from cTrader can vary
-        in scale between connections and market data sessions.
+        Per the official cTrader Open API documentation, ALL prices in
+        depth events, spot events, and trendbar messages are stored in
+        '1/100,000' format.  The divisor is ALWAYS 100000 for every
+        symbol type (forex, metals, crypto, indices, etc.).
+
+        Reference:
+        https://help.ctrader.com/open-api/symbol-data/
+          - Depth quotes: "divide it by 100000"
+          - Live quotes:  "divide it by 100000"
+          - Trendbars:    "divide it by 100000"
         """
-        sym = symbol.upper()
-        if "JPY" in sym:
-            return 100000.0
-        if sym in ("EURUSD", "GBPUSD", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD"):
-            return 100000.0
-        if sym == "BTCUSD":
-            return 100.0 if raw < 100_000_000 else 1000.0
-        if sym in ("XAUUSD", "XTIUSD"):
-            return 100.0 if raw < 10_000_000 else 1000.0
-        if sym == "US500":
-            return 100.0 if raw < 5_000_000 else 1000.0
-        return 100.0
+        return 100000.0
 
     def get_market_depth(self, symbol: str) -> Optional[MarketDepth]:
         """Get latest Level II market depth for a symbol."""

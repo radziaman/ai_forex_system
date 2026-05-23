@@ -97,6 +97,16 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     df["atr_21"] = tr.rolling(21).mean()
     df["vol_ratio"] = df["atr_14"] / df["atr_21"].replace(0, np.nan)
     df["volatility_20"] = df["close"].rolling(20).std() / df["close"].replace(0, np.nan)
+
+    # HAR-RV features (Corsi 2009) — realized volatility at 1d, 5d, 20d horizons
+    # Proven to outperform GARCH for volatility prediction
+    sq_ret = df["mom_1"] ** 2
+    df["rv_1d"] = sq_ret.rolling(1).sum()
+    df["rv_5d"] = sq_ret.rolling(5).sum()
+    df["rv_20d"] = sq_ret.rolling(20).sum()
+    # HAR-RV ratio: short-term vs long-term vol regime
+    df["har_ratio"] = df["rv_5d"] / df["rv_20d"].replace(0, np.nan)
+
     df["bb_mid"] = df["close"].rolling(20).mean()
     bb_std = df["close"].rolling(20).std()
     df["bb_upper"] = df["bb_mid"] + 2 * bb_std
@@ -264,6 +274,15 @@ def compute_cross_asset_features(
             z = (spread[-1] - np.mean(spread)) / (np.std(spread) + 1e-10)
             df[f"zscore_{name}"] = z
 
+            # Cross-asset momentum (Moskowitz, Ooi & Pedersen 2012)
+            # Lagged returns of other assets have predictive power for current asset
+            for lag in [1, 5, 21]:
+                if len(their_close) > lag:
+                    mom = (their_close[-1] - their_close[-lag - 1]) / their_close[
+                        -lag - 1
+                    ]
+                    df[f"xasset_mom_{name}_{lag}d"] = mom
+
     # Sentiment features
     if sentiment_scores:
         for currency, score in sentiment_scores.items():
@@ -304,7 +323,8 @@ class FeaturePipeline:
         self._external_feature_columns: List[str] = []
 
     def _get_feature_columns(self, df: pd.DataFrame) -> List[str]:
-        return [c for c in df.columns if c not in TARGET_COLS]
+        exclude = TARGET_COLS | {"timestamp", "datetime", "time", "date"}
+        return [c for c in df.columns if c not in exclude]
 
     def _extract_symbol_data(
         self, dfs: Dict[str, pd.DataFrame], symbol: str = "EURUSD"

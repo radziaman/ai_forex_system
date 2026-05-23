@@ -35,6 +35,8 @@ STRATEGY_SL_TP = {
     "ppo_volatile": (2.5, 5.0),  # PPO volatile agent
     "ppo_crisis": (1.0, 2.0),  # PPO crisis agent
     "lstm_cnn": (2.0, 4.0),  # LSTM model
+    "orderflow": (1.5, 2.5),  # Order flow / CVD (tight SL, moderate TP)
+    "macro_sentiment": (2.0, 4.0),  # Macroeconomic / sentiment (wider SL)
 }
 
 
@@ -182,12 +184,16 @@ class SignalAgent(BaseAgent):
                     t.get("ticker", "") for t in tradeable if t.get("ticker")
                 ]
                 if new_symbols:
+                    # Merge screener findings with core symbols (don't replace)
+                    from data.data_manager import SYMBOLS as CORE_SYMBOLS
+
+                    merged = list(dict.fromkeys(list(CORE_SYMBOLS) + new_symbols))
+                    self._active_symbols = merged
+                    self.set_world("signal.active_symbols", merged)
                     self.log_state(
-                        f"Screener updated: {len(new_symbols)} tradeable instruments "
-                        f"({', '.join(new_symbols[:5])}{'...' if len(new_symbols) > 5 else ''})"
+                        f"Screener merged: {len(merged)} symbols "
+                        f"({len(CORE_SYMBOLS)} core + {len(new_symbols)} screener)"
                     )
-                    self._active_symbols = new_symbols
-                    self.set_world("signal.active_symbols", new_symbols)
             return
 
         if message.msg_type == MessageType.FEATURES_READY:
@@ -601,6 +607,51 @@ class SignalAgent(BaseAgent):
         for sym in self._active_symbols:
             self._per_symbol_tracker.register(sym, "vol_mean_rev", "volatile")
 
+        # Phase 7: Order flow / CVD expert (Evans & Lyons 2002)
+        self.ensemble.add_expert(
+            name="orderflow",
+            predict_fn=self._orderflow_prediction,
+            confidence_fn=self._orderflow_confidence,
+            regime="ranging",
+        )
+        self._strategy_tracker.register_strategy("orderflow", "ranging")
+        for sym in self._active_symbols:
+            self._per_symbol_tracker.register(sym, "orderflow", "ranging")
+
+        # Phase 8: Macro sentiment expert (uses FRED data for event-driven signals)
+        self.ensemble.add_expert(
+            name="macro_sentiment",
+            predict_fn=self._macro_sentiment_prediction,
+            confidence_fn=lambda X: 0.5,
+            regime="trending",
+        )
+        self._strategy_tracker.register_strategy("macro_sentiment", "trending")
+        for sym in self._active_symbols:
+            self._per_symbol_tracker.register(sym, "macro_sentiment", "trending")
+
+        # Phase 9: Social sentiment expert (Twitter/Reddit market sentiment)
+        self.ensemble.add_expert(
+            name="social_sentiment",
+            predict_fn=self._social_sentiment_prediction,
+            confidence_fn=lambda X: 0.35,  # Lower confidence — noisy signal
+            regime="volatile",
+        )
+        self._strategy_tracker.register_strategy("social_sentiment", "volatile")
+        for sym in self._active_symbols:
+            self._per_symbol_tracker.register(sym, "social_sentiment", "volatile")
+
+        # Phase 10: XGBoost expert (Chen 2016) — gradient boosted trees
+        # Provides ensemble diversity: XGBoost + Neural networks outperform either alone
+        self.ensemble.add_expert(
+            name="xgboost",
+            predict_fn=self._xgboost_prediction,
+            confidence_fn=lambda X: 0.55,
+            regime="ranging",
+        )
+        self._strategy_tracker.register_strategy("xgboost", "ranging")
+        for sym in self._active_symbols:
+            self._per_symbol_tracker.register(sym, "xgboost", "ranging")
+
     def _get_lstm_prediction(self, symbol: str) -> float:
         """Get symbol-specific LSTM prediction."""
         model = self._lstm_models.get(symbol) or self._lstm_models.get("EURUSD")
@@ -893,6 +944,172 @@ class SignalAgent(BaseAgent):
                 if rsi > 70:
                     return -0.005  # Overbought + vol spike = short
             return 0.0
+        except Exception:
+            return 0.0
+
+    # ── Phase 7: Order flow / CVD expert ────────────────────────────────
+
+    def _orderflow_prediction(self, X: np.ndarray) -> float:
+        """Order flow / CVD-based prediction (Evans & Lyons 2002).
+
+        Uses Cumulative Volume Delta (CVD) and order book imbalance from
+        depth events.  Key signals:
+          - CVD rising + price flat → accumulation → BUY
+          - CVD falling + price flat → distribution → SELL
+          - Extreme DOM imbalance (>0.6 or <-0.6) → mean reversion
+          - CVD divergence (price up/CVD down) → reversal SELL
+
+        Data sources (via world state, populated by DataAgent):
+          - data.orderflow.{symbol}.cvd
+          - data.orderflow.{symbol}.imbalance
+          - data.orderflow.{symbol}.dom_imbalance
+        """
+        try:
+            if not hasattr(self, "_current_symbol") or not self._current_symbol:
+                return 0.0
+
+            sym = self._current_symbol
+            of = self.get_world(f"data.orderflow.{sym}", {})
+
+            cvd = of.get("cvd", 0.0)
+            cvd_slope = of.get("cvd_slope", 0.0)
+            dom_imb = of.get("dom_imbalance", 0.0)
+
+            signal = 0.0
+
+            # Signal 1: CVD slope direction
+            if abs(cvd_slope) > 0.1:
+                signal += cvd_slope * 0.002  # Scale to price move
+
+            # Signal 2: Extreme DOM imbalance → mean reversion
+            if abs(dom_imb) > 0.6:
+                signal -= dom_imb * 0.003  # Fade the imbalance
+
+            # Signal 3: CVD running absolute level beyond normal range
+            if abs(cvd) > 500:
+                signal += (cvd / 5000.0) * 0.001
+
+            return float(np.clip(signal, -0.008, 0.008))
+
+        except Exception:
+            return 0.0
+
+    def _orderflow_confidence(self, X: np.ndarray) -> float:
+        """Confidence based on how extreme the order flow signals are."""
+        try:
+            sym = self._current_symbol
+            of = self.get_world(f"data.orderflow.{sym}", {})
+            cvd = abs(of.get("cvd", 0.0))
+            dom_imb = abs(of.get("dom_imbalance", 0.0))
+            # Higher confidence when signals are more extreme
+            confidence = min(0.4 + (cvd / 2000.0) * 0.3 + dom_imb * 0.3, 0.75)
+            return float(confidence)
+        except Exception:
+            return 0.4
+
+    # ── Phase 8: Macro sentiment expert ─────────────────────────────────
+
+    def _macro_sentiment_prediction(self, X: np.ndarray) -> float:
+        """Macroeconomic sentiment prediction using FRED/economic calendar data.
+
+        (Andersen, Bollerslev, Diebold & Vega 2003)
+          - High-impact events (NFP, CPI, rate decisions) cause directional moves
+          - Suppress trading before major events (event risk)
+          - After event: trade in direction of surprise
+        """
+        try:
+            macro = self.get_world("macro.data", {})
+            upcoming = macro.get("upcoming_events", [])
+
+            if not upcoming:
+                return 0.0
+
+            # Check if any high-impact event is within 2 hours
+            now = time.time()
+            for ev in upcoming:
+                event_ts = ev.get("timestamp", 0)
+                hours_until = (event_ts - now) / 3600
+                if ev.get("impact") == "high" and 0 < hours_until < 2:
+                    # Suppress: return HOLD before major events
+                    return 0.0
+
+            # If we had a recent event (within 1 hour), look for aftermath
+            # direction (simplified: direction = event severity × currency strength)
+            recent = [ev for ev in upcoming if ev.get("timestamp", 0) > now - 3600]
+            if recent:
+                # Fade the event: most events cause overshoot then reversion
+                return -0.002  # Small mean reversion bias after events
+
+            return 0.0
+
+        except Exception:
+            return 0.0
+
+    # ── Phase 9: Social sentiment expert ────────────────────────────────
+
+    def _social_sentiment_prediction(self, X: np.ndarray) -> float:
+        """Social media sentiment prediction (Twitter/Reddit).
+
+        Reads sentiment scores published by monitoring_agent from world state.
+        Social sentiment is a noisy but leading indicator for retail-driven
+        moves, especially in crypto and retail FX pairs.
+
+        Signal logic:
+          - Extreme sentiment (>0.6 or <-0.6) → contrarian fade
+          - Moderate sentiment (0.2-0.4) → follow trend
+          - No data → neutral (0.0)
+        """
+        try:
+            sentiment = self.get_world("sentiment.aggregate", {})
+            score = sentiment.get("score", 0.0)
+            confidence = sentiment.get("confidence", 0.0)
+
+            if confidence < 0.3:
+                return 0.0  # Not enough data
+
+            if abs(score) > 0.6:
+                # Extreme sentiment → contrarian fade
+                return float(-score * 0.003)
+            elif abs(score) > 0.2:
+                # Moderate sentiment → follow trend
+                return float(score * 0.002)
+            return 0.0
+
+        except Exception:
+            return 0.0
+
+    # ── Phase 10: XGBoost expert (Chen 2016) ────────────────────────────
+
+    def _xgboost_prediction(self, X: np.ndarray) -> float:
+        """XGBoost gradient-boosted trees prediction.
+
+        Ensemble diversity principle (Brown 2005):
+        Combining XGBoost (tree-based) with neural network experts
+        produces more robust ensemble predictions than either alone.
+        """
+        try:
+            sym = self._current_symbol
+            if not sym:
+                return 0.0
+
+            # Load gradient boosting model for this symbol (XGBoost or sklearn)
+            import joblib
+            import os
+
+            model_path = f"models/xgboost_{sym}.pkl"
+            if not os.path.exists(model_path):
+                return 0.0
+
+            gbm_model = joblib.load(model_path)
+            X_arr = np.asarray(X).reshape(1, -1)
+
+            # Model expects 2D (samples, features) — flatten if 3D (lookback, features)
+            if X_arr.ndim == 3:
+                X_arr = X_arr.reshape(X_arr.shape[0], -1)
+
+            pred = gbm_model.predict(X_arr)[0]
+            return float(np.clip(pred, -0.01, 0.01))
+
         except Exception:
             return 0.0
 

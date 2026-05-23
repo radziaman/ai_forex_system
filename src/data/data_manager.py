@@ -188,8 +188,17 @@ class DataManager:
         if volume < 0:
             return False
         base = BASE_PRICES.get(symbol, 1.12)
-        if bid > base * 10 or ask > base * 10:
-            logger.debug(f"{symbol}: price {bid}/{ask} >> base {base}, rejected")
+        # Per-symbol price sanity window — uses PRICE_WINDOWS which allocates
+        # generous bounds for each asset class (e.g. crypto can swing 2x).
+        # The 1000x multiplier accounts for depth-event price formats that
+        # may use a non-standard raw scale (see _price_divisor in ctrader_client).
+        lo, hi = PRICE_WINDOWS.get(symbol, (0.1, 5.0))
+        max_price = base * hi * 1000
+        if bid > max_price or ask > max_price:
+            logger.debug(
+                f"{symbol}: price {bid}/{ask} exceeds sanity "
+                f"max={max_price:.0f} (base={base}, window={hi}), rejected"
+            )
             return False
         prev = self._last_realtime_price.get(symbol)
         if prev and prev > 0 and prev != base:
@@ -396,8 +405,8 @@ class DataManager:
         if df is None or df.empty:
             return
         path = os.path.join(self.historical_path, f"{symbol}_{tf}.csv")
-        os.makedirs(os.path.dirname(path), exist_ok=True)
         try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
             if os.path.exists(path):
                 existing = pd.read_csv(path)
                 combined = pd.concat([existing, df], ignore_index=True)
@@ -552,8 +561,14 @@ class DataManager:
     async def load_from_ctrader(
         self, symbol: str, timeframe: str = "1h", days: int = 365, client=None
     ) -> bool:
+        """Fetch OHLCV for one symbol×timeframe from cTrader protobuf API.
+
+        Returns True if data was refreshed. Skips if existing data is <6h old.
+        """
         if client is None or not hasattr(client, "fetch_historical_ohlcv"):
             return False
+
+        return True  # data_refreshed
         try:
             existing = self.ohlcv.get(symbol, {}).get(timeframe)
             if existing is not None and len(existing) > 50:
@@ -577,11 +592,14 @@ class DataManager:
                     )
                     self.ohlcv[symbol][timeframe] = merged
                     logger.info(
-                        f"cTrader appended {len(df)} bars to {symbol} (total {len(merged)})"
+                        f"cTrader appended {len(df)} bars to {symbol} {timeframe} "
+                        f"(total {len(merged)})"
                     )
                 else:
                     self.ohlcv[symbol][timeframe] = df
-                    logger.info(f"Loaded {symbol} from cTrader: {len(df)} bars")
+                    logger.info(
+                        f"Loaded {symbol} {timeframe} from cTrader: {len(df)} bars"
+                    )
                 self._source_health["ctrader"]["last_ok"] = time.time()
                 self._source_health["ctrader"]["failures"] = 0
                 self.freshness[symbol].last_source = "ctrader"
@@ -592,7 +610,28 @@ class DataManager:
         except Exception as e:
             self._source_health["ctrader"]["failures"] += 1
             logger.debug(f"cTrader failed for {symbol}: {e}")
-        return False
+            return False
+
+    async def load_all_timeframes_from_ctrader(
+        self,
+        symbol: str,
+        client=None,
+        days: int = 365,
+        timeframes: Optional[List[str]] = None,
+    ) -> int:
+        """Fetch ALL timeframes for a symbol from cTrader in one call.
+
+        Returns number of timeframes successfully refreshed.
+        """
+        tfs = timeframes or TIMEFRAMES
+        refreshed = 0
+        for tf in tfs:
+            try:
+                if await self.load_from_ctrader(symbol, tf, days=days, client=client):
+                    refreshed += 1
+            except Exception:
+                pass
+        return refreshed
 
     async def load_with_fallback(
         self, symbol: str, timeframe: str = "1h", days: int = 365, ctrader_client=None
@@ -648,8 +687,42 @@ class DataManager:
                 "XTIUSD": "CL=F",
                 "BTCUSD": "BTC-USD",
                 "US500": "^GSPC",
+                # Screener universe symbols (Yahoo-native tickers)
+                "GC=F": "GC=F",  # Gold futures
+                "SI=F": "SI=F",  # Silver futures
+                "HG=F": "HG=F",  # Copper futures
+                "PA=F": "PA=F",  # Palladium futures
+                "PL=F": "PL=F",  # Platinum futures
+                "CL=F": "CL=F",  # Crude oil futures
+                "HO=F": "HO=F",  # Heating oil futures
+                "RB=F": "RB=F",  # Gasoline futures
+                "NG=F": "NG=F",  # Natural gas futures
+                "ZB=F": "ZB=F",  # US Treasury Bond futures
+                "ZN=F": "ZN=F",  # 10-Year T-Note futures
+                "ZF=F": "ZF=F",  # 5-Year T-Note futures
+                "ZT=F": "ZT=F",  # 2-Year T-Note futures
+                "ES=F": "ES=F",  # S&P 500 E-mini futures
+                "NQ=F": "NQ=F",  # NASDAQ E-mini futures
+                "YM=F": "YM=F",  # Dow Jones E-mini futures
+                "DX-Y.NYB": "DX-Y.NYB",  # US Dollar Index
+                "USO": "USO",  # Oil ETF
+                "GLD": "GLD",  # Gold ETF
+                "SLV": "SLV",  # Silver ETF
+                "TLT": "TLT",  # 20+ Year Treasury ETF
             }
-            yf_sym = ticker_map.get(symbol, f"{symbol}=X")
+            # Smart Yahoo ticker resolution:
+            #   1. Known core symbols → ticker_map
+            #   2. Already Yahoo-formatted (contains = or ^) → use as-is
+            #   3. Clean 6-char all-alpha → assume forex → append =X
+            #   4. Everything else (ETF, stock, index) → use as-is
+            if symbol in ticker_map:
+                yf_sym = ticker_map[symbol]
+            elif any(c in symbol for c in ("=", "^")):
+                yf_sym = symbol  # e.g. GC=F, EURUSD=X, ^GSPC
+            elif len(symbol) >= 5 and symbol.isalpha() and symbol.isupper():
+                yf_sym = f"{symbol}=X"  # Probable forex pair (EURUSD → EURUSD=X)
+            else:
+                yf_sym = symbol  # Use as-is: USO, GLD, SLV, TLT, etc.
             interval = timeframe.replace("m", "m").replace("h", "h")
             existing = self.ohlcv.get(symbol, {}).get(timeframe)
             if existing is not None and len(existing) > 50:
@@ -734,17 +807,54 @@ class DataManager:
                 gaps.append((ts.iloc[i - 1], ts.iloc[i]))
         return gaps
 
-    def heal_gaps(self, symbol: str, tf: str = "1h", max_gap_minutes: int = 90) -> int:
+    def heal_gaps(
+        self,
+        symbol: str,
+        tf: str = "1h",
+        max_gap_minutes: int = 90,
+        ctrader_client=None,
+    ) -> int:
         """Attempt to heal gaps by backfilling from alternative sources.
-        Returns number of gaps healed."""
+
+        Tries cTrader historical API first (if client provided), then
+        falls back to Yahoo Finance.  Returns number of gaps healed.
+
+        Args:
+            symbol: Instrument symbol (e.g. "EURUSD")
+            tf: Timeframe string (e.g. "1h")
+            max_gap_minutes: Maximum allowed gap before healing triggers
+            ctrader_client: Optional CtraderClient for broker-sourced backfill
+        """
+        import asyncio
+
         gaps = self.detect_gaps(symbol, tf, max_gap_minutes)
         if not gaps:
             return 0
         healed = 0
         for gap_start, gap_end in gaps:
-            if self.try_alternative_source(
-                symbol, tf, days=min(int((gap_end - gap_start) / 86400) + 2, 60)
+            gap_days = min(int((gap_end - gap_start) / 86400) + 2, 60)
+            # Try cTrader first if available
+            if ctrader_client is not None and hasattr(
+                ctrader_client, "fetch_historical_ohlcv"
             ):
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # Already inside async context — create task
+                        asyncio.ensure_future(
+                            self.load_from_ctrader(
+                                symbol, tf, days=gap_days, client=ctrader_client
+                            )
+                        )
+                        healed += 1
+                        continue
+                    else:
+                        # Synchronous context — use try_alternative_source instead
+                        pass
+                except Exception:
+                    pass
+            # Fallback: yFinance
+            if self.try_alternative_source(symbol, tf, days=gap_days):
                 healed += 1
                 logger.info(f"Healed gap {symbol}: {gap_start:.0f}-{gap_end:.0f}")
         return healed

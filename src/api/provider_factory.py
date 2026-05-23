@@ -21,7 +21,6 @@ class CtraderExecutionAdapter(ExecutionProvider):
     """Wraps CtraderClient to conform to the ExecutionProvider ABC."""
 
     def __init__(self, secrets: Secrets):
-        from api.symbol_map import get_symbol_id
         from api.ctrader_client import CtraderClient
 
         self._client = CtraderClient(
@@ -78,6 +77,7 @@ class CtraderExecutionAdapter(ExecutionProvider):
     async def place_order(self, order: OrderRequest) -> Optional[OrderResult]:
         from api.ctrader_client import TradeOrder
 
+        from api.symbol_map import get_symbol_id
         trade_order = TradeOrder(
             symbol=order.symbol,
             symbol_id=get_symbol_id(order.symbol),

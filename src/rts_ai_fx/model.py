@@ -22,6 +22,9 @@ try:
         GlobalMaxPooling1D,
         Conv1D,
         BatchNormalization,
+        GlobalAveragePooling1D,
+        LayerNormalization,
+        MultiHeadAttention,
     )
 
     TENSORFLOW_AVAILABLE = True
@@ -30,7 +33,18 @@ except ImportError:
 
 
 class LSTMCNNHybrid:
-    """Hybrid LSTM-CNN for forex price prediction."""
+    """Hybrid LSTM-CNN with optional Transformer attention for forex prediction.
+
+    Architecture:
+      - LSTM branch: captures sequential dependencies
+      - CNN branch: captures local patterns
+      - Transformer attention (optional): attends to relevant historical periods
+        (Vaswani et al. 2017 — "Attention Is All You Need")
+      - Fusion: concatenated LSTM + CNN + attention features
+
+    The transformer attention is disabled by default for backward compatibility.
+    Set use_transformer=True when building new models.
+    """
 
     def __init__(
         self,
@@ -38,27 +52,56 @@ class LSTMCNNHybrid:
         n_features: int = 49,
         lstm_units: int = 128,
         cnn_filters: int = 128,
+        use_transformer: bool = False,
+        transformer_heads: int = 4,
+        transformer_dim: int = 64,
     ):
         self.lookback = lookback
         self.n_features = n_features
         self.lstm_units = lstm_units
         self.cnn_filters = cnn_filters
+        self.use_transformer = use_transformer
+        self.transformer_heads = transformer_heads
+        self.transformer_dim = transformer_dim
         self.model = None  # type: Optional[Model]
 
     def build(self):
         if not TENSORFLOW_AVAILABLE:
             raise ImportError("TensorFlow required")
         inputs = Input(shape=(self.lookback, self.n_features), name="input")
+
+        # LSTM branch
         lstm_branch = LSTM(
             self.lstm_units, dropout=0.2, return_sequences=False, name="lstm"
         )(inputs)
         lstm_branch = Dropout(0.2)(lstm_branch)
+
+        # CNN branch
         cnn_branch = Conv1D(
             self.cnn_filters, 3, activation="relu", padding="same", name="cnn"
         )(inputs)
         cnn_branch = GlobalMaxPooling1D()(cnn_branch)
         cnn_branch = Dropout(0.2)(cnn_branch)
-        fused = Concatenate(name="fusion")([lstm_branch, cnn_branch])
+
+        # Transformer attention branch (Vaswani 2017)
+        if self.use_transformer:
+            # Multi-head self-attention over the sequence dimension
+            attn_input = Dense(self.transformer_dim)(inputs)
+            # Use Keras MultiHeadAttention if available (TF 2.x)
+            attn = MultiHeadAttention(
+                num_heads=self.transformer_heads,
+                key_dim=self.transformer_dim // self.transformer_heads,
+                name="transformer_attention",
+            )(attn_input, attn_input)
+            attn = GlobalAveragePooling1D()(attn)
+            attn = LayerNormalization()(attn)
+            attn = Dropout(0.2)(attn)
+            fusion_inputs = [lstm_branch, cnn_branch, attn]
+        else:
+            fusion_inputs = [lstm_branch, cnn_branch]
+
+        # Fusion
+        fused = Concatenate(name="fusion")(fusion_inputs)
         fused = Dense(64, activation="relu")(fused)
         fused = BatchNormalization()(fused)
         fused = Dropout(0.2)(fused)
@@ -67,9 +110,14 @@ class LSTMCNNHybrid:
             inputs=inputs, outputs=outputs, name="lstm_cnn_hybrid"
         )
         self.model.compile(
-            optimizer=tf.keras.optimizers.Adam(0.001), loss="mse", metrics=["mae"]
+            optimizer=tf.keras.optimizers.legacy.Adam(0.001),
+            loss="mse",
+            metrics=["mae"],
         )
         return self.model
+
+    def is_trained(self) -> bool:
+        return self.model is not None
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         if self.model is not None:
@@ -230,6 +278,9 @@ class ProfitabilityClassifier:
             callbacks=callbacks,
             verbose=1,
         )
+
+    def is_trained(self) -> bool:
+        return self.model is not None
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         if self.model is not None:

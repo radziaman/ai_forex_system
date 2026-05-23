@@ -21,6 +21,7 @@ class TradeRecord:
     status: str = "OPEN"
     reason: str = ""
     position_id: int = 0
+    slippage: float = 0.0  # Difference between expected and actual fill
 
 
 class ExecutionEngine:
@@ -122,17 +123,19 @@ class ExecutionEngine:
             result = await self.client.place_order(order)
             if result and result.status == "FILLED":
                 self._position_counter += 1
+                fill_price = result.filled_price or price
                 trade = TradeRecord(
                     timestamp=time.time(),
                     symbol=symbol,
                     direction=direction,
                     volume=volume,
-                    entry_price=result.filled_price or price,
+                    entry_price=fill_price,
                     sl=sl,
                     tp=tp,
                     status="OPEN",
                     reason=reason,
                     position_id=self._position_counter,
+                    slippage=abs(fill_price - price),
                 )
                 self.open_positions[trade.position_id] = trade
                 self.total_trades += 1
@@ -337,6 +340,14 @@ class ExecutionEngine:
             logger.error(f"Order rejected: {result.error}")
 
     async def get_account_info(self):
+        """Return account info with correct equity calculation.
+
+        NOTE: ProtoOATrader (cTrader protobuf) does NOT include equity/margin/
+        marginLevel/currency fields.  The broker's AccountInfo.balance is the
+        only reliable field from that message.  We ALWAYS calculate equity as
+        balance + unrealised PnL from open positions, regardless of mode.
+        """
+        balance = self._balance
         if self.mode == "LIVE" and self.client is not None:
             try:
                 if hasattr(self.client, "get_account_info") and callable(
@@ -348,15 +359,10 @@ class ExecutionEngine:
                         else self.client.get_account_info()
                     )
                     if acc:
-                        return {
-                            "balance": getattr(acc, "balance", self._balance),
-                            "equity": getattr(acc, "equity", self._balance),
-                            "margin": getattr(acc, "margin", 0),
-                            "free_margin": getattr(acc, "free_margin", self._balance),
-                            "currency": getattr(acc, "currency", "USD"),
-                        }
+                        balance = getattr(acc, "balance", self._balance)
             except Exception as e:
                 logger.warning(f"Broker get_account_info failed: {e}")
+
         unrealized = 0.0
         for trade in self.open_positions.values():
             price = self._live_price(trade.symbol)
@@ -368,12 +374,12 @@ class ExecutionEngine:
                     trade.volume,
                     trade.symbol,
                 )
-        equity = self._balance + unrealized
+        equity = balance + unrealized
         if equity > self._peak_balance:
             self._peak_balance = equity
         free_margin = equity
         return {
-            "balance": round(self._balance, 2),
+            "balance": round(balance, 2),
             "equity": round(equity, 2),
             "margin": 0.0,
             "free_margin": round(free_margin, 2),

@@ -36,6 +36,70 @@ class RegimeAgent(BaseAgent):
 
     REGIME_NAMES = ["trending", "ranging", "volatile", "crisis"]
 
+    async def _publish_cross_asset_regime(self):
+        """Detect global risk-on/risk-off regime from cross-asset data.
+
+        Combines signals from FX, equity, bond, and commodity markets to
+        determine the global risk regime.  During risk-off (crisis),
+        the system becomes defensive: reduces position sizes, tightens SLs.
+        """
+        try:
+            # Get prices from world state
+            us500 = self.get_world("data.price.US500", 0)
+            xauusd = self.get_world("data.price.XAUUSD", 0)
+            usdjpy = self.get_world("data.price.USDJPY", 0)
+            eurusd = self.get_world("data.price.EURUSD", 0)
+
+            if not all([us500, xauusd, usdjpy]):
+                return
+
+            # Simplified risk regime scoring:
+            # - Equities up → risk-on
+            # - Gold up → mixed (can be risk-on or fear)
+            # - USD/JPY up → risk-on (carry trade)
+            # - EUR/USD up → risk-on (anti-dollar)
+
+            risk_score = 0.0
+            # We store previous prices to compute direction
+            prev = self.memory.recall("cross_asset.prev", {})
+
+            if prev:
+                if prev.get("us500", 0) > 0:
+                    risk_score += 1.0 if us500 > prev["us500"] else -1.0
+                if prev.get("xauusd", 0) > 0:
+                    risk_score += 0.5 if xauusd > prev["xauusd"] else -0.5
+                if prev.get("usdjpy", 0) > 0:
+                    risk_score += 1.0 if usdjpy > prev["usdjpy"] else -1.0
+                if prev.get("eurusd", 0) > 0:
+                    risk_score += 0.5 if eurusd > prev["eurusd"] else -0.5
+
+            # Normalize to -1 to 1
+            risk_score = max(-1.0, min(1.0, risk_score / 4.0))
+
+            regime = (
+                "risk_on"
+                if risk_score > 0.3
+                else ("risk_off" if risk_score < -0.3 else "neutral")
+            )
+            self.set_world("regime.global", regime, ttl=60)
+            self.set_world("regime.global_score", risk_score, ttl=60)
+
+            # Store for next comparison
+            self.memory.know(
+                "cross_asset.prev",
+                {
+                    "us500": us500,
+                    "xauusd": xauusd,
+                    "usdjpy": usdjpy,
+                    "eurusd": eurusd,
+                },
+                ttl=120,
+            )
+
+            logger.debug(f"Cross-asset regime: {regime} (score={risk_score:.2f})")
+        except Exception:
+            pass
+
     def __init__(self, config):
         super().__init__(
             name="regime_agent",
@@ -179,6 +243,9 @@ class RegimeAgent(BaseAgent):
             )
             stability = 1.0 - (n_transitions / max(len(self._regime_history) - 1, 1))
             self.set_world("regime.stability", round(stability, 3))
+
+        # Publish cross-asset regime every cycle (~5s)
+        await self._publish_cross_asset_regime()
 
     async def on_message(self, message: AgentMessage):
         if message.msg_type == MessageType.DIAGNOSTIC_REQUEST:

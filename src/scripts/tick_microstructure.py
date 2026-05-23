@@ -405,7 +405,7 @@ def analyze_all(symbol: str):
         date_fmt = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
         dates.add(date_fmt)
 
-    dates = sorted(dates)
+    dates: list = sorted(dates)
     logger.info(f"Found {len(dates)} days of tick data for {symbol}")
 
     all_predictions = []
@@ -423,7 +423,7 @@ def analyze_all(symbol: str):
 
         # Predictive power test
         pred_results = test_predictive_power(features)
-        top_features = pred_results.head(10)
+        top_features = pred_results.head(10) if hasattr(pred_results, 'head') else pred_results
         all_predictions.append(pred_results)
 
         # Backtest

@@ -188,6 +188,7 @@ class SentimentAnalyzer:
         return snapshot
 
     def _batch_classify(self, texts: List[str]) -> List[float]:
+        assert self._classifier is not None, "FinBERT classifier not initialized"
         scores = []
         batch_size = 16
         for i in range(0, len(texts), batch_size):

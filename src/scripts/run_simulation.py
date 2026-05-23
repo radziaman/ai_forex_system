@@ -461,7 +461,7 @@ class OffSiteSimulation:
                 # Periodic status
                 elapsed = time.time() - start
                 if elapsed - last_status >= status_interval:
-                    last_status = elapsed
+                    last_status = int(elapsed)
                     self.print_status()
 
         except asyncio.CancelledError:

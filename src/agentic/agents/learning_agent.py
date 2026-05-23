@@ -107,7 +107,7 @@ class LearningAgent(BaseAgent):
             and perception.get("time_since_last_train", 0) > 600
         ):
             actions["retrain"] = True
-            reasons = []
+            reasons: List[str] = []
             if perception.get("drift_symbols", 0) > 0:
                 reasons.append(f"{perception['drift_symbols']} symbols drifted")
             if perception.get("sharpe", 0) < 0.3:

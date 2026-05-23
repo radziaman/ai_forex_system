@@ -242,54 +242,47 @@ class InstrumentScreenerAgent(BaseAgent):
         }
 
     async def act(self, decision: Dict[str, Any]):
-        """Publish screening results to the agent bus and world state."""
-        tradeable = decision.get("tradeable", [])
+        """Publish cross-asset market data to world state for regime/feature agents.
 
-        # Update world state for other agents
-        self.set_world(
-            "screening.tradeable_instruments",
-            tradeable,
-            ttl=self.scan_interval_hours * 3600,
-        )
-        self.set_world("screening.last_scan", time.time())
-        self.set_world("screening.total_screened", decision.get("total_screened", 0))
+        This agent's primary purpose is now cross-asset DATA FEED, not trading.
+        It collects prices from equities, bonds, commodities, and crypto to feed
+        the regime detection and cross-asset momentum features in the FeaturePipeline.
+        No INSTRUMENTS_UPDATED messages are sent — trading decisions are handled
+        by the core 11 forex symbols through the MoE ensemble.
+        """
+        # Build cross-asset price snapshot for regime detection
+        from data.data_manager import BASE_PRICES
 
-        # Update registry with current tradeable set
-        for inst in tradeable:
-            ticker = inst.get("ticker", "")
+        cross_asset_prices = {}
+        for ticker in self.instrument_universe:
             try:
-                self.registry.update_metadata(
-                    self.name,
-                    {f"instrument_{ticker}": inst.get("recommendation", "HOLD")},
-                )
-            except AttributeError:
-                logger.debug(
-                    f"Registry has no update_metadata; skipping metadata update for {ticker}"
-                )
+                prices = self._load_prices(ticker)
+                if prices is not None and len(prices) > 0:
+                    cross_asset_prices[ticker] = {
+                        "close": float(prices[-1]),
+                        "high": float(np.max(prices[-20:])),
+                        "low": float(np.min(prices[-20:])),
+                        "returns_1d": (
+                            float((prices[-1] - prices[-2]) / prices[-2])
+                            if len(prices) > 1
+                            else 0.0
+                        ),
+                    }
+            except Exception:
+                pass
 
-        # Publish to agent bus
-        await self.send(
-            MessageType.INSTRUMENTS_UPDATED,
-            payload={
-                "tradeable": tradeable,
-                "total_screened": decision.get("total_screened", 0),
-                "tradeable_count": decision.get("tradeable_count", 0),
-                "timestamp": decision.get("timestamp", time.time()),
-            },
-            priority=MessagePriority.NORMAL,
-            intention=AgentIntention(
-                primary_goal="update all agents with current tradeable instruments",
-                reasoning=f"Found {decision.get('tradeable_count', 0)} tradeable instruments "
-                f"out of {decision.get('total_screened', 0)} screened",
-                expected_outcome="signal_agent and risk_agent adjust their symbol sets",
-                confidence=0.9 if tradeable else 0.5,
-            ),
-        )
+        # Publish cross-asset data for regime agent and feature pipeline
+        self.set_world("screening.cross_asset_prices", cross_asset_prices, ttl=3600)
+        self.set_world("screening.last_scan", time.time())
+        self.set_world("screening.symbols_scanned", len(self.instrument_universe))
 
-        # Log summary
         self.log_state(
-            f"Scan complete: {decision.get('tradeable_count', 0)} tradeable "
-            f"out of {decision.get('total_screened', 0)} instruments"
+            f"Cross-asset data: {len(cross_asset_prices)} instruments updated"
+        )
+        tradeable = (
+            [r.to_dict() for r in self._all_results if r.edge_detected]
+            if self._all_results
+            else []
         )
         for inst in tradeable:
             self.log_state(

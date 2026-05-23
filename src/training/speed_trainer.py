@@ -5,6 +5,7 @@ Trains all 7 pairs 3-5x faster than the standard approach.
 
 import os
 import time
+import asyncio
 import warnings
 from typing import Optional, Dict, List
 from datetime import datetime, timezone
@@ -156,7 +157,7 @@ class FastTrainer:
         )
         return X, y, fp
 
-    def train_base_model(
+    async def train_base_model(
         self,
         pair: str = "EURUSD",
         epochs: int = 40,
@@ -164,7 +165,7 @@ class FastTrainer:
     ) -> Model:
         logger.info(f"Training BASE model on {pair} ({epochs} epochs)...")
         yf_sym = f"{pair}=X"
-        df = self.fetch_data(yf_sym)
+        df = await self.fetch_data(yf_sym)
         if df is None:
             raise ValueError(f"Cannot fetch {pair}")
 
@@ -214,7 +215,7 @@ class FastTrainer:
         self.base_pair = pair
         return model
 
-    def fine_tune_pair(
+    async def fine_tune_pair(
         self,
         pair: str,
         base_model: Optional[Model] = None,
@@ -228,7 +229,7 @@ class FastTrainer:
             raise ValueError("No base model. Call train_base_model() first.")
 
         yf_sym = f"{pair}=X"
-        df = self.fetch_data(yf_sym)
+        df = await self.fetch_data(yf_sym)
         if df is None:
             raise ValueError(f"Cannot fetch {pair}")
 
@@ -331,7 +332,7 @@ class FastTrainer:
         model.save(f"models/{pair}_lstm_cnn.keras")
         return model
 
-    def train_all_fast(
+    async def train_all_fast(
         self,
         pairs: Optional[List[str]] = None,
         base_epochs: int = 40,
@@ -357,7 +358,7 @@ class FastTrainer:
 
         # Step 1: Train base model on EURUSD
         logger.info("\n--- STEP 1: Train base model on EURUSD ---")
-        self.train_base_model(epochs=base_epochs)
+        await self.train_base_model(epochs=base_epochs)
 
         # Step 2: Fine-tune remaining pairs
         for pair in pairs:
@@ -365,7 +366,7 @@ class FastTrainer:
                 continue
             logger.info(f"\n--- Fine-tuning {pair} ---")
             try:
-                self.fine_tune_pair(
+                await self.fine_tune_pair(
                     pair,
                     freeze_epochs=freeze_epochs,
                     full_epochs=full_epochs,
@@ -397,9 +398,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     trainer = FastTrainer()
-    trainer.train_all_fast(
-        pairs=args.pairs,
-        base_epochs=args.base_epochs,
-        freeze_epochs=args.freeze_epochs,
-        full_epochs=args.full_epochs,
+    asyncio.run(
+        trainer.train_all_fast(
+            pairs=args.pairs,
+            base_epochs=args.base_epochs,
+            freeze_epochs=args.freeze_epochs,
+            full_epochs=args.full_epochs,
+        )
     )

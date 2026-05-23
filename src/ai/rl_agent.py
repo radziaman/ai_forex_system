@@ -16,17 +16,46 @@ from typing import Optional, Tuple, Dict, List
 
 
 class ActorNetwork(nn.Module):
-    """Actor network with configurable architecture."""
+    """Actor network with configurable architecture and optional recurrence.
+
+    Standard mode: MLP with configurable hidden dims.
+    Recurrent mode (R2D2 — Kapturowski 2019): adds LSTM before MLP to
+    maintain a hidden state across timesteps.  Critical for PPO agents
+    that need to detect regime changes from recent price history.
+
+    Use recurrent=True when creating agents for volatile/crisis regimes.
+    """
 
     def __init__(
-        self, input_dim: int, n_actions: int = 5, hidden_dims: Optional[list] = None
+        self,
+        input_dim: int,
+        n_actions: int = 5,
+        hidden_dims: Optional[list] = None,
+        recurrent: bool = False,
+        lstm_hidden: int = 64,
     ):
         super().__init__()
+        self.recurrent = recurrent
+        self.lstm_hidden = lstm_hidden
         if hidden_dims is None:
             hidden_dims = [1024, 512, 256, 128]
 
+        # Recurrent LSTM layer (R2D2 style) — adds temporal memory
+        if recurrent:
+            self.lstm = nn.LSTM(
+                input_size=input_dim,
+                hidden_size=lstm_hidden,
+                num_layers=1,
+                batch_first=True,
+            )
+            prev_dim = lstm_hidden
+            self.register_buffer("hidden_h", torch.zeros(1, 1, lstm_hidden))
+            self.register_buffer("hidden_c", torch.zeros(1, 1, lstm_hidden))
+        else:
+            self.lstm = None  # type: ignore[assignment]
+            prev_dim = input_dim
+
         layers = []
-        prev_dim = input_dim
         for hidden_dim in hidden_dims:
             layers.extend(
                 [
@@ -47,7 +76,10 @@ class ActorNetwork(nn.Module):
         self.value_head = nn.Linear(last_dim, 1)
         self._init_weights()
         total = sum(p.numel() for p in self.parameters())
-        logger.info(f"ActorNetwork | Params: {total:,} | Input: {input_dim}")
+        logger.info(
+            f"ActorNetwork | Params: {total:,} | Input: {input_dim} "
+            f"{'(recurrent LSTM)' if recurrent else '(feedforward)'}"
+        )
 
     def _init_weights(self):
         for m in self.modules():
@@ -55,7 +87,24 @@ class ActorNetwork(nn.Module):
                 nn.init.orthogonal_(m.weight, gain=np.sqrt(2))
                 nn.init.constant_(m.bias, 0.0)
 
+    def reset_hidden(self, batch_size: int = 1):
+        """Reset LSTM hidden state for a new episode."""
+        if self.recurrent:
+            device = next(self.parameters()).device
+            self.hidden_h = torch.zeros(1, batch_size, self.lstm_hidden, device=device)
+            self.hidden_c = torch.zeros(1, batch_size, self.lstm_hidden, device=device)
+
     def forward(self, x):
+        # Recurrent preprocessing
+        if self.recurrent and self.lstm is not None:
+            # x shape: (batch, features) or (batch, seq_len, features)
+            if x.dim() == 2:
+                x = x.unsqueeze(1)  # Add sequence dimension
+            lstm_out, (self.hidden_h, self.hidden_c) = self.lstm(
+                x, (self.hidden_h, self.hidden_c)
+            )
+            x = lstm_out[:, -1, :]  # Take last timestep
+
         f = self.feature_extractor(x)
         return (
             self.action_head(f),
@@ -82,7 +131,8 @@ class PPOAgent:
         vf_coef: float = 0.5,
         max_grad_norm: float = 0.5,
         device: str = "auto",
-        max_memory: int = 10000,  # Fix 3: cap memory to prevent unbounded growth
+        max_memory: int = 10000,
+        recurrent: bool = False,  # R2D2 — recurrent PPO for temporal memory
     ):
         self.device = (
             torch.device(
@@ -100,7 +150,9 @@ class PPOAgent:
         self.hidden_dims = hidden_dims
         self.max_memory = max_memory  # Fix 3
 
-        self.actor = ActorNetwork(state_dim, n_actions, hidden_dims).to(self.device)
+        self.actor = ActorNetwork(
+            state_dim, n_actions, hidden_dims, recurrent=recurrent
+        ).to(self.device)
         self.optimizer = optim.Adam(self.actor.parameters(), lr=lr)
 
         self.states: list = []

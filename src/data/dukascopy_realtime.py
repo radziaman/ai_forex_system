@@ -80,12 +80,6 @@ class DukascopyProvider(DataProvider):
             )
         return self._session
 
-    async def close(self):
-        """Close the aiohttp session."""
-        if self._session and not self._session.closed:
-            await self._session.close()
-            self._session = None
-
     def _decode_bi5(self, data: bytes) -> List[tuple]:
         """Decode Dukascopy BI5 binary format (20 bytes per tick)."""
         try:

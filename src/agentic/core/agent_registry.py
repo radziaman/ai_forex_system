@@ -43,6 +43,7 @@ class AgentRegistry:
         self._capability_index: Dict[str, List[str]] = {}
         self._domain_index: Dict[str, List[str]] = {}
         self._supervisor_index: Dict[str, List[str]] = {}  # G17: supervisor -> agents
+        self._role_index: Dict[str, List[str]] = {}
         logger.info("AgentRegistry initialized")
 
     def register(

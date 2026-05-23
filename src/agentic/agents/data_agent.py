@@ -75,6 +75,12 @@ class DataAgent(BaseAgent):
         self._symbol: str = SCREENER_SYMBOLS[0] if SCREENER_SYMBOLS else "EURUSD"
         self._heal_cooldown: Dict[str, float] = {}
 
+        # Periodic data refresh — runs in background during live mode
+        self._refresh_task: Optional[asyncio.Task] = None
+        self._refresh_interval: float = (
+            max(getattr(config.data, "refresh_interval_minutes", 5), 1) * 60.0
+        )  # Convert minutes → seconds, minimum 1 min
+
         self.subscribe(MessageType.TICK_RECEIVED)
         self.subscribe(MessageType.AGENT_DIRECTIVE)
         self.subscribe(MessageType.DIAGNOSTIC_REQUEST)
@@ -97,6 +103,168 @@ class DataAgent(BaseAgent):
                 "Simulation mode detected — emitting synthetic features from historical data"
             )
             await self._emit_simulation_features()
+
+        # Start background data refresh (runs in all modes)
+        self._refresh_task = asyncio.create_task(self._periodic_data_refresh())
+
+    async def _on_stop(self):
+        """Cancel background refresh task on shutdown."""
+        if self._refresh_task and not self._refresh_task.done():
+            self._refresh_task.cancel()
+            try:
+                await self._refresh_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._refresh_task = None
+
+    async def _periodic_data_refresh(self):
+        """Background loop: monitor data freshness + periodic full refresh.
+
+        Two-tier approach:
+          1. Heartbeat (every 30s): checks if any symbol has gone stale
+             (no new bar in >90s). If stale, triggers an immediate refresh
+             for that symbol only.
+          2. Full refresh (every N minutes): bulk refresh of all symbols ×
+             timeframes from cTrader / yFinance.
+
+        This catches data stalls quickly (within 30s) without hammering
+        the broker APIs on every heartbeat.
+        """
+        heartbeat_interval = 30.0  # seconds
+        heartbeats_per_full = max(int(self._refresh_interval / heartbeat_interval), 1)
+        heartbeat_count = 0
+
+        while True:
+            try:
+                await asyncio.sleep(heartbeat_interval)
+                heartbeat_count += 1
+
+                # --- Heartbeat: check for stale symbols ---
+                stale = []
+                now = time.time()
+                for sym in SCREENER_SYMBOLS:
+                    last_ts = self._last_bar_ts.get(sym, 0)
+                    if last_ts > 0 and (now - last_ts) > 90:
+                        stale.append(sym)
+
+                if stale:
+                    logger.warning(
+                        f"Data heartbeat: {len(stale)} stale symbols: "
+                        f"{stale[:5]}{'...' if len(stale)>5 else ''}"
+                    )
+                    # Try quick refresh for stale symbols only
+                    ctrader = self.get_world("execution.ctrader_client")
+                    if ctrader is None:
+                        ctrader = getattr(self, "_ctrader_client", None)
+                    for sym in stale:
+                        try:
+                            if ctrader is not None:
+                                await self.dm.load_from_ctrader(
+                                    sym, "1h", days=1, client=ctrader
+                                )
+                            else:
+                                self.dm.try_alternative_source(sym, "1h", days=1)
+                        except Exception:
+                            pass
+
+                # --- Full refresh every N heartbeats ---
+                if heartbeat_count >= heartbeats_per_full:
+                    heartbeat_count = 0
+                    await self._refresh_single_cycle()
+                    # Also refresh macro/economic data
+                    await self._refresh_macro_data()
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"Data refresh cycle error: {e}")
+
+    async def _refresh_single_cycle(self):
+        """Refresh OHLCV for all symbols × timeframes in parallel.
+
+        Tries cTrader historical API first (fast, broker-authoritative),
+        falls back to Yahoo Finance when cTrader is unavailable or fails.
+        All symbols and timeframes are refreshed concurrently via asyncio.gather.
+        After refresh, saves to CSV and logs gap/integrity metrics.
+        """
+        ctrader = self.get_world("execution.ctrader_client")
+        if ctrader is None:
+            ctrader = getattr(self, "_ctrader_client", None)
+
+        timeframes = list(
+            dict.fromkeys(self.config.features.timeframes + ["1h"])
+        )  # Deduplicate, ensure 1h is present
+
+        async def _refresh_one(sym: str, tf: str) -> bool:
+            """Try to refresh a single symbol+timeframe pair."""
+            try:
+                if ctrader is not None:
+                    if await self.dm.load_from_ctrader(sym, tf, days=1, client=ctrader):
+                        return True
+                return bool(self.dm.try_alternative_source(sym, tf, days=1))
+            except Exception:
+                return False
+
+        # Build all (symbol, timeframe) tasks and run in parallel
+        tasks = [_refresh_one(sym, tf) for sym in SCREENER_SYMBOLS for tf in timeframes]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        refreshed = sum(1 for r in results if r is True)
+
+        if refreshed > 0:
+            # Persist refreshed data to CSV
+            self.dm.save_all_ohlcv(timeframes=timeframes)
+            # Log integrity summary
+            total_bars = 0
+            gap_count = 0
+            for sym in SCREENER_SYMBOLS:
+                for tf in timeframes:
+                    df = self.dm.get_ohlcv(sym, tf)
+                    if df is not None and not df.empty:
+                        total_bars += len(df)
+                        gaps = self.dm.detect_gaps(sym, tf, max_gap_minutes=5)
+                        gap_count += len(gaps)
+            self.set_world("data.last_refresh_ts", time.time(), ttl=300)
+            logger.info(
+                f"Data refresh: {refreshed}/{len(tasks)} TF-pairs updated "
+                f"({total_bars} bars, {gap_count} gaps)"
+            )
+
+    async def _refresh_macro_data(self):
+        """Fetch macro/economic data from FRED API and publish to world state.
+
+        Used by the macro_sentiment expert in SignalAgent to factor
+        economic surprises into signal generation.
+        """
+        try:
+            from data.economic_calendar import EconomicCalendar
+
+            cal = EconomicCalendar()
+            events = cal.fetch(days_forward=3)
+            high_impact = [e for e in events if e.is_high_impact()]
+            upcoming = cal.get_upcoming_events(hours=48)
+
+            macro_state = {
+                "total_events": len(events),
+                "high_impact_count": len(high_impact),
+                "upcoming_events": [
+                    {
+                        "currency": e.currency,
+                        "event": e.event,
+                        "impact": e.impact,
+                        "timestamp": e.timestamp,
+                    }
+                    for e in upcoming[:10]
+                ],
+                "last_updated": time.time(),
+            }
+            self.set_world("macro.data", macro_state, ttl=600)
+            logger.debug(
+                f"Macro refresh: {len(events)} events, "
+                f"{len(high_impact)} high impact, "
+                f"{len(upcoming)} upcoming"
+            )
+        except Exception as e:
+            logger.debug(f"Macro refresh failed: {e}")
 
     async def perceive(self) -> Dict[str, Any]:
         result = {
@@ -157,7 +325,10 @@ class DataAgent(BaseAgent):
             last_heal = self._heal_cooldown.get(sym, 0)
             if now - last_heal < 3600:
                 continue
-            healed = self.dm.heal_gaps(sym, max_gap_minutes=180)
+            ctrader = self.get_world("execution.ctrader_client") or getattr(
+                self, "_ctrader_client", None
+            )
+            healed = self.dm.heal_gaps(sym, max_gap_minutes=180, ctrader_client=ctrader)
             if healed > 0:
                 self._heal_cooldown[sym] = now
                 self.memory.remember(
@@ -221,11 +392,17 @@ class DataAgent(BaseAgent):
                 atr = self.dm.get_atr(sym, "1h", 14)
                 self.set_world(f"data.atr.{sym}", atr, ttl=60)
 
+            # Publish order flow / CVD data for orderflow expert (Phase 7)
+            for sym in SCREENER_SYMBOLS:
+                of = self.dm.get_order_flow_metrics(sym)
+                self.set_world(f"data.orderflow.{sym}", of, ttl=10)
+
         # G3: Periodically flush OHLCV bars to disk (every 500 cycles ≈ every 50s)
         if self.consciousness.cycle_count % 500 == 0:
-            tfs_to_save = ["1m", "5m", "1h"]
-            self.dm.save_all_ohlcv(timeframes=tfs_to_save)
-            self.log_state(f"OHLCV flushed to disk ({len(tfs_to_save)} timeframes)")
+            from data.data_manager import TIMEFRAMES as ALL_TFS
+
+            self.dm.save_all_ohlcv(timeframes=ALL_TFS)
+            self.log_state(f"OHLCV flushed to disk ({len(ALL_TFS)} timeframes)")
 
     async def on_message(self, message: AgentMessage):
         # G1: Handle live ticks from execution_agent

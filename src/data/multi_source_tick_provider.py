@@ -321,8 +321,8 @@ class MultiSourceTickProvider:
     def __init__(self, poll_interval: float = 1.0):
         self.poll_interval = poll_interval
         self._running = False
-        self._ctrader = None
-        self._dukascopy = None
+        self._ctrader = None  # type: ignore[assignment]
+        self._dukascopy = None  # type: ignore[assignment]
         self._yahoo = YahooFuturesProvider()
         self._subscribers: Dict[str, List[Callable]] = defaultdict(list)
         self._poll_tasks: Dict[str, asyncio.Task] = {}

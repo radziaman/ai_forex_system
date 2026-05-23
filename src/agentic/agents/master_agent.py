@@ -87,7 +87,7 @@ class MasterAgent(BaseAgent):
         self._system_health = perception["health_pct"] / 100.0
         self.set_world("master.health", self._system_health)
 
-        actions = {"directives": [], "alerts": [], "reports": {}}
+        actions: Dict[str, Any] = {"directives": [], "alerts": [], "reports": {}}
 
         # G22: Track domain health
         actions["reports"]["domain_health"] = perception.get("domain_health", {})

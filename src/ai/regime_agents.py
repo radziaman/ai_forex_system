@@ -4,14 +4,19 @@ Each regime has a dedicated PPO agent with specialized hyperparameters and SL/TP
 Gating network routes decisions to the correct specialist.
 """
 
+from __future__ import annotations
+
 import os
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, TYPE_CHECKING
 from dataclasses import dataclass, field
 from loguru import logger
+
+if TYPE_CHECKING:
+    from ai.rl_agent import PPOAgent
 
 
 @dataclass

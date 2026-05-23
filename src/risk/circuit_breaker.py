@@ -345,11 +345,11 @@ class CircuitBreaker:
         """Update normal spread/volume using median (robust to outliers)."""
         spreads = self.spread_history[symbol]
         if len(spreads) > 20:
-            self.normal_spreads[symbol] = np.median(spreads[-50:])
+            self.normal_spreads[symbol] = float(np.median(spreads[-50:]))
 
         volumes = self.volume_history[symbol]
         if len(volumes) > 20:
-            self.normal_volume[symbol] = np.median(volumes[-50:])
+            self.normal_volume[symbol] = float(np.median(volumes[-50:]))
 
     def force_resume(self, symbol: str = ""):
         """Manually resume trading after halt. If symbol empty, resumes all."""

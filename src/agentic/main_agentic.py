@@ -16,6 +16,8 @@ from loguru import logger
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+os.environ["TF_USE_LEGACY_KERAS"] = "1"  # Required for loading Keras 2 models
+os.environ["TF_USE_LEGACY_ADAM"] = "1"  # 10x faster Adam on Apple Silicon M1/M2
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

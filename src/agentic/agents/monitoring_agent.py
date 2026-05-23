@@ -358,7 +358,7 @@ class MonitoringAgent(BaseAgent):
         t = len(self._daily_trades)
         wins = sum(1 for d in self._daily_trades if d.get("pnl", 0) > 0)
         pnl = sum(d.get("pnl", 0) for d in self._daily_trades)
-        
+
         # Get per-symbol strategy performance
         tracker_data = self.get_world("signal.tradeable_symbols", {})
         active_symbols = []
@@ -369,7 +369,7 @@ class MonitoringAgent(BaseAgent):
                     active_symbols.append(sym)
                 else:
                     blocked_symbols.append(sym)
-        
+
         lines = [
             f"\U0001f4ca *Daily Summary*",
             f"Uptime: {uptime_h:.1f}h | Balance: ${balance:.2f}",

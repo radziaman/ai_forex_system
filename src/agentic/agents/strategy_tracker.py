@@ -128,14 +128,18 @@ class StrategyTracker:
 
 class PerSymbolStrategyTracker:
     """Tracks strategy performance per symbol, enabling auto-disable of losing pairs."""
-    
+
     def __init__(self, min_learn_trades: int = 10, reeval_interval: int = 50):
         self._data: Dict[str, Dict[str, StrategyStats]] = defaultdict(dict)
         self._by_regime: Dict[str, dict] = defaultdict(dict)
         self.min_learn_trades = min_learn_trades
-        self.reeval_interval = reeval_interval  # Re-evaluate blocked symbols every N trades
+        self.reeval_interval = (
+            reeval_interval  # Re-evaluate blocked symbols every N trades
+        )
         self._total_trades_global: int = 0  # Global trade counter for re-evaluation
-        self._blocked_at: Dict[str, int] = {}  # When each symbol was blocked (global trade count)
+        self._blocked_at: Dict[str, int] = (
+            {}
+        )  # When each symbol was blocked (global trade count)
 
     def register(self, symbol: str, strategy: str, regime: str = ""):
         if strategy not in self._data[symbol]:
@@ -146,12 +150,14 @@ class PerSymbolStrategyTracker:
         if stats:
             stats.record_trade(pnl)
         self._total_trades_global += 1
-        
+
         # If symbol was blocked, check if it's time to re-evaluate
         if symbol in self._blocked_at:
             trades_since_block = self._total_trades_global - self._blocked_at[symbol]
             if trades_since_block >= self.reeval_interval:
-                del self._blocked_at[symbol]  # Remove block — will be re-checked on next signal
+                del self._blocked_at[
+                    symbol
+                ]  # Remove block — will be re-checked on next signal
 
     def is_strategy_enabled(self, symbol: str, strategy: str) -> bool:
         """A strategy is enabled on a symbol if:
@@ -165,30 +171,32 @@ class PerSymbolStrategyTracker:
 
     def is_symbol_tradeable(self, symbol: str) -> bool:
         """A symbol is tradeable if at least one strategy has positive expectancy.
-        
+
         Blocked symbols are automatically re-evaluated every `reeval_interval` global trades.
         """
         strategies = self._data.get(symbol, {})
         if not strategies:
             return True  # No data yet — try it
-        
+
         tradeable = any(
             s.trades >= self.min_learn_trades and s.recent_sharpe > 0
             for s in strategies.values()
         )
-        
+
         if not tradeable:
             # Check if it's time to re-evaluate a blocked symbol
             if symbol not in self._blocked_at:
                 self._blocked_at[symbol] = self._total_trades_global
                 return False
-            trades_since_block = self._total_trades_global - self._blocked_at.get(symbol, 0)
+            trades_since_block = self._total_trades_global - self._blocked_at.get(
+                symbol, 0
+            )
             if trades_since_block >= self.reeval_interval:
                 # Re-evaluation: try this symbol again
                 del self._blocked_at[symbol]
                 return True
             return False
-        
+
         # Symbol is tradeable — clear any pending block
         self._blocked_at.pop(symbol, None)
         return True

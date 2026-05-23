@@ -256,9 +256,21 @@ class RiskManager:
         return self.wins / total if total > 0 else 0.0
 
     def pre_trade_checks(
-        self, balance: float, equity: float, margin: float, current_pnl: float
+        self,
+        balance: float,
+        equity: float,
+        margin: float,
+        current_pnl: float,
+        new_symbol: str = "",
+        open_symbols: Optional[List[str]] = None,
     ) -> Tuple[bool, str]:
-        """Run all pre-trade risk checks. Returns (approved, reason)."""
+        """Run all pre-trade risk checks. Returns (approved, reason).
+
+        Includes:
+          - Kill switch, drawdown, daily loss, consecutive losses
+          - Correlation risk: reject if new position is >0.80 correlated
+            with an existing position (portfolio-level risk)
+        """
         if self.kill_switch_triggered:
             return False, "Kill switch active"
 
@@ -286,6 +298,61 @@ class RiskManager:
         margin_used = margin / equity if equity > 0 else 0
         if margin_used > self.params.max_margin_usage:
             return False, f"Margin usage too high: {margin_used:.1%}"
+
+        # Portfolio-level correlation risk
+        if new_symbol and open_symbols:
+            corr_check = self._check_correlation_risk(new_symbol, open_symbols)
+            if not corr_check[0]:
+                return corr_check
+
+        return True, "OK"
+
+    def _check_correlation_risk(
+        self, new_symbol: str, open_symbols: List[str]
+    ) -> Tuple[bool, str]:
+        """Reject new position if it's >0.80 correlated with any open position.
+
+        Uses the known correlation matrix of forex pairs to prevent
+        over-concentration (e.g. long EURUSD + long GBPUSD = double USD short).
+        Falls back to symbol-count check if correlation data unavailable.
+        """
+        if not open_symbols:
+            return True, "OK"
+
+        # Known empirical correlations for major pairs (24h rolling typical values)
+        # Source: BIS Triennial Survey, major bank FX desks
+        FX_CORR = {
+            ("EURUSD", "GBPUSD"): 0.85,
+            ("GBPUSD", "EURUSD"): 0.85,
+            ("EURUSD", "USDCHF"): -0.90,
+            ("USDCHF", "EURUSD"): -0.90,
+            ("EURUSD", "USDCAD"): -0.65,
+            ("USDCAD", "EURUSD"): -0.65,
+            ("GBPUSD", "USDCHF"): -0.75,
+            ("USDCHF", "GBPUSD"): -0.75,
+            ("AUDUSD", "NZDUSD"): 0.80,
+            ("NZDUSD", "AUDUSD"): 0.80,
+            ("AUDUSD", "USDJPY"): 0.55,
+            ("USDJPY", "AUDUSD"): 0.55,
+            ("XAUUSD", "XTIUSD"): 0.45,
+            ("XTIUSD", "XAUUSD"): 0.45,
+            ("XAUUSD", "USDJPY"): -0.40,
+            ("USDJPY", "XAUUSD"): -0.40,
+        }
+
+        for pair in open_symbols:
+            key = (new_symbol, pair)
+            rev_key = (pair, new_symbol)
+            corr = FX_CORR.get(key, FX_CORR.get(rev_key, 0.0))
+            if abs(corr) > 0.80:
+                return (
+                    False,
+                    f"Correlation risk: {new_symbol}/{pair}={corr:.2f}",
+                )
+
+        # Also limit total positions if we can't check correlation
+        if len(open_symbols) >= 3:
+            return False, f"Max correlated positions: {len(open_symbols)} open"
         return True, "OK"
 
     def check_correlation(
@@ -297,7 +364,7 @@ class RiskManager:
         if corr_matrix is not None and new_pair in corr_matrix.columns:
             for pair in open_pairs:
                 if pair in corr_matrix.columns:
-                    if abs(corr_matrix.loc[new_pair, pair]) > 0.80:
+                    if abs(float(corr_matrix.loc[new_pair, pair])) > 0.80:
                         return False
         return len(open_pairs) < self.params.max_positions
 

@@ -78,35 +78,20 @@ class ExecutionAgent(BaseAgent):
 
         # G1: Wire live price feed from broker to data pipeline
         async def _on_tick(depth):
-            """Forward broker ticks to data_agent and store live spread in world state."""
+            """Forward broker ticks to data_agent and store live spread in world state.
+
+            IMPORTANT: depth.bid / .ask arrive ALREADY divided by the correct
+            _price_divisor from _handle_depth_event in ctrader_client.py.
+            Do NOT re-divide — prices are in standard decimal format for ALL
+            symbols (EURUSD=1.1234, XAUUSD=1987.50, BTCUSD=45000.0, etc.).
+            """
             try:
                 symbol = getattr(depth, "symbol", "")
-                raw_bid = getattr(depth, "bid", 0)
-                raw_ask = getattr(depth, "ask", 0)
+                bid = getattr(depth, "bid", 0)
+                ask = getattr(depth, "ask", 0)
                 ts = time.time()
 
-                # Normalize cTrader raw prices: forex already scaled, non-forex needs division
-                bid, ask = raw_bid, raw_ask
                 if bid > 0 and ask > 0:
-                    sym = symbol.upper()
-                    if (
-                        sym
-                        not in (
-                            "EURUSD",
-                            "GBPUSD",
-                            "AUDUSD",
-                            "USDCAD",
-                            "USDCHF",
-                            "NZDUSD",
-                        )
-                        and "JPY" not in sym
-                    ):
-                        from api.ctrader_client import CtraderClient
-
-                        div = CtraderClient._price_divisor(symbol, bid)
-                        bid = bid / div
-                        ask = ask / div
-
                     from execution.cost_model import CostModel
 
                     pip_size = CostModel.pip_to_price(symbol)
@@ -120,7 +105,11 @@ class ExecutionAgent(BaseAgent):
                         if mid_price > 0
                         else 0
                     )
-                    MAX_GOOD_SPREAD_PCT = 0.08  # 0.08% of price (EURUSD: ~1 pip, XAUUSD: ~$1.84, XTIUSD: ~$0.06)
+                    # Max acceptable spread as % of mid price.
+                    # 0.5% covers normal + volatile periods for all asset classes.
+                    # During extreme volatility, spreads on XAUUSD can reach 0.15%,
+                    # BTCUSD 0.10%, while normal EURUSD is ~0.009%.
+                    MAX_GOOD_SPREAD_PCT = 0.5
                     if spread_pct > MAX_GOOD_SPREAD_PCT or spread_pips < 0:
                         logger.warning(
                             f"TICK REJECTED {symbol}: spread={spread_pips:.1f}pips "
@@ -173,28 +162,35 @@ class ExecutionAgent(BaseAgent):
         ):
             self.log_state(f"cTrader connected ({engine_mode})")
             self.set_world("execution.connected", True)
+            # Expose raw CtraderClient so data_agent can use it for
+            # historical data refreshes (load_from_ctrader)
+            raw = getattr(self.ctrader, "raw", None)
+            if raw:
+                self.set_world("execution.ctrader_client", raw, ttl=3600)
             from data.data_manager import SYMBOLS
             from api.symbol_map import get_symbol_id
 
-            raw = getattr(self.ctrader, "raw", None)
             if raw and hasattr(raw, "subscribe_depth"):
-                succeeded = 0
-                # Subscribe to ALL core symbols (not just _active_symbols which screener may have reduced)
+                depth_ok = 0
+                spot_ok = 0
+                # Subscribe to ALL core symbols — both depth and spot
                 for sym in self._core_symbols:
                     try:
                         sid = get_symbol_id(sym)
-                        ok = await raw.subscribe_depth(sid)
-                        if ok:
-                            succeeded += 1
-                        else:
-                            logger.info(
-                                f"Depth subscribe returned false for {sym} (id={sid}) — may need market data subscription"
-                            )
-                        await asyncio.sleep(0.1)  # Rate limit protection
+                        # Level II depth subscription (order book)
+                        if await raw.subscribe_depth(sid):
+                            depth_ok += 1
+                        # Spot price subscription (accurate bid/ask with moneyDigits)
+                        if hasattr(
+                            raw, "subscribe_spots"
+                        ) and await raw.subscribe_spots(sid):
+                            spot_ok += 1
+                        await asyncio.sleep(0.25)  # Rate limit protection
                     except Exception as e:
-                        logger.debug(f"Depth subscribe failed for {sym}: {e}")
+                        logger.debug(f"Subscribe failed for {sym}: {e}")
                 self.log_state(
-                    f"Depth subscriptions: {succeeded}/{len(self._active_symbols)} symbols subscribed"
+                    f"Subscriptions: depth={depth_ok}/{len(self._core_symbols)}, "
+                    f"spot={spot_ok}/{len(self._core_symbols)}"
                 )
         else:
             self.log_state(f"Running in {engine_mode} mode (simulation)", "warning")
@@ -209,47 +205,80 @@ class ExecutionAgent(BaseAgent):
         self.set_world("execution.connected", False)
 
     async def _reconnect(self):
-        """Reconnect to cTrader and re-subscribe depth quotes."""
+        """Reconnect to cTrader and re-subscribe depth/spot subscriptions."""
         if self._reconnecting:
+            self.log_state("Reconnect already in progress, skipping", "debug")
             return
         self._reconnecting = True
+        self.log_state("Beginning cTrader reconnection...", "info")
         try:
+            # Gracefully stop existing connection (best-effort)
             if self.ctrader:
-                await self.ctrader.stop()
-            await asyncio.sleep(3)
+                try:
+                    await self.ctrader.stop()
+                    self.log_state("Stopped existing connection", "debug")
+                except Exception as e:
+                    self.log_state(f"Stop existing connection: {e}", "debug")
+            await asyncio.sleep(2)
+
+            # Start fresh connection — this does SSL connect + app auth +
+            # account auth + fetch info + start background listener + heartbeat
+            await self.ctrader.start()
+            raw = getattr(self.ctrader, "raw", None)
+
+            if raw is None:
+                self.log_state("Reconnect failed — no raw client", "warning")
+                self.set_world("execution.connected", False)
+                return
+
+            # Check simulation mode
+            sim = raw.is_simulation() if hasattr(raw, "is_simulation") else True
+            if sim:
+                self.log_state(
+                    "Reconnect failed — broker unreachable (simulation fallback)",
+                    "warning",
+                )
+                self.set_world("execution.connected", False)
+                return
+
+            # Real connection succeeded — wire disconnect handler
+            raw.on_disconnect = lambda: asyncio.ensure_future(self._on_disconnect())
+            # Expose raw client for data_agent historical refreshes
+            self.set_world("execution.ctrader_client", raw, ttl=3600)
+
+            # Re-subscribe to depth and spot for all core symbols
             from api.symbol_map import get_symbol_id
 
-            connected = await self.ctrader.start()
-            if connected:
-                raw = getattr(self.ctrader, "raw", None)
-                if raw:
-                    raw.on_disconnect = lambda: asyncio.ensure_future(
-                        self._on_disconnect()
-                    )
-                succeeded = 0
-                for sym in self._core_symbols:
-                    try:
-                        sid = get_symbol_id(sym)
-                        if raw and hasattr(raw, "subscribe_depth"):
-                            ok = await raw.subscribe_depth(sid)
-                            if ok:
-                                succeeded += 1
-                            await asyncio.sleep(0.1)
-                    except Exception:
-                        pass
-                self.log_state(
-                    f"Reconnect depth: {succeeded}/{len(self._core_symbols)} symbols"
-                )
-                self._executed = 0
-                self._failed = 0
-                self.log_state(
-                    f"Reconnected to cTrader, subscribed to {len(self._active_symbols)} active symbols"
-                )
-                self.set_world("execution.connected", True)
-            else:
-                self.log_state("Reconnect failed", "warning")
+            depth_ok = 0
+            spot_ok = 0
+            for sym in self._core_symbols:
+                try:
+                    sid = get_symbol_id(sym)
+                    if hasattr(raw, "subscribe_depth") and await raw.subscribe_depth(
+                        sid
+                    ):
+                        depth_ok += 1
+                    if hasattr(raw, "subscribe_spots") and await raw.subscribe_spots(
+                        sid
+                    ):
+                        spot_ok += 1
+                    await asyncio.sleep(0.25)
+                except Exception as sub_err:
+                    self.log_state(f"Subscribe failed for {sym}: {sub_err}", "debug")
+
+            self.log_state(
+                f"Reconnected: depth={depth_ok}/{len(self._core_symbols)}, "
+                f"spot={spot_ok}/{len(self._core_symbols)}"
+            )
+            self._executed = 0
+            self._failed = 0
+            self.set_world("execution.connected", True)
+
+        except asyncio.CancelledError:
+            self.log_state("Reconnect cancelled", "debug")
         except Exception as e:
-            self.log_state(f"Reconnect error: {e}", "warning")
+            self.log_state(f"Reconnect error: {type(e).__name__}: {e}", "warning")
+            self.set_world("execution.connected", False)
         finally:
             self._reconnecting = False
 
@@ -339,20 +368,17 @@ class ExecutionAgent(BaseAgent):
                 ]
                 if new_symbols:
                     old_count = len(self._active_symbols)
-                    # Only trade core SYMBOLS — screener picks are informational only
                     from data.data_manager import SYMBOLS as CORE_SYMBOLS
 
-                    self._active_symbols = list(CORE_SYMBOLS)
+                    # Core symbols (EURUSD, GBPUSD, ...) are always tradeable.
+                    # Screener findings are MERGED in — they use Yahoo tickers
+                    # (e.g. HO=F, RB=F) which may not have a cTrader symbol_id,
+                    # so subscription/trading will gracefully fall through.
+                    merged = list(dict.fromkeys(list(CORE_SYMBOLS) + new_symbols))
+                    self._active_symbols = merged
                     self.log_state(
-                        f"Core symbols maintained: {len(self._active_symbols)} pairs "
-                        f"(screener found {len(new_symbols)} additional instruments — informational)"
-                    )
-                    self._active_symbols = list(
-                        dict.fromkeys(new_symbols)
-                    )  # deduplicate
-                    self.log_state(
-                        f"Screener updated: {len(new_symbols)} instruments "
-                        f"(was {old_count}) — EURUSD always subscribed"
+                        f"Active symbols: {len(merged)} "
+                        f"({len(CORE_SYMBOLS)} core + {len(new_symbols)} screener)"
                     )
             return
 
