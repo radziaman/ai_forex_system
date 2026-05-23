@@ -1,5 +1,5 @@
 """
-Run RTS: Agentic Moneybot System Elite in paper mode with real data.
+Run RTS: Agentic FX System Elite in paper mode with real data.
 Booting all 15 agents, processing market data for 60 seconds.
 """
 

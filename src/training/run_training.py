@@ -115,7 +115,7 @@ def train_model(X_train, y_train, X_val, y_val, config: TrialConfig) -> dict:
 
 async def main():
     parser = argparse.ArgumentParser(
-        description="RTS: Agentic Moneybot System Elite - Training Pipeline"
+        description="RTS: Agentic FX System Elite - Training Pipeline"
     )
     parser.add_argument(
         "--mode",

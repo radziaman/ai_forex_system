@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""System Health Check for RTS: Agentic Moneybot System Elite."""
+"""System Health Check for RTS: Agentic FX System Elite."""
 import sys
 import os
 

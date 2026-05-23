@@ -1,1 +1,1 @@
-"""RTS: Agentic Moneybot System Elite - Python System"""
+"""RTS: Agentic FX System Elite - Python System"""

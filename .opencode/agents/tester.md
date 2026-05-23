@@ -1,7 +1,7 @@
 ---
 description: Writes and runs tests, validates correctness and coverage
 mode: subagent
-model: opencode-go/deepseek-v4-flash
+model: opencode-go/kimi-k2.6
 color: error
 permission:
   read: allow

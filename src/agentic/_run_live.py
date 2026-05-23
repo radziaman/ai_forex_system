@@ -1,5 +1,5 @@
 """
-Run RTS: Agentic Moneybot System Elite with real-live streaming data.
+Run RTS: Agentic FX System Elite with real-live streaming data.
 Boots all 15 agents, connects to cTrader for live ticks, processes data through full pipeline.  # noqa: E501
 """
 

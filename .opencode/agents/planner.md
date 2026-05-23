@@ -1,7 +1,7 @@
 ---
 description: Researches, designs architecture, and creates implementation plans
 mode: subagent
-model: opencode-go/deepseek-v4-flash
+model: opencode-go/kimi-k2.6
 color: warning
 permission:
   read: allow

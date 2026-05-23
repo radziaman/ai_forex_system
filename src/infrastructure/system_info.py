@@ -32,7 +32,7 @@ class SystemReport:
         lines = []
         w = 60
         lines.append("=" * w)
-        lines.append(f"  RTS: Agentic Moneybot System Elite v{self.version}")
+        lines.append(f"  RTS: Agentic FX System Elite v{self.version}")
         lines.append(f"  Mode: {self.mode.upper()}")
         lines.append("=" * w)
         lines.append("")
@@ -63,7 +63,7 @@ class SystemReport:
             for ad in self.alternative_data:
                 lines.append(f"    {ad}")
         lines.append("")
-        lines.append("  Log file: data/logs/moneybot_v2.log")
+        lines.append("  Log file: data/logs/rts_fx_v2.log")
         lines.append("  Dashboard: http://0.0.0.0:8000")
         lines.append("=" * w)
         return "\n".join(lines)

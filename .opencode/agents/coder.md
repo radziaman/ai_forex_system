@@ -1,7 +1,7 @@
 ---
 description: Implements features, refactors code, and fixes bugs
 mode: subagent
-model: opencode-go/deepseek-v4-flash
+model: opencode-go/kimi-k2.6
 color: primary
 permission:
   read: allow

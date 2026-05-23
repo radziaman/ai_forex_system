@@ -1,4 +1,4 @@
-# RTS: Agentic Moneybot System Elite v5.2
+# RTS: Agentic FX System Elite v5.2
 
 **Autonomous multi-agent AI forex trading system** — 20 self-aware agents with 10 adaptive strategies (5 rule-based + 4 PPO reinforcement learning + 1 LSTM-CNN), real-time market data ingestion, multi-source sentiment analysis, per-symbol AI learning, and institutional-grade risk management.
 

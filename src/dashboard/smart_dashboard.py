@@ -130,7 +130,7 @@ def get_dashboard_html() -> str:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RTS: Agentic Moneybot System Elite</title>
+<title>RTS: Agentic FX System Elite</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">  # noqa: E501
 <style>
@@ -188,7 +188,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
   <rect x="10" y="23" width="12" height="1.5" rx=".75" fill="#fff" opacity=".4"/>
   <defs><linearGradient id="lg" x1="0" y1="0" x2="32" y2="32"><stop stop-color="#f59e0b"/><stop offset="1" stop-color="#10b981"/></linearGradient></defs>  # noqa: E501
 </svg>
-<h1>RTS: Agentic Moneybot System Elite</h1>
+<h1>RTS: Agentic FX System Elite</h1>
 <div class="topbar-right">
   <span class="mode-badge" id="mode">PAPER</span>
   <span class="status-dot ok" id="statusDot"></span>

@@ -1,5 +1,5 @@
 """
-RTS: Agentic Moneybot System Elite — Agentic Architecture Entry Point.
+RTS: Agentic FX System Elite — Agentic Architecture Entry Point.
 
 Boots all autonomous agents, establishes communication,
 and lets them work together as a distributed intelligence.
@@ -397,7 +397,7 @@ def main():
 
     parser = argparse.ArgumentParser(
         prog="python -m agentic.main_agentic",
-        description="RTS: Agentic Moneybot System Elite — Agentic Architecture",
+        description="RTS: Agentic FX System Elite — Agentic Architecture",
         epilog=HELP,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

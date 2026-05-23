@@ -112,7 +112,7 @@ class MonitoringAgent(BaseAgent):
                     send_risk_alerts=True,
                 )
                 self._safe_telegram(
-                    "\U0001f916 Agentic Moneybot System Elite — online\n"
+                    "\U0001f916 Agentic FX System Elite — online\n"
                     f"Mode: {self.get_world('config.mode', 'paper')}",
                     ALERT_LOW,
                     CATEGORY_SYSTEM,

@@ -86,7 +86,7 @@ class LoggingConfig:
     level: str = "INFO"
     rotation: str = "100 MB"
     retention: str = "30 days"
-    path: str = "data/logs/moneybot.log"
+    path: str = "data/logs/rts_fx.log"
 
 
 @dataclass

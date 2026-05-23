@@ -10,7 +10,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from loguru import logger
 
-app = FastAPI(title="RTS: Agentic Moneybot System Elite Dashboard", version="4.0")
+app = FastAPI(title="RTS: Agentic FX System Elite Dashboard", version="4.0")
 connected_clients: List[WebSocket] = []
 
 latest_state: Dict[str, Any] = {
