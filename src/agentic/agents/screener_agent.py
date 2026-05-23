@@ -147,6 +147,7 @@ class InstrumentScreenerAgent(BaseAgent):
         self._tradeable_instruments: List[Dict] = []
         self._all_results: List[ScreenResult] = []
         self._scan_in_progress = False
+        self.instrument_universe: Dict[str, Any] = INSTRUMENT_UNIVERSE
 
         # Subscribe to on-demand screening requests
         self.subscribe(MessageType.SCREENING_REQUEST)

@@ -56,6 +56,7 @@ class ConnectionAgent(BaseAgent):
         self._max_retries = 10
         self._base_delay = 1.0
         self._max_delay = 60.0
+        self._last_reconnect_ts = 0.0  # Non-blocking timing for reconnect backoff
         self._api_health: Dict[str, Dict] = {}
 
         self.subscribe(MessageType.AGENT_DIRECTIVE)
@@ -110,6 +111,8 @@ class ConnectionAgent(BaseAgent):
         return actions
 
     async def act(self, decision: Dict[str, Any]):
+        now = time.time()
+
         if decision.get("start_reconnect"):
             self.log_state("Starting reconnect sequence...", "warning")
             await self.send(
@@ -118,15 +121,28 @@ class ConnectionAgent(BaseAgent):
                 target="execution_agent",
                 priority=MessagePriority.HIGH,
             )
+            self._retries = 1
+            self._last_reconnect_ts = now
 
         if decision.get("reconnect_attempt"):
-            delay = min(self._base_delay * (2**self._retries), self._max_delay)
-            self._retries += 1
-            self.log_state(
-                f"Reconnect attempt {self._retries}/{self._max_retries} in {delay:.0f}s"
-            )
-            await asyncio.sleep(delay)
+            delay = min(self._base_delay * (2 ** (self._retries - 1)), self._max_delay)
+            if now - self._last_reconnect_ts >= delay:
+                self._retries += 1
+                self._last_reconnect_ts = now
+                self.log_state(
+                    f"Reconnect attempt {self._retries}/{self._max_retries} "
+                    f"(delay={delay:.0f}s)"
+                )
+                # Send directive to execution_agent — don't sleep, use
+                # non-blocking timing so the agent stays responsive
+                await self.send(
+                    MessageType.AGENT_DIRECTIVE,
+                    payload={"action": "reconnect", "reason": "connection_lost"},
+                    target="execution_agent",
+                    priority=MessagePriority.HIGH,
+                )
 
+            # Check if connection was restored between ticks
             self._connected = self.get_world("execution.connected", False)
             if self._connected:
                 self._retries = 0

@@ -148,17 +148,21 @@ class DataAgent(BaseAgent):
                         stale.append(sym)
 
                 if stale:
-                    logger.warning(
-                        f"Data heartbeat: {len(stale)} stale symbols: "
-                        f"{stale[:5]}{'...' if len(stale)>5 else ''}"
-                    )
+                    broker_ok = self.get_world("execution.connected", False)
+                    if broker_ok:
+                        logger.warning(
+                            f"Data heartbeat: {len(stale)} stale symbols: "
+                            f"{stale[:5]}{'...' if len(stale)>5 else ''}"
+                        )
                     # Try quick refresh for stale symbols only
+                    # Skip cTrader if broker is disconnected — go straight
+                    # to alternative sources (Dukascopy, Yahoo)
                     ctrader = self.get_world("execution.ctrader_client")
                     if ctrader is None:
                         ctrader = getattr(self, "_ctrader_client", None)
                     for sym in stale:
                         try:
-                            if ctrader is not None:
+                            if broker_ok and ctrader is not None:
                                 await self.dm.load_from_ctrader(
                                     sym, "1h", days=1, client=ctrader
                                 )
@@ -182,14 +186,17 @@ class DataAgent(BaseAgent):
     async def _refresh_single_cycle(self):
         """Refresh OHLCV for all symbols × timeframes in parallel.
 
-        Tries cTrader historical API first (fast, broker-authoritative),
-        falls back to Yahoo Finance when cTrader is unavailable or fails.
+        Tries cTrader historical API first (fast, broker-authoritative)
+        ONLY when broker is connected.  Falls back to Dukascopy/Yahoo
+        when cTrader is unavailable or disconnected.
         All symbols and timeframes are refreshed concurrently via asyncio.gather.
         After refresh, saves to CSV and logs gap/integrity metrics.
         """
+        broker_ok = self.get_world("execution.connected", False)
         ctrader = self.get_world("execution.ctrader_client")
         if ctrader is None:
             ctrader = getattr(self, "_ctrader_client", None)
+        use_ctrader = broker_ok and ctrader is not None
 
         timeframes = list(
             dict.fromkeys(self.config.features.timeframes + ["1h"])
@@ -198,7 +205,7 @@ class DataAgent(BaseAgent):
         async def _refresh_one(sym: str, tf: str) -> bool:
             """Try to refresh a single symbol+timeframe pair."""
             try:
-                if ctrader is not None:
+                if use_ctrader:
                     if await self.dm.load_from_ctrader(sym, tf, days=1, client=ctrader):
                         return True
                 return bool(self.dm.try_alternative_source(sym, tf, days=1))
@@ -321,14 +328,21 @@ class DataAgent(BaseAgent):
         )
 
         now = time.time()
+        broker_ok = self.get_world("execution.connected", False)
         for sym in decision.get("heal_symbols", []):
             last_heal = self._heal_cooldown.get(sym, 0)
             if now - last_heal < 3600:
                 continue
-            ctrader = self.get_world("execution.ctrader_client") or getattr(
-                self, "_ctrader_client", None
-            )
-            healed = self.dm.heal_gaps(sym, max_gap_minutes=180, ctrader_client=ctrader)
+            if broker_ok:
+                ctrader = self.get_world("execution.ctrader_client") or getattr(
+                    self, "_ctrader_client", None
+                )
+                healed = self.dm.heal_gaps(
+                    sym, max_gap_minutes=180, ctrader_client=ctrader
+                )
+            else:
+                # Broker disconnected — try alternative source instead
+                healed = 1 if self.dm.try_alternative_source(sym, "1h", days=1) else 0
             if healed > 0:
                 self._heal_cooldown[sym] = now
                 self.memory.remember(

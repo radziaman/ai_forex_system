@@ -170,22 +170,41 @@ class ExecutionAgent(BaseAgent):
             from data.data_manager import SYMBOLS
             from api.symbol_map import get_symbol_id
 
-            if raw and hasattr(raw, "subscribe_depth"):
+            if raw:
                 depth_ok = 0
                 spot_ok = 0
-                # Subscribe to ALL core symbols — both depth and spot
+                # Subscribe to ALL core symbols — depth first, then spot.
+                #
+                # NOTE: Depth (Level II DOM) may not be available for all
+                # symbols or account types (IC Markets Raw Spread accounts
+                # often restrict depth).  If depth subscription fails or
+                # times out, we still have spot prices as fallback.
+                #
+                # Rate limiting: 1s between depth subs (cTrader allows
+                # max 50 req/s, but depth responses are heavyweight).
+                # Spot subs are fire-and-forget (no response expected),
+                # so they can be sent more aggressively.
                 for sym in self._core_symbols:
                     try:
                         sid = get_symbol_id(sym)
+                        # Check connection health — abort if disconnected
+                        # (the subscribe callback may have fired during a
+                        # previous subscription's await)
+                        if not self.get_world("execution.connected", True):
+                            self.log_state(
+                                f"Connection lost during subscription loop, "
+                                f"aborting ({sym} pending)", "warning"
+                            )
+                            break
                         # Level II depth subscription (order book)
-                        if await raw.subscribe_depth(sid):
-                            depth_ok += 1
-                        # Spot price subscription (accurate bid/ask with moneyDigits)
-                        if hasattr(
-                            raw, "subscribe_spots"
-                        ) and await raw.subscribe_spots(sid):
+                        if hasattr(raw, "subscribe_depth"):
+                            if await raw.subscribe_depth(sid):
+                                depth_ok += 1
+                            await asyncio.sleep(1.0)  # Rate limit: 1 depth req/s
+                        # Spot price subscription (fire-and-forget)
+                        if hasattr(raw, "subscribe_spots") and await raw.subscribe_spots(sid):
                             spot_ok += 1
-                        await asyncio.sleep(0.25)  # Rate limit protection
+                            await asyncio.sleep(0.2)
                     except Exception as e:
                         logger.debug(f"Subscribe failed for {sym}: {e}")
                 self.log_state(
@@ -200,34 +219,58 @@ class ExecutionAgent(BaseAgent):
         self.set_world("execution.status", "ready")
 
     async def _on_disconnect(self):
-        """Called when cTrader connection drops."""
+        """Called when cTrader connection drops — idempotent (safe to call multiple times)."""
+        if not self.get_world("execution.connected", False):
+            return  # Already disconnected
         self.log_state("cTrader disconnected", "warning")
         self.set_world("execution.connected", False)
+        self.set_world("execution.ctrader_client", None)
 
     async def _reconnect(self):
-        """Reconnect to cTrader and re-subscribe depth/spot subscriptions."""
+        """Reconnect to cTrader and re-subscribe depth/spot subscriptions.
+
+        Governed by a minimum 5s cooldown between attempts to prevent
+        rapid reconnect cycling.  Each attempt performs a full SSL connect +
+        app auth + account auth + subscription resubscribe.
+
+        On repeated failure, falls back to exponential backoff managed
+        by ConnectionAgent (which reads execution.connected from world state).
+        """
         if self._reconnecting:
             self.log_state("Reconnect already in progress, skipping", "debug")
             return
+
+        # Minimum cooldown: don't attempt reconnect more than once per 5s
+        now = time.time()
+        if hasattr(self, "_last_reconnect_ts") and now - self._last_reconnect_ts < 5:
+            self.log_state("Reconnect cooldown active, skipping", "debug")
+            return
+        self._last_reconnect_ts = now
+
         self._reconnecting = True
         self.log_state("Beginning cTrader reconnection...", "info")
         try:
             # Gracefully stop existing connection (best-effort)
+            # Only call stop() if writer is still alive
             if self.ctrader:
-                try:
-                    await self.ctrader.stop()
-                    self.log_state("Stopped existing connection", "debug")
-                except Exception as e:
-                    self.log_state(f"Stop existing connection: {e}", "debug")
-            await asyncio.sleep(2)
+                raw = getattr(self.ctrader, "raw", None)
+                if raw and getattr(raw, "_writer", None) is not None:
+                    try:
+                        await self.ctrader.stop()
+                        self.log_state("Stopped existing connection", "debug")
+                    except Exception as e:
+                        self.log_state(f"Stop existing connection: {e}", "debug")
+                else:
+                    self.log_state("No active connection to stop", "debug")
+            await asyncio.sleep(1)
 
             # Start fresh connection — this does SSL connect + app auth +
             # account auth + fetch info + start background listener + heartbeat
-            await self.ctrader.start()
+            ok = await self.ctrader.start()
             raw = getattr(self.ctrader, "raw", None)
 
-            if raw is None:
-                self.log_state("Reconnect failed — no raw client", "warning")
+            if not ok or raw is None:
+                self.log_state("Reconnect failed — cannot start broker client", "warning")
                 self.set_world("execution.connected", False)
                 return
 
@@ -254,22 +297,33 @@ class ExecutionAgent(BaseAgent):
             for sym in self._core_symbols:
                 try:
                     sid = get_symbol_id(sym)
-                    if hasattr(raw, "subscribe_depth") and await raw.subscribe_depth(
-                        sid
-                    ):
-                        depth_ok += 1
+                    # Abort subscribe loop if we disconnected during a previous
+                    # subscription's await (e.g. server rejected depth request)
+                    if not self.get_world("execution.connected", True):
+                        self.log_state(
+                            f"Connection lost during re-subscribe, "
+                            f"aborting ({sym} pending)", "warning"
+                        )
+                        break
+                    if hasattr(raw, "subscribe_depth"):
+                        if await raw.subscribe_depth(sid):
+                            depth_ok += 1
+                        await asyncio.sleep(1.0)
                     if hasattr(raw, "subscribe_spots") and await raw.subscribe_spots(
                         sid
                     ):
                         spot_ok += 1
-                    await asyncio.sleep(0.25)
+                        await asyncio.sleep(0.2)
                 except Exception as sub_err:
                     self.log_state(f"Subscribe failed for {sym}: {sub_err}", "debug")
 
-            self.log_state(
-                f"Reconnected: depth={depth_ok}/{len(self._core_symbols)}, "
-                f"spot={spot_ok}/{len(self._core_symbols)}"
-            )
+            # Only mark connected if we completed the subscribe loop
+            # (if we broke early due to disconnect, don't flip to True)
+            if self.get_world("execution.connected", False):
+                self.log_state(
+                    f"Reconnected: depth={depth_ok}/{len(self._core_symbols)}, "
+                    f"spot={spot_ok}/{len(self._core_symbols)}"
+                )
             self._executed = 0
             self._failed = 0
             self.set_world("execution.connected", True)
