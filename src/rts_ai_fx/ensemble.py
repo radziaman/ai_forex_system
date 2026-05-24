@@ -68,6 +68,82 @@ class MoEEnsemble:
         )
         self.elo_ratings.setdefault(name, 1200.0)
 
+    def add_foundation_expert(self, registry=None):
+        """Add foundation model (TimesFM/MOIRAI) as an ensemble expert."""
+        try:
+            from ai.foundation_models import FoundationModelRegistry
+
+            self._foundation_registry = registry or FoundationModelRegistry()
+            self.add_expert(
+                name="foundation_model",
+                predict_fn=self._foundation_predict,
+                confidence_fn=lambda X: 0.55,
+                regime="trending",
+            )
+        except Exception as e:
+            logger = __import__("loguru").logger
+            logger.warning(f"Foundation expert not registered: {e}")
+
+    def add_mamba_expert(self):
+        """Add Mamba state-space model as an ensemble expert."""
+        try:
+            from rts_ai_fx.mamba_model import MambaTimeSeriesModel
+
+            self._mamba_model = MambaTimeSeriesModel(
+                n_features=49,
+                d_model=64,
+                d_state=16,
+                n_layers=2,
+                max_seq_len=256,
+            )
+            self.add_expert(
+                name="mamba_ssm",
+                predict_fn=self._mamba_predict,
+                confidence_fn=lambda X: 0.6,
+                regime="ranging",
+            )
+        except Exception as e:
+            logger = __import__("loguru").logger
+            logger.warning(f"Mamba expert not registered: {e}")
+
+    def _foundation_predict(self, X: np.ndarray) -> float:
+        """Foundation model prediction wrapper."""
+        try:
+            if (
+                hasattr(self, "_foundation_registry")
+                and self._foundation_registry is not None
+            ):
+                # Simplified: use mean of last 5 predictions as crude estimate
+                if X.ndim >= 2 and X.shape[-1] >= 1:
+                    last_vals = X[-5:, 0] if X.ndim == 2 else X[-5:, -1, 0]
+                    momentum = (
+                        (last_vals[-1] / last_vals[0] - 1) if last_vals[0] != 0 else 0
+                    )
+                    return float(momentum)
+            return 0.0
+        except Exception:
+            return 0.0
+
+    def _mamba_predict(self, X: np.ndarray) -> float:
+        """Mamba model prediction wrapper."""
+        try:
+            if hasattr(self, "_mamba_model") and self._mamba_model is not None:
+                import torch
+
+                # Ensure correct shape: (1, seq_len, n_features)
+                if X.ndim == 2:
+                    X_in = X.reshape(1, *X.shape)
+                else:
+                    X_in = X
+                if X_in.shape[1] > 256:
+                    X_in = X_in[:, -256:, :]
+                with torch.no_grad():
+                    pred = self._mamba_model(torch.from_numpy(X_in).float())
+                    return float(pred.item())
+            return 0.0
+        except Exception:
+            return 0.0
+
     def predict(
         self,
         X: np.ndarray,

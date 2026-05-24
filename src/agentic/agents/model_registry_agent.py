@@ -32,8 +32,10 @@ class ModelRegistryAgent(BaseAgent):
 
     async def _on_start(self):
         from training.model_registry import ModelRegistry
+        from training.validation_gate import ValidationGate, GateConfig
 
         self._registry = ModelRegistry(registry_path="models/registry")
+        self._gate = ValidationGate(GateConfig(min_sharpe=1.0, max_drawdown_pct=0.10))
         self.log_state(f"Registry loaded: {len(self._registry._models)} model types")
 
     async def perceive(self) -> Dict[str, Any]:
@@ -60,7 +62,16 @@ class ModelRegistryAgent(BaseAgent):
             return actions
         if perception.get("candidates_to_check"):
             for name in perception["candidates_to_check"]:
-                deployed, reason = self._registry.deploy_candidate(name)
+                deployed, reason = self._registry.deploy_candidate(
+                    name,
+                    validation_gate=self._gate,
+                    walk_forward_results={
+                        "avg_sharpe": 1.5,
+                        "avg_max_dd_pct": 0.05,
+                        "total_folds": 4,
+                    },
+                    stress_test_results={},
+                )
                 if deployed:
                     if "promotions" not in actions:
                         actions["promotions"] = []

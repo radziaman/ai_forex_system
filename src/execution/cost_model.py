@@ -6,6 +6,7 @@ Applies realistic costs to every simulated/executed trade.
 from dataclasses import dataclass
 from typing import Dict, Optional, Callable
 
+from .almgren_chriss import AlmgrenChrissModel
 from .execution_quality import ExecutionQualityTracker
 
 
@@ -53,6 +54,7 @@ class CostModel:
         default_spread: float = 1.0,
         price_provider: Optional[Callable[[str], float]] = None,
         quality_tracker: Optional[ExecutionQualityTracker] = None,
+        impact_model: Optional[AlmgrenChrissModel] = None,
     ):
         self.commission_per_lot = commission_per_lot
         self.default_spread = default_spread
@@ -60,6 +62,7 @@ class CostModel:
         self._max_spread_multiplier = MAX_SPREAD_MULT
         self._price_provider = price_provider
         self.quality_tracker = quality_tracker
+        self.impact_model = impact_model
 
     def calculate(
         self,
@@ -116,13 +119,19 @@ class CostModel:
         slippage = slippage_cost * usd_rate
         total = spread_cost + commission + slippage
 
-        market_impact = 0.0
-        if self.quality_tracker is not None:
+        market_impact_cost = 0.0
+        if self.impact_model is not None:
+            impact_result = self.impact_model.calculate_impact(
+                symbol, volume, price, direction
+            )
+            market_impact_cost = impact_result.total_cost_usd
+        elif self.quality_tracker is not None:
             impact_bps = self.quality_tracker.calculate_market_impact(
                 symbol, volume, atr, price
             )
-            market_impact = impact_bps / 10_000 * price * volume * usd_rate
-            total += market_impact
+            market_impact_cost = impact_bps / 10_000 * price * volume * usd_rate
+
+        total = spread_cost + commission + slippage + market_impact_cost
 
         return CostResult(
             spread_cost=spread_cost,
@@ -132,7 +141,7 @@ class CostModel:
             actual_spread_pips=spread_pips,
             is_acceptable=is_acceptable,
             rejection_reason=rejection_reason,
-            market_impact=market_impact,
+            market_impact=market_impact_cost,
         )
 
     def _get_average_spread(self, symbol: str) -> float:

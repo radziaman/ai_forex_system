@@ -1,7 +1,7 @@
 ---
 description: Master orchestrator that delegates planning, coding, and testing to specialized sub-agents
 mode: primary
-model: opencode-go/kimi-k2.6
+model: opencode-go/deepseek-v4-flash
 color: success
 permission:
   task:

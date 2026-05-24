@@ -368,3 +368,41 @@ class SentimentAnalyzer:
         except (IOError, OSError, json.JSONDecodeError, KeyError, TypeError) as e:
             logger.debug(f"Failed to load sentiment cache: {e}")
             return None
+
+
+# Wire alternative data aggregator for commodity/CB/economic signals
+try:
+    from ai.alternative_data import AlternativeDataAggregator
+
+    _alt_data_aggregator = AlternativeDataAggregator()
+except ImportError:
+    _alt_data_aggregator = None
+
+
+def get_alternative_data_snapshot(
+    oil_price: float = None,
+    gold_price: float = None,
+    copper_price: float = None,
+    cb_signals: list = None,
+    economic_data: dict = None,
+) -> Optional[Dict]:
+    """Get composite alternative data signal for all FX pairs."""
+    if _alt_data_aggregator is None:
+        return None
+    snapshot = _alt_data_aggregator.get_snapshot(
+        commodity_prices={"oil": oil_price, "gold": gold_price, "copper": copper_price},
+        cb_signals=cb_signals or [],
+        economic_data=economic_data or {},
+    )
+    return {
+        "commodity": {
+            "oil": snapshot.commodity.oil_signal,
+            "gold": snapshot.commodity.gold_signal,
+            "copper": snapshot.commodity.copper_signal,
+        },
+        "central_bank": {
+            bank: signal.tone.value for bank, signal in snapshot.central_bank.items()
+        },
+        "composite": snapshot.composite_signal,
+        "timestamp": snapshot.timestamp,
+    }

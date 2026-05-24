@@ -63,6 +63,9 @@ class RiskManager:
         self._price_history: Dict[str, List[float]] = {}
         self._var_lookback = 60
         self._on_trade_close = None
+        from risk.correlation_matrix import RegimeCorrelationMatrix
+
+        self._correlation_matrix = RegimeCorrelationMatrix(window=100)
 
     def calculate_kelly_size(
         self,
@@ -321,6 +324,16 @@ class RiskManager:
         """
         if not open_symbols:
             return True, "OK"
+
+        # Dynamic regime-correlation matrix check (if available)
+        if self._correlation_matrix is not None:
+            for pair in open_symbols:
+                corr = self._correlation_matrix.get(new_symbol, pair)
+                if abs(corr) > 0.80:
+                    return (
+                        False,
+                        f"Correlation risk: {new_symbol}/{pair}={corr:.2f}",
+                    )
 
         # Known empirical correlations for major pairs (24h rolling typical values)
         # Source: BIS Triennial Survey, major bank FX desks

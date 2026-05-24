@@ -110,7 +110,7 @@ class LSTMCNNHybrid:
             inputs=inputs, outputs=outputs, name="lstm_cnn_hybrid"
         )
         self.model.compile(
-            optimizer=tf.keras.optimizers.legacy.Adam(0.001),
+            optimizer=tf.keras.optimizers.Adam(0.001),
             loss="mse",
             metrics=["mae"],
         )

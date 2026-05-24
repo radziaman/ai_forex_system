@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from loguru import logger
 
+from training.validation_gate import GateDecision, ValidationGate
+
 
 @dataclass
 class ModelVersion:
@@ -139,12 +141,32 @@ class ModelRegistry:
         logger.info(f"Set {name} {version} as CHAMPION")
 
     def deploy_candidate(
-        self, name: str, min_improvement: float = 0.05
+        self,
+        name: str,
+        min_improvement: float = 0.05,
+        validation_gate: Optional[ValidationGate] = None,
+        walk_forward_results: Optional[Dict] = None,
+        stress_test_results: Optional[Dict] = None,
     ) -> Tuple[bool, str]:
         """
         Deploy new model if it beats current champion.
+
+        If a ``validation_gate`` is provided, the candidate must pass
+        the gate before being considered for promotion.
+
         Returns (deployed, reason).
         """
+        # Run validation gate if configured
+        if validation_gate is not None:
+            if walk_forward_results is None or stress_test_results is None:
+                return False, ("gate_error_both_walk_forward_and_stress_test_required")
+            gate_result = validation_gate.evaluate(
+                name, walk_forward_results, stress_test_results
+            )
+            if gate_result.decision == GateDecision.REJECTED:
+                logger.warning(f"Gate rejected {name}: {gate_result.reason}")
+                return False, f"gate_rejected_{gate_result.reason}"
+
         champion = self.get_champion(name)
         if not champion:
             return False, "no_champion_exists"

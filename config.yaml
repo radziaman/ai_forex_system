@@ -99,6 +99,8 @@ features:
     - "1h"
     - "4h"
   lookback: 30
+  use_microstructure: true
+  use_cross_asset: false
 
 # Risk Management
 risk:

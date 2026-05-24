@@ -12,6 +12,8 @@ import json
 import sys
 from pathlib import Path
 from typing import Optional
+
+import numpy as np
 from loguru import logger
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
@@ -127,6 +129,16 @@ async def main():
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--trials", type=int, default=50, help="HP sweep trials")
     parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument(
+        "--multi-asset",
+        action="store_true",
+        help="Use global multi-asset model instead of per-symbol models",
+    )
+    parser.add_argument(
+        "--adversarial",
+        action="store_true",
+        help="Apply adversarial training augmentation",
+    )
     parser.add_argument("--output-dir", default="models")
     args = parser.parse_args()
 
@@ -174,6 +186,80 @@ async def main():
         )
         logger.info(f"Best config: {results[0].config}")
 
+    elif args.multi_asset:
+        from rts_ai_fx.multi_asset_model import GlobalMultiAssetModel, SYMBOL_NAMES
+
+        logger.info("Training Global Multi-Asset Model...")
+
+        # Load data for each symbol and combine
+        all_X_train, all_y_multi, all_symbol_ids = [], [], []
+        all_X_val, all_y_val_multi, all_symbol_ids_val = [], [], []
+
+        for sym_id, sym_name in enumerate(SYMBOL_NAMES):
+            try:
+                X_sym, y_sym, _, _ = await load_training_data(sym_name, args.years)
+                split = int(len(X_sym) * 0.8)
+
+                # Create multi-target y with one column per symbol
+                y_multi = np.zeros((len(y_sym), len(SYMBOL_NAMES)), dtype=np.float32)
+                y_target = y_sym.flatten() if y_sym.ndim > 1 else y_sym
+                y_multi[:, sym_id] = y_target
+
+                sid = np.full((len(y_sym), 1), sym_id, dtype=np.int32)
+
+                all_X_train.append(X_sym[:split])
+                all_y_multi.append(y_multi[:split])
+                all_symbol_ids.append(sid[:split])
+
+                all_X_val.append(X_sym[split:])
+                all_y_val_multi.append(y_multi[split:])
+                all_symbol_ids_val.append(sid[split:])
+
+                logger.info(
+                    f"  {sym_name}: {split} train, " f"{len(X_sym) - split} val samples"
+                )
+            except Exception as e:
+                logger.warning(f"Skipping {sym_name}: {e}")
+
+        if not all_X_train:
+            raise ValueError("No training data available for any symbol")
+
+        X_train = np.concatenate(all_X_train, axis=0)
+        y_train = np.concatenate(all_y_multi, axis=0)
+        symbol_ids_train = np.concatenate(all_symbol_ids, axis=0)
+
+        X_val = np.concatenate(all_X_val, axis=0)
+        y_val = np.concatenate(all_y_val_multi, axis=0)
+        symbol_ids_val = np.concatenate(all_symbol_ids_val, axis=0)
+
+        # Shuffle training data
+        idx = np.random.permutation(len(X_train))
+        X_train = X_train[idx]
+        y_train = y_train[idx]
+        symbol_ids_train = symbol_ids_train[idx]
+
+        n_features = X_train.shape[-1]
+        model = GlobalMultiAssetModel(
+            n_symbols=len(SYMBOL_NAMES),
+            lookback=30,
+            n_features=n_features,
+        )
+        model.build()
+        model.train(
+            X_train,
+            y_train,
+            symbol_ids_train,
+            X_val,
+            y_val,
+            symbol_ids_val,
+            epochs=args.epochs,
+        )
+        model.save(f"{args.output_dir}/global_multi_asset.keras")
+        logger.info(
+            f"Global Multi-Asset Model saved to "
+            f"{args.output_dir}/global_multi_asset.keras"
+        )
+
     else:
         logger.info("Training single model...")
         config = TrialConfig(epochs=args.epochs, lookback=30)
@@ -183,6 +269,21 @@ async def main():
         n_features = X.shape[-1]
         model = LSTMCNNHybrid(lookback=30, n_features=n_features)
         model.build()
+
+        # Adversarial augmentation (if enabled)
+        if args.adversarial:
+            from rts_ai_fx.adversarial import (
+                AdversarialTrainer,
+                PGDAdversarial,
+            )
+
+            if hasattr(model, "model") and model.model is not None:
+                trainer = AdversarialTrainer(PGDAdversarial(), adversarial_ratio=0.3)
+                X_train, y_train = trainer.augment_batch(
+                    model.model.predict, X_train, y_train
+                )
+                logger.info(f"Adversarial augmentation: {len(X_train)} total samples")
+
         model.model.fit(
             X_train,
             y_train,

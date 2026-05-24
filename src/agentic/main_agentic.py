@@ -49,6 +49,7 @@ from agentic.agents.drift_agent import DriftAgent  # noqa: E402
 from agentic.agents.circuit_breaker_agent import CircuitBreakerAgent  # noqa: E402
 from agentic.agents.cost_agent import CostAgent  # noqa: E402
 from agentic.agents.screener_agent import InstrumentScreenerAgent  # noqa: E402
+from agentic.agents.consolidated_agents import AgentSwarm  # noqa: E402
 
 from data.data_manager import SYMBOLS  # noqa: E402
 
@@ -380,6 +381,51 @@ class AgenticOrchestrator:
         logger.info("")
 
 
+def bootstrap_consolidated_agents(config: dict) -> AgentSwarm:
+    """Initialize the 6-agent consolidated swarm from configuration."""
+    swarm = AgentSwarm()
+
+    # Wire up data manager
+    from data.data_manager import DataManager  # noqa: E402
+
+    dm = DataManager(config.get("data", {}))
+    swarm.data.set_data_manager(dm)
+
+    # Wire up risk manager
+    from risk.manager import RiskManager, RiskParameters  # noqa: E402
+
+    params = RiskParameters(**config.get("risk", {}))
+    rm = RiskManager(params)
+    swarm.risk_manager.set_risk_manager(rm)
+
+    # Wire up execution
+    from execution.engine import ExecutionEngine  # noqa: E402
+
+    engine = ExecutionEngine(None, rm, dm, mode=config.get("mode", "PAPER"))
+    swarm.execution.set_execution_engine(engine)
+
+    # Wire up signal engine
+    from rts_ai_fx.ensemble import MoEEnsemble  # noqa: E402
+
+    ensemble = MoEEnsemble()
+    swarm.signal_engine.set_ensemble(ensemble)
+
+    # Wire up learning
+    from training.online_learner import OnlineLearner  # noqa: E402
+
+    learner = OnlineLearner()
+    swarm.learning.set_online_learner(learner)
+
+    from training.model_registry import ModelRegistry  # noqa: E402
+
+    registry = ModelRegistry()
+    swarm.learning.set_model_registry(registry)
+
+    swarm.start_all()
+    logger.info("Consolidated agent swarm bootstrapped successfully")
+    return swarm
+
+
 def cmd_status():
     """Print agentic system status."""
     config = AppConfig.from_yaml("config.yaml")
@@ -406,6 +452,11 @@ def main():
     parser.add_argument("--mode", choices=["paper", "live", "dry-run"], default="paper")
     parser.add_argument("--status", action="store_true", help="Print system status")
     parser.add_argument(
+        "--consolidated",
+        action="store_true",
+        help="Use 6-agent consolidated architecture instead of 20-agent swarm",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print what would happen without executing",
@@ -431,6 +482,20 @@ def main():
     config = AppConfig.from_yaml(args.config)
     secrets = Secrets()
     mode = "dry-run" if args.dry_run else args.mode
+
+    if args.consolidated:
+        logger.info("Booting consolidated 6-agent architecture...")
+        swarm = bootstrap_consolidated_agents({"mode": mode, "data": {}, "risk": {}})
+        logger.info("Consolidated agents running. Press Ctrl+C to stop.")
+        try:
+            import asyncio
+
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_forever()
+        except KeyboardInterrupt:
+            swarm.stop_all()
+        return
 
     orch = AgenticOrchestrator(
         config,

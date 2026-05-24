@@ -231,6 +231,7 @@ class AgentMessage:
     # Traceability
     causal_parent_id: str = ""
     conversation_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    trace_id: str = ""  # Populated by signal source, propagated through chain
     hop_count: int = 0
 
     # Delivery (G5)
@@ -289,6 +290,7 @@ class AgentMessage:
             payload=payload,
             causal_parent_id=self.msg_id,
             conversation_id=self.conversation_id,
+            trace_id=self.trace_id,  # Propagate trace
             hop_count=self.hop_count + 1,
             requires_ack=requires_ack,
         )
@@ -297,6 +299,7 @@ class AgentMessage:
         m = self.reply(self.payload)
         m.source_agent = self.source_agent
         m.target_agent = target
+        m.trace_id = self.trace_id  # Propagate trace
         m.hop_count = self.hop_count + 1
         return m
 

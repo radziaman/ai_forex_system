@@ -68,9 +68,13 @@ class RiskAgent(BaseAgent):
             volume_spike_multiplier=10.0,
         )
         # G3: Wire price_provider so cost_model uses live prices for cross-rate conversions  # noqa: E501
+        from execution.almgren_chriss import AlmgrenChrissModel
+
+        ac_model = AlmgrenChrissModel(volatility=0.15, adv=1e9, spread=0.0001)
         self.cost_model = CostModel(
             commission_per_lot=self.config.trading.commission_per_lot,
             price_provider=lambda sym: self.get_world(f"data.price.{sym}", None) or 1.0,
+            impact_model=ac_model,
         )
         self.set_world("risk.initial_balance", self.initial_balance)
         self.set_world("risk.status", "ready")

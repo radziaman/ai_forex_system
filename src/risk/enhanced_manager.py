@@ -10,6 +10,7 @@ from typing import Dict, List, Optional, Tuple, Any
 from loguru import logger
 
 from risk.manager import RiskManager, RiskParameters, TradeRecord
+from risk.portfolio_optimizer import PortfolioOptimizer
 
 
 @dataclass
@@ -36,6 +37,7 @@ class EnhancedRiskManager:
         base_manager: Optional[RiskManager] = None,
     ):
         self._base = base_manager or RiskManager(params, initial_balance)
+        self._portfolio_optimizer = PortfolioOptimizer(target_volatility=0.15)
         self._mae_mfe: Dict[int, Dict[str, Any]] = {}
         self._returns: Dict[str, List[float]] = {}
         self._price_history_for_returns: Dict[str, float] = {}
@@ -240,6 +242,15 @@ class EnhancedRiskManager:
             "max_loss_pct": max_loss / self._base.initial_balance,
             "shocks": scenario.shocks,
         }
+
+    def optimize_portfolio(
+        self, returns: Dict[str, np.ndarray], method: str = "hrp"
+    ) -> Dict[str, float]:
+        """Optimize portfolio weights using the PortfolioOptimizer."""
+        if not returns or len(returns) < 2:
+            return {}
+        result = self._portfolio_optimizer.optimize(returns, method=method)
+        return {k: float(v) for k, v in result.weights.items()}
 
     def get_mae_mfe_summary(self) -> Dict[int, Dict[str, float]]:
         """Return MAE/MFE summary for all open trades."""

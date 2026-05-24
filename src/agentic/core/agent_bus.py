@@ -266,11 +266,112 @@ class AgentBus:
                 }
             )
 
+    def validate_dependencies(self, agent_names: List[str]) -> List[str]:
+        """Validate that every subscribed message type has at least one publisher.
+
+        Scans the list of agent names against known publishers (extracted from
+        agent source code). Returns a list of warning strings for orphaned
+        subscriptions.
+
+        This is a best-effort static validation — it won't catch dynamically
+        determined message types, but catches the common case of dead subscriptions.
+        """
+        warnings = []
+
+        # Build set of all subscribed message types
+        subscribed_types = set()
+        subscriber_map: Dict[MessageType, List[str]] = defaultdict(list)
+        for msg_type, callbacks in self._subscribers.items():
+            subscribed_types.add(msg_type)
+            subscriber_map[msg_type].append("(sync)")
+        for msg_type, callbacks in self._async_subscribers.items():
+            subscribed_types.add(msg_type)
+            subscriber_map[msg_type].append("(async)")
+
+        # Known publishers: map of MessageType -> list of agent names that publish it
+        # This is built from static analysis of agent source files
+        known_publishers = self._scan_known_publishers(agent_names)
+
+        # Check each subscribed type against known publishers
+        for msg_type in sorted(subscribed_types, key=lambda m: m.name):
+            publishers = known_publishers.get(msg_type, [])
+            subscribers = subscriber_map.get(msg_type, ["unknown"])
+            if not publishers:
+                warnings.append(
+                    f"ORPHANED SUBSCRIPTION: {msg_type.name} "
+                    f"subscribed by {subscribers} but has NO publishers"
+                )
+            else:
+                logger.debug(
+                    f"Dependency OK: {msg_type.name} → published by {publishers}, "
+                    f"subscribed by {subscribers}"
+                )
+
+        self._dependency_warnings = warnings
+        return warnings
+
+    def _scan_known_publishers(
+        self, agent_names: List[str]
+    ) -> Dict[MessageType, List[str]]:
+        """Scan agent source files to find all self.send(MessageType.XXX) calls.
+
+        This is a simple regex-based static analysis.
+        """
+        import os
+        import re
+
+        publishers: Dict[MessageType, List[str]] = {}
+
+        agents_dir = os.path.join(os.path.dirname(__file__), "..", "agents")
+        if not os.path.exists(agents_dir):
+            logger.warning(f"Agent directory not found: {agents_dir}")
+            return publishers
+
+        # Pattern: self.send(MessageType.XXX or self.send(MessageType.XXX,
+        send_pattern = re.compile(r"self\.send\(\s*MessageType\.(\w+)")
+
+        for fname in sorted(os.listdir(agents_dir)):
+            if not fname.endswith(".py") or fname.startswith("_"):
+                continue
+            fpath = os.path.join(agents_dir, fname)
+            try:
+                with open(fpath) as f:
+                    content = f.read()
+            except Exception:
+                continue
+
+            matches = send_pattern.findall(content)
+            for type_name in matches:
+                try:
+                    msg_type = getattr(MessageType, type_name)
+                    agent_name = fname.replace(".py", "")
+                    publishers.setdefault(msg_type, []).append(agent_name)
+                except (AttributeError, TypeError):
+                    continue
+
+        # Also scan base_agent.py for publish_status (which sends HEARTBEAT)
+        base_path = os.path.join(os.path.dirname(__file__), "base_agent.py")
+        if os.path.exists(base_path):
+            try:
+                with open(base_path) as f:
+                    content = f.read()
+                matches = send_pattern.findall(content)
+                for type_name in matches:
+                    try:
+                        msg_type = getattr(MessageType, type_name)
+                        publishers.setdefault(msg_type, []).append("base_agent")
+                    except (AttributeError, TypeError):
+                        pass
+            except Exception:
+                pass
+
+        return publishers
+
     def get_stats(self) -> Dict:
         self._stats.active_subscribers = sum(
             len(v) for v in self._subscribers.values()
         ) + sum(len(v) for v in self._async_subscribers.values())
-        return {
+        deps = {
             "total_messages": self._stats.total_messages,
             "messages_by_type": dict(self._stats.messages_by_type),
             "messages_by_source": dict(self._stats.messages_by_source),
@@ -285,6 +386,10 @@ class AgentBus:
             "history_size": len(self._message_history),
             "dead_letter_count": len(self._dead_letter_queue),
         }
+        # Add dependency validation results if available
+        if hasattr(self, "_dependency_warnings"):
+            deps["dependency_warnings"] = self._dependency_warnings
+        return deps
 
     def get_recent_messages(
         self, msg_type: Optional[MessageType] = None, n: int = 20

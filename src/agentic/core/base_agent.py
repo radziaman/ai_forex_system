@@ -16,6 +16,12 @@ from .agent_memory import AgentMemory
 from .agent_bus import AgentBus, get_agent_bus
 from .agent_registry import AgentRegistry, get_agent_registry
 from .world_state import WorldState, get_world_state
+from .trace_store import get_trace_store
+
+# Cycle timeout constants
+CYCLE_PHASE_TIMEOUT_FACTOR = 0.8  # Each phase times out at 80% of tick_interval
+MAX_CONSECUTIVE_FAILURES_FOR_RESTART = 10
+BACKOFF_MAX_INTERVAL = 300.0  # 5 minutes max backoff
 
 
 class BaseAgent(ABC):
@@ -72,6 +78,7 @@ class BaseAgent(ABC):
         self._subscriptions: List[MessageType] = []
         self._supervisor = supervisor
         self._last_escalation_time: float = 0.0
+        self._current_trace_id = ""  # Set by message handlers when processing a trace
 
         self.bus.set_registry(self.registry)  # G6: wire registry for capability routing
 
@@ -125,6 +132,7 @@ class BaseAgent(ABC):
         priority: MessagePriority = MessagePriority.NORMAL,
         intention: Optional[AgentIntention] = None,
         requires_ack: bool = False,
+        trace_id: str = "",  # for distributed tracing
     ) -> bool:
         msg = AgentMessage(
             msg_type=msg_type,
@@ -134,6 +142,7 @@ class BaseAgent(ABC):
             target_capability=target_capability,
             payload=payload,
             requires_ack=requires_ack,
+            trace_id=trace_id or self._current_trace_id,
             intention=intention
             or AgentIntention(
                 primary_goal=self.consciousness.current_intention or "autonomous",
@@ -228,10 +237,24 @@ class BaseAgent(ABC):
                     await asyncio.sleep(self.consciousness.tick_interval)
                     continue
 
-                # 1. Perceive
+                # 1. Perceive (with timeout)
                 t0 = time.time()
-                perception = await self.perceive()
-                metrics.perceive_ms = (time.time() - t0) * 1000
+                phase_timeout = max(
+                    1.0, self.consciousness.tick_interval * CYCLE_PHASE_TIMEOUT_FACTOR
+                )
+                try:
+                    perception = await asyncio.wait_for(
+                        self.perceive(),
+                        timeout=phase_timeout,
+                    )
+                    metrics.perceive_ms = (time.time() - t0) * 1000
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"[{self.name}] perceive() timed out after {phase_timeout:.1f}s"
+                    )
+                    self.consciousness.record_error("perceive_timeout")
+                    await self._handle_cycle_failure()
+                    continue
 
                 if not perception or perception.get("skip", False):
                     metrics.success = True
@@ -239,10 +262,21 @@ class BaseAgent(ABC):
                     await asyncio.sleep(self.consciousness.tick_interval)
                     continue
 
-                # 2. Reason
+                # 2. Reason (with timeout)
                 t0 = time.time()
-                decision = await self.reason(perception)
-                metrics.reason_ms = (time.time() - t0) * 1000
+                try:
+                    decision = await asyncio.wait_for(
+                        self.reason(perception),
+                        timeout=phase_timeout,
+                    )
+                    metrics.reason_ms = (time.time() - t0) * 1000
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"[{self.name}] reason() timed out after {phase_timeout:.1f}s"
+                    )
+                    self.consciousness.record_error("reason_timeout")
+                    await self._handle_cycle_failure()
+                    continue
 
                 if not decision or decision.get("skip", False):
                     metrics.success = True
@@ -258,16 +292,43 @@ class BaseAgent(ABC):
                     self.consciousness.end_cycle(metrics)
                     continue
 
-                # 3. Act
+                # 3. Act (with timeout)
                 self.consciousness.current_state = AgentState.ACTING
                 t0 = time.time()
-                await self.act(decision)
-                metrics.act_ms = (time.time() - t0) * 1000
+                try:
+                    await asyncio.wait_for(
+                        self.act(decision),
+                        timeout=phase_timeout,
+                    )
+                    metrics.act_ms = (time.time() - t0) * 1000
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"[{self.name}] act() timed out after {phase_timeout:.1f}s"
+                    )
+                    self.consciousness.record_error("act_timeout")
+                    await self._handle_cycle_failure()
+                    continue
 
                 while not self._outbox.empty():
                     msg = await self._outbox.get()
                     await self.bus.publish(msg)
                     metrics.messages_sent += 1
+
+                # Record trace for this cycle
+                if self._current_trace_id:
+                    get_trace_store().record(
+                        trace_id=self._current_trace_id,
+                        agent=self.name,
+                        event="cycle_complete",
+                        detail={
+                            "decision_keys": (
+                                list(decision.keys())
+                                if isinstance(decision, dict)
+                                else []
+                            )
+                        },
+                        cycle_id=self.consciousness.cycle_count,
+                    )
 
                 # 4. Reflect
                 self.consciousness.current_state = AgentState.REFLECTING
@@ -300,6 +361,56 @@ class BaseAgent(ABC):
                     0, self.consciousness.tick_interval - (time.time() - cycle_start)
                 )
                 await asyncio.sleep(sleep_time)
+
+    async def _handle_cycle_failure(self):
+        """Handle a cycle failure with exponential backoff and auto-restart."""
+        self.consciousness.consecutive_errors += 1
+        self.consciousness.health_score = max(
+            0.0, self.consciousness.health_score - 0.1
+        )
+
+        # Exponential backoff: double interval up to max
+        new_interval = min(
+            self.consciousness.tick_interval * 2.0,
+            BACKOFF_MAX_INTERVAL,
+        )
+        self.consciousness.tick_interval = new_interval
+
+        logger.warning(
+            f"[{self.name}] Cycle failed "
+            f"({self.consciousness.consecutive_errors} consecutive). "
+            f"Backing off to {new_interval:.1f}s interval."
+        )
+
+        # G22: Escalate to master on repeated failures
+        if (
+            self.consciousness.consecutive_errors >= 2
+            and time.time() - self._last_escalation_time > 60
+        ):
+            self._last_escalation_time = time.time()
+            await self._escalate_error(
+                f"{self.consciousness.consecutive_errors} consecutive cycle failures"
+            )
+
+        # Auto-restart after threshold exceeded
+        if (
+            self.consciousness.consecutive_errors
+            >= MAX_CONSECUTIVE_FAILURES_FOR_RESTART
+        ):
+            logger.error(
+                f"[{self.name}] "
+                f"{self.consciousness.consecutive_errors} consecutive failures"
+                f" — restarting agent"
+            )
+            await self.stop()
+            await asyncio.sleep(2.0)
+            await self.start()
+            return
+
+        # Record the error
+        metrics = AgentCycleMetrics(success=False, errors=1)
+        self.consciousness.end_cycle(metrics)
+        await asyncio.sleep(self.consciousness.tick_interval)
 
     async def _message_loop(self):
         while self._running:

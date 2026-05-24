@@ -9,7 +9,7 @@ from execution.execution_quality import ExecutionQualityTracker
 from execution.position_reconciler import PositionReconciler
 from execution.broker_health import BrokerHealthMonitor
 from risk.enhanced_manager import EnhancedRiskManager
-from risk.manager import RiskManager, RiskParameters
+from risk.manager import RiskParameters
 
 
 @dataclass
@@ -161,11 +161,29 @@ class ExecutionEngine:
                 self._position_counter += 1
                 fill_price = result.filled_price or price
                 self.quality.record_fill(symbol, price, fill_price, direction, volume)
-                if self.quality.should_slice(volume):
-                    slices = self.quality.plan_slices(
-                        volume, method="twap", n_slices=5, duration_sec=300
+                if volume > 5_000:
+                    from execution.is_execution import (
+                        ISExecutionEngine,
+                        ExecutionUrgency,
                     )
-                    logger.info(f"Slicing recommended for {symbol}: {slices}")
+
+                    is_engine = ISExecutionEngine()
+                    urgency = ExecutionUrgency.MEDIUM
+                    if hasattr(self, "risk") and self.risk is not None:
+                        confidence = getattr(self.risk, "last_confidence", 0.5)
+                    else:
+                        confidence = 0.5
+                    plan = is_engine.plan_execution(
+                        volume,
+                        fill_price,
+                        symbol=symbol,
+                        confidence=confidence,
+                        urgency=urgency,
+                    )
+                    logger.info(
+                        f"IS plan for {symbol}: {len(plan.slices)} slices, "
+                        f"expected cost {plan.expected_cost_bps:.1f} bps"
+                    )
                 trade = TradeRecord(
                     timestamp=time.time(),
                     symbol=symbol,
@@ -211,11 +229,26 @@ class ExecutionEngine:
         if self.risk is not None:
             self.risk.record_trade_open(trade)
         self.quality.record_fill(symbol, price, price, direction, volume)
-        if self.quality.should_slice(volume):
-            slices = self.quality.plan_slices(
-                volume, method="twap", n_slices=5, duration_sec=300
+        if volume > 5_000:
+            from execution.is_execution import ISExecutionEngine, ExecutionUrgency
+
+            is_engine = ISExecutionEngine()
+            urgency = ExecutionUrgency.MEDIUM
+            if hasattr(self, "risk") and self.risk is not None:
+                confidence = getattr(self.risk, "last_confidence", 0.5)
+            else:
+                confidence = 0.5
+            plan = is_engine.plan_execution(
+                volume,
+                price,
+                symbol=symbol,
+                confidence=confidence,
+                urgency=urgency,
             )
-            logger.info(f"Slicing recommended for {symbol}: {slices}")
+            logger.info(
+                f"IS plan for {symbol}: {len(plan.slices)} slices, "
+                f"expected cost {plan.expected_cost_bps:.1f} bps"
+            )
         logger.info(f"[PAPER] OPENED: {direction} {volume:.0f} {symbol} @ {price:.5f}")
         return trade
 

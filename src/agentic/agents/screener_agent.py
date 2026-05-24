@@ -242,8 +242,8 @@ class InstrumentScreenerAgent(BaseAgent):
         This agent's primary purpose is now cross-asset DATA FEED, not trading.
         It collects prices from equities, bonds, commodities, and crypto to feed
         the regime detection and cross-asset momentum features in the FeaturePipeline.
-        No INSTRUMENTS_UPDATED messages are sent — trading decisions are handled
-        by the core 11 forex symbols through the MoE ensemble.
+        INSTRUMENTS_UPDATED messages are sent to SignalAgent and ExecutionAgent
+        to dynamically merge screener findings with core forex symbols.
         """
         # Build cross-asset price snapshot for regime detection
 
@@ -286,6 +286,17 @@ class InstrumentScreenerAgent(BaseAgent):
             )
 
         self._tradeable_instruments = tradeable
+
+        # Publish INSTRUMENTS_UPDATED for SignalAgent and ExecutionAgent
+        # to dynamically update active symbols (merged with core FX symbols).
+        await self.send(
+            MessageType.INSTRUMENTS_UPDATED,
+            payload={
+                "tradeable": tradeable,
+                "count": len(tradeable),
+                "timestamp": time.time(),
+            },
+        )
 
     async def reflect(self, outcome: Dict[str, Any]):
         """Clean up after scan."""

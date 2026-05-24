@@ -10,6 +10,8 @@ import threading
 import warnings
 from typing import Dict, Optional, Callable
 from dataclasses import dataclass, field
+
+import numpy as np
 from loguru import logger
 
 warnings.filterwarnings("ignore")
@@ -63,6 +65,8 @@ class OnlineLearner:
         self._running: Dict[str, bool] = {}
         self._lock = threading.Lock()
         self._drift_signals: Dict[str, int] = {}
+        self._min_cooldown = 300.0  # 5 minutes
+        self._max_cooldown = 12 * 3600  # 12 hours
 
         self._load_deployed_models()
 
@@ -100,6 +104,24 @@ class OnlineLearner:
         except Exception as e:
             logger.warning(f"Failed to save snapshots: {e}")
 
+    def _get_adaptive_cooldown(self, pair: str) -> float:
+        """Calculate adaptive cooldown based on drift severity.
+
+        Base: retrain_cooldown_hours * 3600 (default 4h)
+        Severe drift = shorter cooldown (down to min_cooldown = 5 min)
+        No drift = longer cooldown (up to max_cooldown = 12h)
+        """
+        base_cd = float(self.retrain_cooldown)
+        drift_count = self._drift_signals.get(pair, 0)
+
+        if drift_count <= 0:
+            return min(base_cd * 3.0, self._max_cooldown)
+
+        severity = min(drift_count / 5.0, 3.0)
+        factor = 1.0 - (1.0 - np.exp(-severity)) * 0.8
+        adjusted = base_cd * max(factor, 0.2)
+        return max(adjusted, self._min_cooldown)
+
     def on_drift_detected(self, pair: str, drift_count: int):
         with self._lock:
             self._drift_signals[pair] = drift_count
@@ -109,7 +131,8 @@ class OnlineLearner:
             if self._running.get(pair, False):
                 return False
             last = self._last_retrain.get(pair, 0)
-            if time.time() - last < self.retrain_cooldown:
+            # Use adaptive cooldown based on drift severity
+            if time.time() - last < self._get_adaptive_cooldown(pair):
                 return False
             drift = self._drift_signals.get(pair, 0)
             if drift > 0:

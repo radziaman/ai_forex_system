@@ -78,8 +78,11 @@ class SignalAgent(BaseAgent):
         self._models_loaded = False
         self._signal_count = 0
         self._last_signal_time = 0.0
+        self._rejection_count = 0
+        self._rejection_reasons: Dict[str, int] = {}
         self._fallback_warnings: set = set()  # Track which symbols we warned about
         self._alpha_strategies: Dict[str, Any] = {}  # name -> strategy instance
+        self._alpha_pipeline = None
 
         # G8: Track outcomes per expert for online learning
         self._expert_outcomes: Dict[str, deque] = defaultdict(lambda: deque(maxlen=200))
@@ -125,6 +128,7 @@ class SignalAgent(BaseAgent):
         self.subscribe(MessageType.MODEL_UPDATE)
         self.subscribe(MessageType.EXECUTION_RESULT)  # G8: learn from outcomes
         self.subscribe(MessageType.POSITION_CLOSED)  # Per-symbol PnL tracking
+        self.subscribe(MessageType.RISK_REJECTED)  # Learn from rejected trades
         self.subscribe(MessageType.DIAGNOSTIC_REQUEST)
         self.subscribe(
             MessageType.INSTRUMENTS_UPDATED
@@ -276,12 +280,25 @@ class SignalAgent(BaseAgent):
         elif message.msg_type == MessageType.POSITION_CLOSED:
             # Per-symbol PnL tracking
             await self._on_position_closed(message)
+        elif message.msg_type == MessageType.RISK_REJECTED:
+            # Track rejection reasons for learning / calibration
+            payload = message.payload if isinstance(message.payload, dict) else {}
+            reason = payload.get("reason", "unknown")
+            signal_info = payload.get("signal", {})
+            symbol = signal_info.get("symbol", "unknown")
+            self._rejection_count += 1
+            if not hasattr(self, "_rejection_reasons"):
+                self._rejection_reasons = {}
+            self._rejection_reasons[reason] = self._rejection_reasons.get(reason, 0) + 1
+            self.set_world(
+                f"signal.rejected.{symbol}",
+                {
+                    "reason": reason,
+                    "count": self._rejection_reasons[reason],
+                    "timestamp": time.time(),
+                },
+            )
         elif message.msg_type == MessageType.MODEL_UPDATE:
-            self._load_models()
-            self._register_experts()
-            self._models_loaded = True
-            self.set_world("signal.models_loaded", True)
-        elif message.msg_type == MessageType.DIAGNOSTIC_REQUEST:
             await self.send(
                 MessageType.DIAGNOSTIC_RESULT,
                 payload={
@@ -828,6 +845,52 @@ class SignalAgent(BaseAgent):
         except Exception as e:
             self.log_state(f"Alpha strategies not registered: {e}", "warning")
 
+        # Phase 13: Cross-sectional alpha expert (relative value signals)
+        try:
+            from rts_ai_fx.cross_sectional_alpha import CrossSectionalAlpha
+
+            self._cross_sectional_alpha = CrossSectionalAlpha()
+            self.ensemble.add_expert(
+                name="cross_sectional",
+                predict_fn=self._cross_sectional_predict,
+                confidence_fn=lambda X: 0.6,
+                regime="ranging",
+            )
+            self._strategy_tracker.register_strategy("cross_sectional", "ranging")
+            for sym in self._active_symbols:
+                self._per_symbol_tracker.register(sym, "cross_sectional", "ranging")
+        except Exception as e:
+            self.log_state(f"Cross-sectional alpha not registered: {e}", "warning")
+
+        # Phase 14: Alpha research pipeline — auto-discover and validate signals
+        try:
+            from ai.alpha_research import AlphaResearchPipeline, AlphaPipelineConfig
+
+            self._alpha_pipeline = AlphaResearchPipeline(
+                config=AlphaPipelineConfig(min_ic=0.02, min_ir=0.5, min_t_stat=2.0),
+                registry_path="models/signal_registry.json",
+            )
+            self.log_state("Alpha research pipeline initialized")
+        except Exception as e:
+            self.log_state(f"Alpha pipeline not initialized: {e}", "warning")
+
+        # Phase 15: Meta-learning orchestrator for rapid adaptation
+        try:
+            from ai.maml_scaler import MetaLearningOrchestrator, MetaConfig
+
+            self._meta_learner = MetaLearningOrchestrator(
+                config=MetaConfig(
+                    inner_lr=0.01, inner_steps=5, adaptation_threshold=0.15
+                )
+            )
+            for sym in self._active_symbols:
+                self._meta_learner.register_model(sym)
+            self.log_state(
+                f"Meta-learner registered for {len(self._active_symbols)} symbols"
+            )
+        except Exception as e:
+            self.log_state(f"Meta-learner not initialized: {e}", "warning")
+
     def _make_alpha_predict_fn(self, name: str):
         """Closure that routes ensemble calls to the correct alpha strategy."""
         return lambda X, n=name: self._alpha_prediction(X, n)
@@ -872,6 +935,30 @@ class SignalAgent(BaseAgent):
             return float(sig.get("confidence", 0.5))
         except Exception:
             return 0.5
+
+    def _cross_sectional_predict(self, X: np.ndarray) -> float:
+        """Cross-sectional alpha prediction across all symbols."""
+        try:
+            if (
+                not hasattr(self, "_cross_sectional_alpha")
+                or self._cross_sectional_alpha is None
+            ):
+                return 0.0
+            prices = {}
+            for sym in self._active_symbols:
+                bid = self.get_world(f"data.bid.{sym}", 0)
+                ask = self.get_world(f"data.ask.{sym}", 0)
+                if bid > 0 and ask > 0:
+                    prices[sym] = pd.Series([(bid + ask) / 2])
+            if len(prices) < 2:
+                return 0.0
+            signal = self._cross_sectional_alpha.compute_all(prices)
+            composite = signal.composite_zscore
+            if not composite:
+                return 0.0
+            return float(np.mean(list(composite.values())))
+        except Exception:
+            return 0.0
 
     def _tft_prediction(self, X: np.ndarray) -> float:
         """TFT ensemble prediction for the current symbol."""
