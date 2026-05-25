@@ -127,7 +127,8 @@ class AlphaResearchPipeline:
 
         # IC by time period (monthly)
         try:
-            monthly_ics = aligned.groupby(aligned.index.to_period("M")).apply(
+            _idx = pd.DatetimeIndex(aligned.index)
+            monthly_ics = aligned.groupby(_idx.to_period("M")).apply(
                 lambda g: (
                     stats.spearmanr(g.iloc[:, 0], g.iloc[:, 1])[0]
                     if len(g) > 10

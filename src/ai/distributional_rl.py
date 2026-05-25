@@ -126,10 +126,23 @@ class QuantilePPOCritic(nn.Module):
         return quantiles[:, idx : idx + 1]
 
     def cvar(self, state: torch.Tensor, alpha: float = 0.05) -> torch.Tensor:
-        """Get Conditional VaR (mean of worst alpha quantiles)."""
+        """Get Conditional VaR (mean of worst alpha quantiles).
+
+        Note: calls forward() independently — use eval mode or no_grad
+        when calling both value_at_risk and cvar on the same state to
+        ensure consistent dropout masks.
+        """
         quantiles = self.forward(state)
         n_tail = max(1, int(alpha * self.n_quantiles))
         return quantiles[:, :n_tail].mean(dim=-1, keepdim=True)
+
+    def var_and_cvar(self, state: torch.Tensor, alpha: float = 0.05) -> tuple:
+        """Get both VaR and CVaR from a single forward pass (deterministic)."""
+        quantiles = self.forward(state)
+        idx = max(1, int(alpha * self.n_quantiles))
+        var = quantiles[:, idx : idx + 1]
+        cvar = quantiles[:, :idx].mean(dim=-1, keepdim=True)
+        return var, cvar
 
 
 class IQNEmbedding(nn.Module):

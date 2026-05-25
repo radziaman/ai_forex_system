@@ -21,33 +21,14 @@ from agentic.core.agent_message import (
 )
 from agentic.core.agent_consciousness import ConsciousnessLevel
 
-
-# Strategy-specific SL/TP (ATR multipliers) — each strategy has its own optimal
-# stop-loss and take-profit to improve profitability.
-STRATEGY_SL_TP = {
-    "rule_breakout": (2.0, 5.0),  # Trending breakout
-    "rule_mean_rev": (1.5, 2.0),  # Ranging mean reversion
-    "bb_squeeze": (2.0, 3.0),  # Volatility breakout
-    "ts_momentum": (2.5, 4.0),  # Trend momentum (wider SL)
-    "vol_mean_rev": (1.5, 2.0),  # Volatility reversion
-    "ppo_trending": (2.0, 4.0),  # PPO trending agent
-    "ppo_ranging": (1.5, 3.0),  # PPO ranging agent
-    "ppo_volatile": (2.5, 5.0),  # PPO volatile agent
-    "ppo_crisis": (1.0, 2.0),  # PPO crisis agent
-    "lstm_cnn": (2.0, 4.0),  # LSTM model
-    "tft_primary": (2.0, 4.0),  # TFT model
-    "orderflow": (1.5, 2.5),  # Order flow / CVD (tight SL, moderate TP)
-    "macro_sentiment": (2.0, 4.0),  # Macroeconomic / sentiment (wider SL)
-    "stat_arb": (1.5, 3.0),  # Statistical arbitrage
-    "carry_trade": (2.0, 4.0),  # Carry trade
-    "event_driven": (1.0, 2.0),  # Event-driven straddle
-    "vol_expansion": (2.5, 5.0),  # Volatility breakout
-    "order_flow_momentum": (1.5, 2.5),  # Order flow momentum
-}
+from agentic.agents.signal_strategies import StrategyExecutor, STRATEGY_SL_TP
+from agentic.agents.signal_model_loader import ModelLoader
+from agentic.agents.signal_kill_switch import KillSwitchMonitor
+from agentic.agents.signal_confidence import ConfidenceCalibrator
 
 
 class SignalAgent(BaseAgent):
-    def __init__(self, config):
+    def __init__(self, config, ensemble=None, container=None):
         super().__init__(
             name="signal_agent",
             role="Ensemble Signal Generator",
@@ -66,14 +47,17 @@ class SignalAgent(BaseAgent):
             },
             tick_interval=1.0,
             consciousness_level=ConsciousnessLevel.REFLECTIVE,
+            container=container,
         )
         self.config = config
+        self._injected_ensemble = ensemble  # stored for _on_start
         self.ensemble = None
         self._lstm_models: Dict[str, Any] = {}  # symbol -> loaded LSTM model
         self._tft_models: Dict[str, Any] = {}  # symbol -> loaded TFT model
         self._classifiers: Dict[str, Any] = {}  # symbol -> loaded classifier
         self._model_registry = None
         self._regime_manager = None
+        self._ppo_state_dim = 49  # fallback default
         self._drift_monitors: Dict[str, Any] = {}
         self._models_loaded = False
         self._signal_count = 0
@@ -113,15 +97,23 @@ class SignalAgent(BaseAgent):
         self._attribution_engine = StrategyAttributionEngine()
         self._attribution_trade_counter = 0
 
-        # Kill switch tracking
-        self._kill_switch_since: Optional[float] = None
-        self._kill_switch_alerted: bool = False
+        # Active trading symbols: major FX + XAUUSD only
+        self._active_symbols = [
+            "EURUSD",
+            "GBPUSD",
+            "USDJPY",
+            "AUDUSD",
+            "USDCAD",
+            "USDCHF",
+            "NZDUSD",
+            "XAUUSD",
+        ]
 
-        # G16: Confidence calibration
-        self._confidence_buckets: Dict[str, deque] = defaultdict(
-            lambda: deque(maxlen=500)
-        )
-        self._calibration_bins = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+        # Modular components (extracted concerns)
+        self._model_loader = ModelLoader(self._active_symbols, config)
+        self._strategy_executor = StrategyExecutor(self)
+        self._kill_switch = KillSwitchMonitor(self.send)
+        self._confidence = ConfidenceCalibrator()
 
         self.subscribe(MessageType.FEATURES_READY)
         self.subscribe(MessageType.REGIME_CHANGED)
@@ -134,22 +126,37 @@ class SignalAgent(BaseAgent):
             MessageType.INSTRUMENTS_UPDATED
         )  # Dynamic symbol selection from screener
 
-        # Active symbols: starts with default set, dynamically updated by screener
-        from data.data_manager import SYMBOLS
-
-        self._active_symbols = list(SYMBOLS)
-
     async def _on_start(self):
         self.consciousness.current_intention = (
             "loading AI models and initializing ensemble"
         )
-        from rts_ai_fx.ensemble import MoEEnsemble
 
-        self.ensemble = MoEEnsemble()
+        # Resolve ensemble: injected > container > create
+        if self._injected_ensemble is not None:
+            self.ensemble = self._injected_ensemble
+        elif self.container.has("ensemble"):
+            self.ensemble = self.container.get("ensemble")
+        else:
+            from rts_ai_fx.ensemble import MoEEnsemble
+
+            self.ensemble = MoEEnsemble()
+
         self.ensemble.use_sharpe_weighting = True
         # Wire strategy tracker for dynamic weight adjustments (Phase 4)
         self.ensemble.set_tracker_weight_fn(self._per_symbol_weight_fn)
-        self._load_models()
+
+        # Load models via ModelLoader
+        self._model_loader.set_log_fn(self.log_state)
+        self._model_loader.load_all()
+        self._regime_manager = self._model_loader.regime_manager
+        self._lstm_models = self._model_loader.lstm_models
+        self._tft_models = self._model_loader.tft_models
+        self._classifiers = self._model_loader.classifiers
+        self._model_registry = self._model_loader.model_registry
+        self._ppo_state_dim = self._model_loader.ppo_state_dim
+        self._fallback_warnings = self._model_loader.fallback_warnings
+        self._models_loaded = self._model_loader.models_loaded
+
         self._register_experts()
         self.set_world("signal.models_loaded", self._models_loaded)
         self.set_world(
@@ -161,46 +168,17 @@ class SignalAgent(BaseAgent):
 
     def _check_kill_switch(self) -> bool:
         """Return True if kill switch is active in world state."""
-        active = bool(self.get_world("risk.kill_switch", False))
-        if active and self._kill_switch_since is None:
-            self._kill_switch_since = time.time()
-        return active
+        return self._kill_switch.is_active(self.get_world)
 
     async def _handle_kill_switch(self):
         """Log warning, alert Telegram, and attempt recovery after 30 min."""
-        if not self._kill_switch_alerted:
-            logger.warning("Kill switch active — all signals blocked")
-            await self.send(
-                MessageType.RISK_ALERT,
-                payload={
-                    "type": "kill_switch",
-                    "reason": "Kill switch active — all signals blocked",
-                },
-                priority=MessagePriority.CRITICAL,
-            )
-            self._kill_switch_alerted = True
-        else:
-            elapsed = time.time() - self._kill_switch_since
-            if elapsed > 30 * 60:
-                drawdown = self.get_world("risk.drawdown", 0.0)
-                if drawdown < 0.03:
-                    logger.info(
-                        "Kill switch recovery: drawdown recovered, "
-                        "attempting release"
-                    )
-                    self._kill_switch_since = None
-                    self._kill_switch_alerted = False
-                    self.set_world("risk.kill_switch_release_requested", True)
-                else:
-                    logger.warning(
-                        f"Kill switch still active after {elapsed / 60:.0f}min, "
-                        f"drawdown={drawdown:.1%}"
-                    )
+        result = await self._kill_switch.handle(self.get_world)
+        if result == "request_release":
+            self.set_world("risk.kill_switch_release_requested", True)
 
     def _clear_kill_switch_state(self):
         """Reset local kill switch tracking when world state clears."""
-        self._kill_switch_since = None
-        self._kill_switch_alerted = False
+        self._kill_switch.clear()
 
     def _maybe_publish_attribution(self):
         """Publish attribution report to world state every 5 trades."""
@@ -260,16 +238,34 @@ class SignalAgent(BaseAgent):
                     t.get("ticker", "") for t in tradeable if t.get("ticker")
                 ]
                 if new_symbols:
-                    # Merge screener findings with core symbols (don't replace)
-                    from data.data_manager import SYMBOLS as CORE_SYMBOLS
-
-                    merged = list(dict.fromkeys(list(CORE_SYMBOLS) + new_symbols))
+                    # Merge screener findings with core symbols.
+                    # Only add symbols that are in our trading universe.
+                    CORE_SYMBOLS = [
+                        "EURUSD",
+                        "GBPUSD",
+                        "USDJPY",
+                        "AUDUSD",
+                        "USDCAD",
+                        "USDCHF",
+                        "NZDUSD",
+                        "XAUUSD",
+                    ]
+                    # Only merge tickers that look like FX pairs or XAU
+                    valid_new = [
+                        t
+                        for t in new_symbols
+                        if any(c in t.upper() for c in CORE_SYMBOLS)
+                        or "XAU" in t.upper()
+                        or "XAG" in t.upper()
+                    ]
+                    merged = list(dict.fromkeys(CORE_SYMBOLS + valid_new))
                     self._active_symbols = merged
                     self.set_world("signal.active_symbols", merged)
-                    self.log_state(
-                        f"Screener merged: {len(merged)} symbols "
-                        f"({len(CORE_SYMBOLS)} core + {len(new_symbols)} screener)"
-                    )
+                    if valid_new:
+                        self.log_state(
+                            f"Screener merged: {len(merged)} symbols "
+                            f"(+{len(valid_new)} from screener)"
+                        )
             return
 
         if message.msg_type == MessageType.FEATURES_READY:
@@ -311,20 +307,25 @@ class SignalAgent(BaseAgent):
             )
 
     async def _on_features(self, message: AgentMessage):
-        payload = message.payload if isinstance(message.payload, dict) else {}
-        symbol = payload.get("symbol", "")
-        features = payload.get("features")
-        df = payload.get("ohlcv")
-        price = payload.get("price", 0)
-        if features is None:
+        # Step 1: Extract and validate payload
+        extracted = self._extract_signal_payload(message)
+        if extracted is None:
+            logger.debug("_on_features: extracted is None")
             return
+        logger.debug(
+            f"_on_features: {extracted['symbol']} features={extracted['features'].shape}"
+        )
+        symbol = extracted["symbol"]
+        features = extracted["features"]
+        df = extracted["df"]
+        price = extracted["price"]
 
         # Task 2: Pre-trade kill switch check
         if self._check_kill_switch():
             await self._handle_kill_switch()
             return
-        if self._kill_switch_since is not None:
-            self._clear_kill_switch_state()
+        # Clear stale kill switch state if it was previously active
+        self._clear_kill_switch_state()
 
         # Per-symbol: skip symbols with no profitable strategy yet
         if not self._per_symbol_tracker.is_symbol_tradeable(symbol):
@@ -333,31 +334,20 @@ class SignalAgent(BaseAgent):
             )
             return
 
-        # Phase 2: Cache for rule-based experts
-        if df is not None:
-            self._last_df = df
-        if price != 0:
-            self._last_price = price
-        # Cache current symbol so LSTM expert can use it
-        self._current_symbol = symbol
+        # Cache for rule-based experts
+        self._cache_signal_state(df, price, symbol)
 
-        # Determine trading session for rule-based expert adjustments
-        self._current_session = self._get_current_session()
-
-        if df is not None and len(df) > 60:
-            from rts_ai_fx.regime_detector import HMMRegimeDetector
-
-            detector = HMMRegimeDetector()
-            regime_str = detector.detect_regime(df)
-        else:
-            regime_str = self.get_world(f"regime.{symbol}", "ranging")
-
+        # Regime detection
+        regime_str = self._detect_regime(df, symbol)
         if not self.ensemble:
             return
 
-        # Get ensemble prediction (Phase 4: LSTM is now a proper expert in the ensemble)
+        # Ensemble prediction
         pred = self.ensemble.predict(features, regime=regime_str)
         if pred is None or not hasattr(pred, "confidence") or pred.confidence is None:
+            logger.debug(
+                f"ensemble predict failed for {symbol}: pred type={type(pred).__name__}"
+            )
             return
 
         should_trade, direction_str, agreement = self.ensemble.should_trade(
@@ -366,38 +356,65 @@ class SignalAgent(BaseAgent):
             min_confidence=0.40,
         )
         if not should_trade:
+            logger.debug(
+                f"should_trade=False for {symbol}: conf={pred.confidence:.3f} dir={direction_str} agree={agreement:.3f}"
+            )
+            return
+
+        # ── Transaction cost gate: reject if edge doesn't cover spread ──
+        edge = abs(float(getattr(pred, "price", 0))) * float(
+            getattr(pred, "confidence", 0.5)
+        )
+        logger.debug(
+            f"Signal gate for {symbol}: edge={edge:.6f} price={getattr(pred,'price',0):.6f} conf={getattr(pred,'confidence',0):.3f}"
+        )
+        spread_pips = self.get_world(f"data.spread.{symbol}", 0)
+        pip_value = self.get_world(f"data.pip_value.{symbol}", 0.10)
+        commission = 0.07  # ~$7/lot × 0.01 lots
+        # Use calibrated realized slippage if available, else fall back to raw spread
+        realized_slippage_bps = self.get_world(f"execution.slippage_bps.{symbol}", None)
+        if realized_slippage_bps is not None:
+            slippage_cost = realized_slippage_bps / 10_000 * price  # bps → $ per unit
+            trade_cost = max(spread_pips * pip_value, slippage_cost) + commission
+        else:
+            trade_cost = spread_pips * pip_value + commission
+        min_edge_ratio = 2.0  # edge must be at least 2× cost
+        if edge > 0 and trade_cost > 0 and edge < trade_cost * min_edge_ratio:
+            self.set_world(
+                f"signal.rejected.{symbol}",
+                {
+                    "reason": f"edge_too_thin: edge={edge:.4f} cost={trade_cost:.4f}",
+                    "count": 1,
+                    "timestamp": time.time(),
+                },
+            )
+            self.log_state(
+                f"Rejected {symbol}: edge ${edge:.4f} < ${trade_cost:.4f} × {min_edge_ratio}",
+                "debug",
+            )
             return
 
         self._signal_count += 1
         self._last_signal_time = time.time()
 
-        # Find the best expert (highest weight) for per-strategy SL/TP
-        expert_outputs = getattr(pred, "expert_outputs", {})
-        if expert_outputs:
-            best_expert = max(
-                expert_outputs.items(), key=lambda x: x[1].get("weight", 0)
-            )[0]
-        else:
-            best_expert = "unknown"
-        sl_atr, tp_atr = STRATEGY_SL_TP.get(best_expert, (2.0, 4.0))
+        # Best expert selection
+        best_expert, sl_atr, tp_atr = self._select_best_expert(
+            getattr(pred, "expert_outputs", {})
+        )
 
         await self.send(
             MessageType.SIGNAL_GENERATED,
-            payload={
-                "symbol": symbol,
-                "direction": direction_str,
-                "confidence": getattr(pred, "confidence", 0.5),
-                "regime": regime_str,
-                "session": self._current_session,
-                "price": price,
-                "agreement": agreement,
-                "expert_outputs": expert_outputs,
-                "ensemble_price": getattr(pred, "price", price),
-                "strategy": best_expert,
-                "sl_atr": sl_atr,
-                "tp_atr": tp_atr,
-                "timestamp": time.time(),
-            },
+            payload=self._build_signal_message(
+                symbol=symbol,
+                direction_str=direction_str,
+                pred=pred,
+                regime_str=regime_str,
+                price=price,
+                agreement=agreement,
+                best_expert=best_expert,
+                sl_atr=sl_atr,
+                tp_atr=tp_atr,
+            ),
             priority=MessagePriority.NORMAL,
             intention=AgentIntention(
                 primary_goal=f"generate {direction_str} signal for {symbol}",
@@ -407,6 +424,99 @@ class SignalAgent(BaseAgent):
                 confidence=float(pred.confidence),
             ),
         )
+
+    def _extract_signal_payload(
+        self, message: AgentMessage
+    ) -> Optional[Dict[str, Any]]:
+        """Extract and validate signal payload from message.
+
+        Returns a dict with symbol, features, df, price, and optionally
+        orthogonal signal metadata (sentiment, macro, options, NASA).
+        Returns None if features are missing.
+        """
+        payload = message.payload if isinstance(message.payload, dict) else {}
+        symbol = payload.get("symbol", "")
+        features = payload.get("features")
+        df = payload.get("ohlcv")
+        price = payload.get("price", 0)
+        if features is None:
+            return None
+        result: Dict[str, Any] = {
+            "symbol": symbol,
+            "features": features,
+            "df": df,
+            "price": price,
+        }
+        # Orthogonal data from feature_agent (attached as metadata,
+        # not fused into feature vector — preserves model input dimensions)
+        sentiment = payload.get("sentiment_scores")
+        if sentiment:
+            result["sentiment_scores"] = sentiment
+        ext = payload.get("external_signals")
+        if ext:
+            result["external_signals"] = ext
+        return result
+
+    def _cache_signal_state(self, df, price, symbol):
+        """Cache current data for rule-based experts and set trading session."""
+        if df is not None:
+            self._last_df = df
+        if price != 0:
+            self._last_price = price
+        self._current_symbol = symbol
+        self._current_session = self._get_current_session()
+
+    def _detect_regime(self, df, symbol) -> str:
+        """Detect market regime using HMM detector or world state fallback."""
+        if df is not None and len(df) > 60:
+            from rts_ai_fx.regime_detector import HMMRegimeDetector
+
+            detector = HMMRegimeDetector()
+            return detector.detect_regime(df)
+        return self.get_world(f"regime.{symbol}", "ranging")
+
+    def _select_best_expert(self, expert_outputs):
+        """Select the best expert and return its SL/TP multipliers.
+
+        Returns (expert_name, sl_atr, tp_atr).
+        """
+        if expert_outputs:
+            best_expert = max(
+                expert_outputs.items(), key=lambda x: x[1].get("weight", 0)
+            )[0]
+        else:
+            best_expert = "unknown"
+        sl_atr, tp_atr = STRATEGY_SL_TP.get(best_expert, (2.0, 4.0))
+        return best_expert, sl_atr, tp_atr
+
+    def _build_signal_message(
+        self,
+        symbol,
+        direction_str,
+        pred,
+        regime_str,
+        price,
+        agreement,
+        best_expert,
+        sl_atr,
+        tp_atr,
+    ) -> Dict[str, Any]:
+        """Build the SIGNAL_GENERATED message payload."""
+        return {
+            "symbol": symbol,
+            "direction": direction_str,
+            "confidence": getattr(pred, "confidence", 0.5),
+            "regime": regime_str,
+            "session": self._current_session,
+            "price": price,
+            "agreement": agreement,
+            "expert_outputs": getattr(pred, "expert_outputs", {}),
+            "ensemble_price": getattr(pred, "price", price),
+            "strategy": best_expert,
+            "sl_atr": sl_atr,
+            "tp_atr": tp_atr,
+            "timestamp": time.time(),
+        }
 
     # G8: Learn from execution outcomes
     async def _on_execution_result(self, message: AgentMessage):
@@ -445,13 +555,7 @@ class SignalAgent(BaseAgent):
 
         # G16: Calibrate confidence vs actual outcomes
         confidence = payload.get("signal", {}).get("confidence", 0.5)
-        if isinstance(confidence, (int, float)):
-            for bin_edge in self._calibration_bins:
-                if confidence <= bin_edge:
-                    self._confidence_buckets[f"bin_{bin_edge}"].append(
-                        1 if payload.get("success") else 0
-                    )
-                    break
+        self._confidence.record_outcome(confidence, bool(payload.get("success")))
 
     # Per-symbol: track actual PnL when positions close
     async def _on_position_closed(self, message: AgentMessage):
@@ -513,156 +617,38 @@ class SignalAgent(BaseAgent):
 
     # G16: Log calibration report
     def _log_calibration(self):
-        report = {}
-        for bin_name, outcomes in self._confidence_buckets.items():
-            if len(outcomes) >= 5:
-                actual_accuracy = sum(outcomes) / len(outcomes)
-                expected = float(bin_name.split("_")[1])
-                report[bin_name] = {
-                    "expected": expected,
-                    "actual": round(actual_accuracy, 3),
-                    "samples": len(outcomes),
-                    "calibration_error": round(abs(actual_accuracy - expected), 3),
-                }
+        report = self._confidence.get_report()
         if report:
             self.memory.know("signal.calibration", report, ttl=3600)
 
     def _load_models(self):  # noqa: C901
-        # PPO regime agents (shared across all symbols)
-        try:
-            from ai.regime_agents import RegimeSpecialistSystem
+        """Load all models via ModelLoader.
 
-            self._regime_manager = RegimeSpecialistSystem(state_dim=49, n_actions=5)
-            n_agents = len([a for a in self._regime_manager.agents.values() if a])
+        ModelLoader handles PPO regime agents, LSTM, TFT, and classifiers.
+        After loading, sync results back to SignalAgent attributes.
+        """
+        self._model_loader.set_log_fn(self.log_state)
+        loaded = self._model_loader.load_all()
+        self._regime_manager = self._model_loader.regime_manager
+        self._lstm_models = self._model_loader.lstm_models
+        self._tft_models = self._model_loader.tft_models
+        self._classifiers = self._model_loader.classifiers
+        self._model_registry = self._model_loader.model_registry
+        self._ppo_state_dim = self._model_loader.ppo_state_dim
+        self._fallback_warnings = self._model_loader.fallback_warnings
+        self._models_loaded = self._model_loader.models_loaded
 
+        # Publish PPO training status to world state
+        has_real_weights = False
+        if self._regime_manager:
             has_real_weights = any(
                 any(p.norm().item() > 1.0 for p in agent.actor.parameters())
                 for agent in self._regime_manager.agents.values()
                 if agent
             )
-            self.set_world("models.ppo_trained", has_real_weights)
-            if not has_real_weights:
-                self.log_state(
-                    f"Loaded {n_agents} PPO regime agents (untrained — random weights)"
-                )
-                self.set_world("models.untrained", True)
-            else:
-                self.log_state(
-                    f"Loaded {n_agents} PPO regime agents (trained weights loaded)"
-                )
-        except Exception as e:
-            self.log_state(f"PPO agents not loaded: {e}", "warning")
-
-        # Per-symbol model registry
-        try:
-            from agentic.agents.model_registry import SymbolModelRegistry
-
-            self._model_registry = SymbolModelRegistry()
-            self._model_registry.discover()
-            self.log_state(f"Model registry: {self._model_registry.summary()}")
-        except Exception as e:
-            self.log_state(f"Model registry failed: {e}", "warning")
-
-        # Load LSTM models for all active symbols
-        from rts_ai_fx.model import LSTMCNNHybrid
-
-        for sym in self._active_symbols:
-            entry = self._model_registry.get_lstm(sym) if self._model_registry else None
-            if entry and entry.file_path and os.path.exists(entry.file_path):
-                try:
-                    loaded = LSTMCNNHybrid.load(entry.file_path)
-                    if loaded and loaded.model is not None:
-                        self._lstm_models[sym] = loaded
-                except Exception:
-                    pass
-            if sym not in self._lstm_models:
-                # Fallback: try the generic model
-                for p in [
-                    "models/lstm_cnn_model_reloaded.keras",
-                    "models/lstm_cnn_EURUSD.keras",
-                    "models/lstm_cnn_model.keras",
-                ]:
-                    if os.path.exists(p):
-                        try:
-                            loaded = LSTMCNNHybrid.load(p)
-                            if loaded and loaded.model is not None:
-                                self._lstm_models[sym] = loaded
-                                self._fallback_warnings.add(sym)
-                                break
-                        except Exception:
-                            pass
-
-        # Load TFT models for all active symbols
-        try:
-            from ai.tft_model import TemporalFusionTransformer
-
-            for sym in self._active_symbols:
-                tft_path = f"models/tft_{sym}.pt"
-                if os.path.exists(tft_path):
-                    try:
-                        loaded = TemporalFusionTransformer.load(tft_path)
-                        self._tft_models[sym] = loaded
-                    except Exception:
-                        pass
-                if sym not in self._tft_models:
-                    # Fallback: generic model
-                    generic = "models/tft_primary.pt"
-                    if os.path.exists(generic):
-                        try:
-                            loaded = TemporalFusionTransformer.load(generic)
-                            self._tft_models[sym] = loaded
-                            self._fallback_warnings.add(sym)
-                        except Exception:
-                            pass
-        except Exception as e:
-            self.log_state(f"TFT models not loaded: {e}", "warning")
-
-        # Load classifier models per active symbol
-        from rts_ai_fx.model import ProfitabilityClassifier
-
-        for sym in self._active_symbols:
-            entry = (
-                self._model_registry.get_classifier(sym)
-                if self._model_registry
-                else None
-            )
-            if entry and entry.file_path and os.path.exists(entry.file_path):
-                try:
-                    self._classifiers[sym] = ProfitabilityClassifier.load(
-                        entry.file_path
-                    )
-                except Exception:
-                    pass
-            if sym not in self._classifiers:
-                try:
-                    clf = ProfitabilityClassifier(lookback=30, n_features=49)
-                    self._classifiers[sym] = clf
-                except Exception:
-                    pass
-
-        # Log summary
-        lstm_count = len(self._lstm_models)
-        tft_count = len(self._tft_models)
-        clf_count = len(self._classifiers)
-        lstm_unique = len(set(id(m) for m in self._lstm_models.values()))
-        if self._fallback_warnings:
-            fallback_list = sorted(self._fallback_warnings)[:5]
-            self.log_state(
-                f"{lstm_count} symbols have LSTM models ({lstm_unique} unique instances) "  # noqa: E501
-                f"— {len(self._fallback_warnings)} symbols fall back to EURUSD "
-                f"({', '.join(fallback_list)}{'...' if len(self._fallback_warnings) > 5 else ''})",  # noqa: E501
-                level="warning",
-            )
-        else:
-            self.log_state(
-                f"{lstm_count} symbols have LSTM models ({lstm_unique} unique instances)"  # noqa: E501
-            )
-        self.log_state(f"{tft_count} symbols have TFT models")
-        self.log_state(f"{clf_count} symbols have classifiers")
-
-        self._models_loaded = self._regime_manager is not None and (
-            len(self._lstm_models) > 0 or len(self._tft_models) > 0
-        )
+        self.set_world("models.ppo_trained", has_real_weights)
+        if not has_real_weights and self._regime_manager:
+            self.set_world("models.untrained", True)
 
     def _register_experts(self):  # noqa: C901
         if not self.ensemble:
@@ -670,197 +656,21 @@ class SignalAgent(BaseAgent):
         self.ensemble.experts = []
         self.ensemble.elo_ratings = {}
 
-        # Phase 1: 4 regime-specific PPO experts instead of single ppo_regime
-        if self._regime_manager:
-            for regime in ["trending", "ranging", "volatile", "crisis"]:
-                self.ensemble.add_expert(
-                    name=f"ppo_{regime}",
-                    predict_fn=lambda X, r=regime: self._ppo_prediction(X, regime=r),
-                    confidence_fn=lambda X, r=regime: self._ppo_confidence(X, regime=r),
-                    regime=regime,
-                )
-                self._strategy_tracker.register_strategy(f"ppo_{regime}", regime)
-                for sym in self._active_symbols:
-                    self._per_symbol_tracker.register(sym, f"ppo_{regime}", regime)
+        # Load alpha strategies first (StrategyExecutor.get_all_specs references them)
+        self._load_alpha_strategies()
 
-        # Phase 4: Register LSTM as a proper expert (no longer a placeholder)
-        has_lstm = len(self._lstm_models) > 0
-        if has_lstm:
+        # Get all strategy specs from StrategyExecutor
+        specs = self._strategy_executor.get_all_specs()
+        for spec in specs:
             self.ensemble.add_expert(
-                name="lstm_cnn",
-                predict_fn=self._lstm_ensemble_prediction,
-                confidence_fn=lambda X: 0.6,
-                regime="ranging",
+                name=spec.name,
+                predict_fn=spec.predict_fn,
+                confidence_fn=spec.confidence_fn,
+                regime=spec.regime,
             )
-            self._strategy_tracker.register_strategy("lstm_cnn", "ranging")
+            self._strategy_tracker.register_strategy(spec.name, spec.regime)
             for sym in self._active_symbols:
-                self._per_symbol_tracker.register(sym, "lstm_cnn", "ranging")
-
-        # Phase 2: Replace placeholder rule_based with two real rule-based experts
-        self.ensemble.add_expert(
-            name="rule_breakout",
-            predict_fn=self._rule_breakout_prediction,
-            confidence_fn=self._rule_breakout_confidence,
-            regime="trending",
-        )
-        self._strategy_tracker.register_strategy("rule_breakout", "trending")
-        for sym in self._active_symbols:
-            self._per_symbol_tracker.register(sym, "rule_breakout", "trending")
-        self.ensemble.add_expert(
-            name="rule_mean_rev",
-            predict_fn=self._rule_mean_rev_prediction,
-            confidence_fn=self._rule_mean_rev_confidence,
-            regime="ranging",
-        )
-        self._strategy_tracker.register_strategy("rule_mean_rev", "ranging")
-        for sym in self._active_symbols:
-            self._per_symbol_tracker.register(sym, "rule_mean_rev", "ranging")
-
-        # Phase 6: Research-backed forex strategies
-        self.ensemble.add_expert(
-            name="bb_squeeze",
-            predict_fn=self._bb_squeeze_prediction,
-            confidence_fn=lambda X: 0.55,
-            regime="volatile",
-        )
-        self._strategy_tracker.register_strategy("bb_squeeze", "volatile")
-        for sym in self._active_symbols:
-            self._per_symbol_tracker.register(sym, "bb_squeeze", "volatile")
-        self.ensemble.add_expert(
-            name="ts_momentum",
-            predict_fn=self._ts_momentum_prediction,
-            confidence_fn=lambda X: 0.6,
-            regime="trending",
-        )
-        self._strategy_tracker.register_strategy("ts_momentum", "trending")
-        for sym in self._active_symbols:
-            self._per_symbol_tracker.register(sym, "ts_momentum", "trending")
-        self.ensemble.add_expert(
-            name="vol_mean_rev",
-            predict_fn=self._vol_mean_rev_prediction,
-            confidence_fn=lambda X: 0.55,
-            regime="volatile",
-        )
-        self._strategy_tracker.register_strategy("vol_mean_rev", "volatile")
-        for sym in self._active_symbols:
-            self._per_symbol_tracker.register(sym, "vol_mean_rev", "volatile")
-
-        # Phase 7: Order flow / CVD expert (Evans & Lyons 2002)
-        self.ensemble.add_expert(
-            name="orderflow",
-            predict_fn=self._orderflow_prediction,
-            confidence_fn=self._orderflow_confidence,
-            regime="ranging",
-        )
-        self._strategy_tracker.register_strategy("orderflow", "ranging")
-        for sym in self._active_symbols:
-            self._per_symbol_tracker.register(sym, "orderflow", "ranging")
-
-        # Phase 8: Macro sentiment expert (uses FRED data for event-driven signals)
-        self.ensemble.add_expert(
-            name="macro_sentiment",
-            predict_fn=self._macro_sentiment_prediction,
-            confidence_fn=lambda X: 0.5,
-            regime="trending",
-        )
-        self._strategy_tracker.register_strategy("macro_sentiment", "trending")
-        for sym in self._active_symbols:
-            self._per_symbol_tracker.register(sym, "macro_sentiment", "trending")
-
-        # Phase 9: Social sentiment expert (Twitter/Reddit market sentiment)
-        self.ensemble.add_expert(
-            name="social_sentiment",
-            predict_fn=self._social_sentiment_prediction,
-            confidence_fn=lambda X: 0.35,  # Lower confidence — noisy signal
-            regime="volatile",
-        )
-        self._strategy_tracker.register_strategy("social_sentiment", "volatile")
-        for sym in self._active_symbols:
-            self._per_symbol_tracker.register(sym, "social_sentiment", "volatile")
-
-        # Phase 10: XGBoost expert (Chen 2016) — gradient boosted trees
-        # Provides ensemble diversity: XGBoost + Neural networks outperform either alone
-        self.ensemble.add_expert(
-            name="xgboost",
-            predict_fn=self._xgboost_prediction,
-            confidence_fn=lambda X: 0.55,
-            regime="ranging",
-        )
-        self._strategy_tracker.register_strategy("xgboost", "ranging")
-        for sym in self._active_symbols:
-            self._per_symbol_tracker.register(sym, "xgboost", "ranging")
-
-        # Phase 11: TFT primary expert (Temporal Fusion Transformer)
-        has_tft = len(self._tft_models) > 0
-        if has_tft:
-            self.ensemble.add_expert(
-                name="tft_primary",
-                predict_fn=self._tft_prediction,
-                confidence_fn=self._tft_confidence,
-                regime="ranging",
-            )
-            self._strategy_tracker.register_strategy("tft_primary", "ranging")
-            for sym in self._active_symbols:
-                self._per_symbol_tracker.register(sym, "tft_primary", "ranging")
-
-        # Phase 12: Alpha strategies from StrategyRegistry
-        try:
-            from ai.alpha_strategies import StrategyRegistry
-            from ai.alpha_strategies.stat_arb import StatArbStrategy
-            from ai.alpha_strategies.carry_trade import CarryTradeStrategy
-            from ai.alpha_strategies.event_driven import EventDrivenStrategy
-            from ai.alpha_strategies.vol_expansion import VolExpansionStrategy
-            from ai.alpha_strategies.order_flow_momentum import (
-                OrderFlowMomentumStrategy,
-            )
-
-            registry = StrategyRegistry()
-            registry.register("stat_arb", StatArbStrategy)
-            registry.register("carry_trade", CarryTradeStrategy)
-            registry.register("event_driven", EventDrivenStrategy)
-            registry.register("vol_expansion", VolExpansionStrategy)
-            registry.register("order_flow_momentum", OrderFlowMomentumStrategy)
-
-            # Map regimes to strategies for dynamic selection
-            registry.map_regime("trending", ["stat_arb", "carry_trade"])
-            registry.map_regime("ranging", ["event_driven", "order_flow_momentum"])
-            registry.map_regime("volatile", ["vol_expansion", "event_driven"])
-            registry.map_regime("crisis", ["event_driven"])
-
-            for name, strat_class in registry.get_all().items():
-                instance = strat_class(symbol=self._current_symbol, params={})
-                self._alpha_strategies[name] = instance
-                predict_fn = self._make_alpha_predict_fn(name)
-                conf_fn = self._make_alpha_confidence_fn(name)
-                regime = self._alpha_regime_for(name)
-                self.ensemble.add_expert(
-                    name=name,
-                    predict_fn=predict_fn,
-                    confidence_fn=conf_fn,
-                    regime=regime,
-                )
-                self._strategy_tracker.register_strategy(name, regime)
-                for sym in self._active_symbols:
-                    self._per_symbol_tracker.register(sym, name, regime)
-        except Exception as e:
-            self.log_state(f"Alpha strategies not registered: {e}", "warning")
-
-        # Phase 13: Cross-sectional alpha expert (relative value signals)
-        try:
-            from rts_ai_fx.cross_sectional_alpha import CrossSectionalAlpha
-
-            self._cross_sectional_alpha = CrossSectionalAlpha()
-            self.ensemble.add_expert(
-                name="cross_sectional",
-                predict_fn=self._cross_sectional_predict,
-                confidence_fn=lambda X: 0.6,
-                regime="ranging",
-            )
-            self._strategy_tracker.register_strategy("cross_sectional", "ranging")
-            for sym in self._active_symbols:
-                self._per_symbol_tracker.register(sym, "cross_sectional", "ranging")
-        except Exception as e:
-            self.log_state(f"Cross-sectional alpha not registered: {e}", "warning")
+                self._per_symbol_tracker.register(sym, spec.name, spec.regime)
 
         # Phase 14: Alpha research pipeline — auto-discover and validate signals
         try:
@@ -890,6 +700,50 @@ class SignalAgent(BaseAgent):
             )
         except Exception as e:
             self.log_state(f"Meta-learner not initialized: {e}", "warning")
+
+    def _load_alpha_strategies(self):
+        """Load alpha strategies and cross-sectional alpha.
+
+        Populates _alpha_strategies and _cross_sectional_alpha for use
+        by StrategyExecutor and the ensemble.
+        """
+        # Phase 12: Alpha strategies from StrategyRegistry
+        try:
+            from ai.alpha_strategies import StrategyRegistry as AlphaStrategyRegistry
+            from ai.alpha_strategies.stat_arb import StatArbStrategy
+            from ai.alpha_strategies.carry_trade import CarryTradeStrategy
+            from ai.alpha_strategies.event_driven import EventDrivenStrategy
+            from ai.alpha_strategies.vol_expansion import VolExpansionStrategy
+            from ai.alpha_strategies.order_flow_momentum import (
+                OrderFlowMomentumStrategy,
+            )
+
+            registry = AlphaStrategyRegistry()
+            registry.register("stat_arb", StatArbStrategy)
+            registry.register("carry_trade", CarryTradeStrategy)
+            registry.register("event_driven", EventDrivenStrategy)
+            registry.register("vol_expansion", VolExpansionStrategy)
+            registry.register("order_flow_momentum", OrderFlowMomentumStrategy)
+
+            # Map regimes to strategies for dynamic selection
+            registry.map_regime("trending", ["stat_arb", "carry_trade"])
+            registry.map_regime("ranging", ["event_driven", "order_flow_momentum"])
+            registry.map_regime("volatile", ["vol_expansion", "event_driven"])
+            registry.map_regime("crisis", ["event_driven"])
+
+            for name, strat_class in registry.get_all().items():
+                instance = strat_class(symbol=self._current_symbol, params={})
+                self._alpha_strategies[name] = instance
+        except Exception as e:
+            self.log_state(f"Alpha strategies not loaded: {e}", "warning")
+
+        # Phase 13: Cross-sectional alpha expert (relative value signals)
+        try:
+            from rts_ai_fx.cross_sectional_alpha import CrossSectionalAlpha
+
+            self._cross_sectional_alpha = CrossSectionalAlpha()
+        except Exception as e:
+            self.log_state(f"Cross-sectional alpha not loaded: {e}", "warning")
 
     def _make_alpha_predict_fn(self, name: str):
         """Closure that routes ensemble calls to the correct alpha strategy."""
@@ -1039,7 +893,11 @@ class SignalAgent(BaseAgent):
             state = X_arr[-1, :]
         else:
             state = X_arr.flatten()
-        target_dim = self._regime_manager.state_dim if self._regime_manager else 49
+        target_dim = (
+            self._regime_manager.state_dim
+            if self._regime_manager
+            else self._ppo_state_dim
+        )
         state = state[:target_dim]
         if len(state) < target_dim:
             state = np.pad(state, (0, target_dim - len(state)))
@@ -1102,7 +960,6 @@ class SignalAgent(BaseAgent):
     # ── Phase 2: Rule-based experts ──────────────────────────────────────
 
     def _get_current_session(self) -> str:
-        """Detect the current forex trading session based on UTC time."""
         utc_hour = datetime.datetime.now(datetime.timezone.utc).hour
         if 7 <= utc_hour < 12:
             return "london"
@@ -1112,8 +969,6 @@ class SignalAgent(BaseAgent):
             return "newyork"
         elif 21 <= utc_hour or utc_hour < 7:
             return "asia"
-        elif 8 <= utc_hour < 12:
-            return "pacific"
         return "asia"
 
     def _compute_atr(self, period: int = 14) -> float:
@@ -1551,13 +1406,4 @@ class SignalAgent(BaseAgent):
             return float(np.clip((raw - 1.12) / 1.12, -0.01, 0.01))
         except Exception as e:
             logger.debug(f"LSTM predict error: {e}")
-            return 0.0
-        try:
-            X_arr = np.asarray(X)
-            if X_arr.ndim == 1:
-                X_arr = X_arr.reshape(1, 1, -1)
-            pred = self._lstm_model.predict(X_arr)
-            raw = pred[0][0] if hasattr(pred, "__len__") else pred
-            return float(np.clip((raw - 1.12) / 1.12, -0.01, 0.01))
-        except Exception:
             return 0.0

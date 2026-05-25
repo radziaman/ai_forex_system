@@ -31,13 +31,23 @@ class DriftAgent(BaseAgent):
         self.subscribe(MessageType.DIAGNOSTIC_REQUEST)
 
     async def _on_start(self):
-        from data.data_manager import SYMBOLS
         from rts_ai_fx.drift_detector import DriftMonitor
 
-        self._symbols = SYMBOLS
-        for sym in SYMBOLS:
+        # Only monitor drift for actively traded symbols — major FX + XAUUSD
+        ACTIVE_SYMBOLS = [
+            "EURUSD",
+            "GBPUSD",
+            "USDJPY",
+            "AUDUSD",
+            "USDCAD",
+            "USDCHF",
+            "NZDUSD",
+            "XAUUSD",
+        ]
+        self._symbols = ACTIVE_SYMBOLS
+        for sym in ACTIVE_SYMBOLS:
             self._drift_monitors[sym] = DriftMonitor()
-        self.log_state(f"Monitoring drift for {len(SYMBOLS)} symbols")
+        self.log_state(f"Monitoring drift for {len(ACTIVE_SYMBOLS)} symbols")
 
     async def perceive(self) -> Dict[str, Any]:
         drifted_symbols = []

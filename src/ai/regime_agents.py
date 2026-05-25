@@ -113,16 +113,19 @@ class RegimeSpecialistSystem:
             try:
                 from ai.rl_agent import PPOAgent
 
+                # NOTE: hidden_dims NOT passed here — the training script
+                # train_all_models.py uses the PPOAgent default
+                # [1024, 512, 256, 128]. Passing regime-specific dims here
+                # would mismatch the saved network architecture.
                 agent = PPOAgent(
                     state_dim=self.state_dim,
                     n_actions=self.n_actions,
-                    hidden_dims=config.hidden_dims,
                     clip_range=config.clip_range,
                 )
                 agent.optimizer = optim.Adam(
                     agent.actor.parameters(), lr=config.learning_rate
                 )
-                agent_path = f"models/{config.name}_agent.pth"
+                agent_path = f"models/{regime}_agent.pth"
                 # Load pre-trained if exists (graceful on shape mismatch)
                 if os.path.exists(agent_path):
                     try:
@@ -130,7 +133,7 @@ class RegimeSpecialistSystem:
                         logger.info(f"Loaded {regime} agent from {agent_path}")
                     except Exception as load_err:
                         logger.info(
-                            f"Fresh {regime} agent (saved dim differs from current {state_dim})"  # noqa: E501
+                            f"Fresh {regime} agent (saved dim differs from current {self.state_dim})"  # noqa: E501
                         )
                 self.agents[regime] = agent
             except Exception as e:

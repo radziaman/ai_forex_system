@@ -169,6 +169,7 @@ class GlobalMultiAssetModel:
         """
         if self.model is None:
             self.build()
+        assert self.model is not None, "Model should be built before training"
 
         default_callbacks = callbacks or [
             tf.keras.callbacks.EarlyStopping(patience=10, restore_best_weights=True),

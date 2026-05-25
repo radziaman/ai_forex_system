@@ -81,6 +81,8 @@ class CircuitBreaker:
         # Confidence threshold adjustment based on market stress
         self.base_confidence_threshold: float = 0.65
         self.current_confidence_threshold: float = self.base_confidence_threshold
+        self._last_degradation_log: float = 0.0
+        self._last_recovery_log: float = 0.0
 
     def check_market_health(  # noqa: C901
         self, symbol: str, tick: Dict
@@ -213,7 +215,13 @@ class CircuitBreaker:
         if len(self._degradation_history) > 100:
             self._degradation_history = self._degradation_history[-100:]
 
-        logger.warning(f"Degradation mode: {mode.value} - {reason}")
+        now = time.time()
+        if (
+            mode != self.current_degradation_mode
+            or now - self._last_degradation_log > 60
+        ):
+            logger.warning(f"Degradation mode: {mode.value} - {reason}")
+        self._last_degradation_log = now
 
     def _attempt_recovery(self):
         """Attempt to recover from degraded or halted state."""
@@ -237,7 +245,13 @@ class CircuitBreaker:
             for h in recent_history
         ):
             self._update_degradation(DegradationMode.NORMAL, "recovery_success")
-            logger.info("System recovered from degraded state")
+            now = time.time()
+            if (
+                self.current_degradation_mode != DegradationMode.NORMAL
+                or now - self._last_recovery_log > 300
+            ):
+                logger.info("System recovered from degraded state")
+            self._last_recovery_log = now
 
     def _check_price_velocity(
         self, symbol: str, snapshot: MarketStressSnapshot
@@ -278,9 +292,6 @@ class CircuitBreaker:
         if ratio > self.spread_multiplier_threshold:
             reason = f"liquidity_drought_spread_{ratio:.1f}x_normal"
             snapshot.stress_level = "high" if ratio > 10 else "elevated"
-            logger.warning(
-                f"CIRCUIT BREAKER: {symbol} liquidity drought! Spread {ratio:.1f}x normal"  # noqa: E501
-            )
             self.last_halt_time[symbol] = time.time()
             return True, reason
 
@@ -333,9 +344,8 @@ class CircuitBreaker:
         if vol_ratio > 5.0:
             reason = f"volatility_spike_{vol_ratio:.1f}x_normal"
             snapshot.stress_level = "extreme"
-            logger.error(
-                f"CIRCUIT BREAKER: {symbol} volatility spike! {vol_ratio:.1f}x normal"
-            )
+            # Suppressed per-symbol — circuit breaker state machine handles
+            # tracking. Logging every spike (2x/sec in simulation) is noise.
             self.last_halt_time[symbol] = time.time()
             return True, reason
 

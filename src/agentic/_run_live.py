@@ -105,7 +105,16 @@ master={emotions.get('master_agent','?')}"
             print(f"    last signal: {ws.get('signal.last.EURUSD', {})}")
 
         live_prices = []
-        for sym in ["EURUSD", "GBPUSD", "XAUUSD", "BTCUSD"]:
+        for sym in [
+            "EURUSD",
+            "GBPUSD",
+            "USDJPY",
+            "AUDUSD",
+            "USDCAD",
+            "USDCHF",
+            "NZDUSD",
+            "XAUUSD",
+        ]:
             price = ws.get(f"data.price.{sym}", 0)
             if price > 0:
                 live_prices.append(f"{sym}={price:.5f}")

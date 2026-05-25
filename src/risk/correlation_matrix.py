@@ -5,7 +5,7 @@ Maintains rolling correlation estimates per market regime.
 
 import numpy as np
 import pandas as pd
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -39,11 +39,7 @@ class RegimeCorrelationStore:
 
     def to_dataframe(self, regime: str) -> pd.DataFrame:
         pairs_data = self._store.get(regime, {})
-        symbols = set()
-        for a, b in pairs_data:
-            symbols.add(a)
-            symbols.add(b)
-        symbols = sorted(symbols)
+        symbols: List[str] = sorted({sym for pair in pairs_data for sym in pair})
         n = len(symbols)
         corr_matrix = np.eye(n)
         for (a, b), vals in pairs_data.items():

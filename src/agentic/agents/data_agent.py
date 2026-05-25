@@ -46,7 +46,7 @@ except ImportError:
 
 
 class DataAgent(BaseAgent):
-    def __init__(self, config):
+    def __init__(self, config, data_manager=None, container=None):
         super().__init__(
             name="data_agent",
             role="Market Data Manager",
@@ -65,9 +65,19 @@ class DataAgent(BaseAgent):
             },
             tick_interval=0.1,
             consciousness_level=ConsciousnessLevel.REFLECTIVE,
+            container=container,
         )
         self.config = config
-        self.dm = DataManager(historical_path=config.data.historical_path)
+        if data_manager is not None:
+            self.dm = data_manager
+        elif (
+            container is not None
+            and hasattr(container, "has")
+            and container.has("data_manager")
+        ):  # noqa: E501
+            self.dm = container.get("data_manager")
+        else:
+            self.dm = DataManager(historical_path=config.data.historical_path)
         self._last_bar_ts: Dict[str, float] = {}
         self._features_dirty: Dict[str, bool] = {}
         self.tick_counter = 0
@@ -92,16 +102,13 @@ class DataAgent(BaseAgent):
         self.set_world("data.freshness", fresh)
         self.set_world("data.symbols", SCREENER_SYMBOLS)
         self.set_world("data.status", "ready")
+        # Publish OHLCV data to world state for feature_agent to consume
+        self.set_world("data.ohlcv", self.dm.ohlcv, ttl=86400)
 
-        # G18: In simulation mode, emit features immediately from historical data
-        # so signal_agent can run ensemble inference without waiting for live bar closures.  # noqa: E501
-        if self.consciousness.simulation_mode or self.get_world(
-            "agentic.simulation_mode"
-        ):
-            self.log_state(
-                "Simulation mode detected — emitting synthetic features from historical data"  # noqa: E501
-            )
-            await self._emit_simulation_features()
+        # Emit features from historical data immediately so signal_agent
+        # can run ensemble inference without waiting for live bar closures.
+        # This runs in ALL modes (live, paper, simulation).
+        await self._emit_simulation_features()
 
         # Start background data refresh (runs in all modes)
         self._refresh_task = asyncio.create_task(self._periodic_data_refresh())
@@ -180,6 +187,8 @@ class DataAgent(BaseAgent):
                     await self._refresh_single_cycle()
                     # Also refresh macro/economic data
                     await self._refresh_macro_data()
+                    # Also refresh alternative data snapshot (commodity, CB sentiment)
+                    await self._refresh_alternative_data()
 
             except asyncio.CancelledError:
                 break
@@ -276,6 +285,23 @@ class DataAgent(BaseAgent):
         except Exception as e:
             logger.debug(f"Macro refresh failed: {e}")
 
+    async def _refresh_alternative_data(self):
+        """Fetch alternative data snapshot (commodity, CB sentiment, FRED)
+        and publish to world state for the feature pipeline to consume.
+        """
+        try:
+            from ai.sentiment import get_alternative_data_snapshot
+
+            snapshot = get_alternative_data_snapshot()
+            if snapshot is not None:
+                self.set_world("alternative_data.snapshot", snapshot, ttl=600)
+                logger.debug(
+                    f"Alternative data: oil={snapshot.get('commodity', {}).get('oil', 0):.2f} "
+                    f"gold={snapshot.get('commodity', {}).get('gold', 0):.2f}"
+                )
+        except Exception as e:
+            logger.debug(f"Alternative data refresh failed: {e}")
+
     async def perceive(self) -> Dict[str, Any]:
         result = {
             "skip": False,
@@ -294,6 +320,10 @@ class DataAgent(BaseAgent):
                     self._last_bar_ts[sym] = current_ts
                     self._features_dirty[sym] = True
                     result["new_bars"].append(sym)
+                elif self.consciousness.cycle_count % 100 == 0:
+                    logger.debug(
+                        f"1m bars for {sym}: {len(df)} bars, last_ts={last_ts}"
+                    )
             last_tick = self._last_bar_ts.get(sym, 0)
             age = time.time() - last_tick if last_tick > 0 else float("inf")
             if (
@@ -459,6 +489,11 @@ class DataAgent(BaseAgent):
             return cached
         df = self.dm.get_ohlcv(symbol, "1h")
         if df is None or len(df) < self.config.features.lookback + 10:
+            logger.debug(
+                f"get_features: {symbol} 1h data insufficient: "
+                f"df={'None' if df is None else f'{len(df)} rows'}, "
+                f"need > {self.config.features.lookback + 10}"
+            )
             return None
         try:
             from rts_ai_fx.features_unified import FeaturePipeline
@@ -471,6 +506,8 @@ class DataAgent(BaseAgent):
             features = fp.transform(self.dm.ohlcv, symbol=symbol)
             if features is not None:
                 self.dm.set_cached_features(symbol, "1h", features)
+            else:
+                logger.debug(f"get_features: transform returned None for {symbol}")
             return features
         except Exception as e:
             logger.debug(f"Feature computation failed for {symbol}: {e}")
@@ -524,10 +561,12 @@ class DataAgent(BaseAgent):
         import pandas as pd  # noqa: F811
 
         # Ensure DataManager has entries for all SCREENER_SYMBOLS (including non-FX)
+        # Always initialize 1m for live tick aggregation, plus config timeframes.
+        _live_timeframes = ["1m"] + list(self.config.features.timeframes)
         for sym in SCREENER_SYMBOLS:
             if sym not in self.dm.ohlcv:
                 self.dm.ohlcv[sym] = {}
-                for tf in self.config.features.timeframes:
+                for tf in _live_timeframes:
                     self.dm.ohlcv[sym][tf] = pd.DataFrame(
                         columns=[
                             "timestamp",
@@ -568,8 +607,11 @@ class DataAgent(BaseAgent):
                 else:
                     logger.warning(f"No real data for {sym}")
 
-        # Phase 3: Dukascopy BI5 cache (for FX symbols that still need data)
-        self.dm.load_from_dukascopy_cache(max_hours=168)
+        # Phase 3: Dukascopy BI5 cache (only for symbols still lacking data)
+        for sym in SCREENER_SYMBOLS:
+            df = self.dm.get_ohlcv(sym, "1h")
+            if df is None or df.empty or len(df) < 50:
+                self.dm.load_from_dukascopy_cache(symbols=[sym], max_hours=168)
 
         # Resample to additional timeframes from 1h base
         for tf in [tf for tf in self.config.features.timeframes if tf != "1h"]:
@@ -595,8 +637,6 @@ class DataAgent(BaseAgent):
         )
 
     def _resample_timeframe(self, symbol, tf, df_1h):
-        pass
-
         if tf == "4h":
             res = df_1h.copy()
             res["timestamp"] = (res["timestamp"] // 14400) * 14400

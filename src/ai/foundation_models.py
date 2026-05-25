@@ -76,7 +76,7 @@ class TimesFMAdapter(SimpleLinearAdapter):
     ):
         super().__init__(lookback=lookback)
         self.model_name = model_name
-        self._model = None
+        self._model: Optional[bool] = None
         self._load_model()
 
     def _load_model(self) -> None:
@@ -115,7 +115,7 @@ class MOIRAIAdapter(SimpleLinearAdapter):
     ):
         super().__init__(lookback=lookback)
         self.model_name = model_name
-        self._model = None
+        self._model: Optional[bool] = None
         self._load_model()
 
     def _load_model(self) -> None:

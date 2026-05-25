@@ -1,7 +1,12 @@
 """API module — broker execution providers and data providers."""
 
+# Prefer the official Spotware-based wrapper; fall back to legacy client
+try:
+    from api.ctrader_wrapper import CtraderClient
+except ImportError:
+    from api.ctrader_client import CtraderClient
+
 from api.ctrader_client import (
-    CtraderClient,
     MarketDepth,
     TradeOrder,
     TradeResult,

@@ -467,14 +467,26 @@ def train_base_model(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def _build_ppo_states(df) -> Tuple[int, np.ndarray]:
+def _build_ppo_states(
+    df: pd.DataFrame,
+    use_microstructure: bool = False,
+) -> Tuple[int, np.ndarray]:
     """Build normalized state vectors from a DataFrame."""
+    from rts_ai_fx.features_unified import (
+        EXPECTED_FEATURE_DIM,
+        compute_microstructure_features,
+    )
+
     df_features = compute_features(df)
+    if use_microstructure:
+        df_features = compute_microstructure_features(df_features)
     feature_cols = [
         c
         for c in df_features.columns
         if c not in {"open", "high", "low", "close", "volume", "timestamp"}
     ]
+    # Trim to EXPECTED_FEATURE_DIM to match FeaturePipeline output
+    feature_cols = feature_cols[:EXPECTED_FEATURE_DIM]
     features_np = df_features[feature_cols].values.astype(np.float64)
     prices = df["close"].values.astype(np.float64)
 
@@ -581,7 +593,7 @@ def train_ppo_curriculum(
 
     try:
         logger.info("  Computing features for curriculum PPO...")
-        state_dim, states = _build_ppo_states(df)
+        state_dim, states = _build_ppo_states(df, use_microstructure=use_microstructure)
         logger.info(f"  State vectors: {states.shape} ({state_dim} dims)")
 
         curriculum = CurriculumManager()
@@ -676,12 +688,21 @@ def train_ppo_regime_agents(  # noqa: C901
     try:
         # ── 4a: Compute features and get state vectors ──
         logger.info("  Computing features for PPO state vectors...")
+        from rts_ai_fx.features_unified import (
+            EXPECTED_FEATURE_DIM,
+            compute_microstructure_features,
+        )
+
         df_features = compute_features(df)
+        if use_microstructure:
+            df_features = compute_microstructure_features(df_features)
         feature_cols = [
             c
             for c in df_features.columns
             if c not in {"open", "high", "low", "close", "volume", "timestamp"}
         ]
+        # Trim to EXPECTED_FEATURE_DIM to match FeaturePipeline output
+        feature_cols = feature_cols[:EXPECTED_FEATURE_DIM]
         features_np = df_features[feature_cols].values.astype(np.float64)
         prices = df["close"].values.astype(np.float64)
 

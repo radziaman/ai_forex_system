@@ -9,6 +9,13 @@ import pandas as pd
 from typing import Dict, List, Optional, Tuple
 from loguru import logger
 
+# Expected feature dimension: 45 base features (from compute_features)
+# + 4 OHLCV-based microstructure features (tr_scaled, position_in_bar,
+#   intraday_volatility, gap) = 49 total.
+# All PPO regime agents are hardcoded to state_dim=49, so this must
+# remain 49 for dimensional consistency across the pipeline.
+EXPECTED_FEATURE_DIM = 49
+
 
 def _rsi(series: pd.Series, period: int = 14) -> pd.Series:
     delta = series.diff()
@@ -306,7 +313,7 @@ class FeaturePipeline:
         self,
         lookback: int = 30,
         timeframes: Optional[List[str]] = None,
-        use_microstructure: bool = True,
+        use_microstructure: bool = True,  # MUST stay True for 49-dim PPO compatibility
         use_cross_asset: bool = False,
         cross_asset_data: Optional[Dict[str, pd.DataFrame]] = None,
         tick_buffer: Optional[List[Dict]] = None,
@@ -354,6 +361,14 @@ class FeaturePipeline:
             cols = self._get_feature_columns(processed)
             if not self._feature_cols:
                 self._feature_cols = cols
+                if len(cols) != EXPECTED_FEATURE_DIM:
+                    logger.warning(
+                        f"Feature count {len(cols)} != expected "
+                        f"{EXPECTED_FEATURE_DIM}. Ensure "
+                        f"use_microstructure=True and OHLCV data "
+                        f"is available. Missing "
+                        f"{EXPECTED_FEATURE_DIM - len(cols)} features"
+                    )
             vals = processed[cols].values
             mask = ~np.any(np.isnan(vals), axis=1)
             vals = vals[mask]
@@ -471,6 +486,14 @@ class FeaturePipeline:
                     self._means[key] = new_mean
                     self._stds[key] = new_std
                     logger.info(f"Refitted norms for {key}: {vals.shape[1]} features")
+            # Ensure dimensional consistency: pad or trim to EXPECTED_FEATURE_DIM
+            n_dims = vals.shape[1]
+            if n_dims != EXPECTED_FEATURE_DIM:
+                if n_dims < EXPECTED_FEATURE_DIM:
+                    pad_width = EXPECTED_FEATURE_DIM - n_dims
+                    vals = np.pad(vals, ((0, 0), (0, pad_width)), mode="constant")
+                else:
+                    vals = vals[:, :EXPECTED_FEATURE_DIM]
             window = vals[-self.lookback :]
             if len(window) < self.lookback:
                 return None
@@ -479,9 +502,12 @@ class FeaturePipeline:
         if not tf_vectors:
             return None
         fused = np.concatenate(tf_vectors, axis=1)
-        if external_signals is not None:
-            ext_tiled = np.tile(external_signals, (fused.shape[0], 1))
-            fused = np.concatenate([fused, ext_tiled], axis=1)
+        # NOTE: external_signals and sentiment_scores are intentionally NOT
+        # fused into the feature vector here. Model architectures were trained
+        # with EXPECTED_FEATURE_DIM = 49 inputs. Fusing extra dimensions would
+        # break all existing models without retraining.
+        # Instead, orthogonal signals are passed as separate metadata alongside
+        # the features — the ensemble can consume them at the decision level.
         return fused
 
     def create_sequences(

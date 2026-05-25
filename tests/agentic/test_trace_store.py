@@ -1,7 +1,6 @@
 """Tests for the TraceStore distributed tracing system."""
 
 import time
-import pytest
 from agentic.core.trace_store import (
     TraceStore,
     TraceEvent,

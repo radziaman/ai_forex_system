@@ -1,8 +1,6 @@
 """Tests for Distributional RL components."""
 
-import numpy as np
 import torch
-import pytest
 from ai.distributional_rl import (
     QuantileValueHead,
     QuantilePPOCritic,
@@ -86,10 +84,13 @@ class TestQuantilePPOCritic:
     def test_cvar_less_than_var(self):
         """CVaR (mean of worst quantiles) should be <= VaR (single quantile)."""
         critic = QuantilePPOCritic(state_dim=10, hidden_dims=[32], n_quantiles=64)
+        # Use eval mode to disable dropout for deterministic quantile ordering
+        critic.eval()
         state = torch.randn(4, 10)
-        var = critic.value_at_risk(state, alpha=0.05)
-        cvar = critic.cvar(state, alpha=0.05)
-        assert (cvar <= var).all()
+        with torch.no_grad():
+            var = critic.value_at_risk(state, alpha=0.05)
+            cvar = critic.cvar(state, alpha=0.05)
+        assert (cvar <= var).all(), f"CVaR {cvar} > VaR {var}"
 
 
 class TestIQNEmbedding:

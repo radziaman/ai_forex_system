@@ -1,6 +1,5 @@
 """Tests for AgentBus dependency graph validation."""
 
-import pytest
 from agentic.core.agent_bus import AgentBus
 from agentic.core.agent_message import MessageType
 
@@ -27,7 +26,6 @@ class TestAgentBusDependencyValidation:
         bus.subscribe(MessageType.TICK_RECEIVED, lambda m: None)
 
         warnings = bus.validate_dependencies(agent_names=[])
-        tick_warnings = [w for w in warnings if "TICK_RECEIVED" in w]
         # TICK_RECEIVED should have publishers (found by scanning)
         # It could still warn if no publisher found, but shouldn't crash
         assert isinstance(warnings, list)

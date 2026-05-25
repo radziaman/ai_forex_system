@@ -6,8 +6,11 @@ from __future__ import annotations
 import asyncio
 import time
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Any, Set
+from typing import TYPE_CHECKING, Dict, List, Optional, Any, Set
 from loguru import logger
+
+if TYPE_CHECKING:
+    from .service_container import ServiceContainer
 
 from .agent_message import AgentMessage, MessageType, MessagePriority, AgentIntention
 from .agent_consciousness import AgentConsciousness, AgentIdentity, ConsciousnessLevel
@@ -46,6 +49,7 @@ class BaseAgent(ABC):
         consciousness_level: ConsciousnessLevel = ConsciousnessLevel.REFLECTIVE,
         persist_memory: bool = True,
         supervisor: str = "",  # G17
+        container: Optional["ServiceContainer"] = None,  # NEW: DI container
     ):
         self.name = name
         self.identity = AgentIdentity(
@@ -69,6 +73,7 @@ class BaseAgent(ABC):
         self.registry: AgentRegistry = get_agent_registry()
         self.world: WorldState = get_world_state()
 
+        self._container = container
         self._inbox: asyncio.Queue = asyncio.Queue()
         self._outbox: asyncio.Queue = asyncio.Queue()
         self._running = False
@@ -487,6 +492,15 @@ class BaseAgent(ABC):
 
     def update_world(self, key: str, **kwargs):
         self.world.update(key, **kwargs)
+
+    @property
+    def container(self) -> "ServiceContainer":
+        """Get the service container, creating a default if not injected."""
+        if self._container is None:
+            from .service_container import get_container
+
+            self._container = get_container()
+        return self._container
 
     def get_inbox_size(self) -> int:
         return self._inbox.qsize()

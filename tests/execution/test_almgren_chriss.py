@@ -1,6 +1,4 @@
-import numpy as np
-import pytest
-from execution.almgren_chriss import AlmgrenChrissModel, ImpactResult
+from execution.almgren_chriss import AlmgrenChrissModel
 
 
 class TestAlmgrenChrissModel:

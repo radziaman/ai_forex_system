@@ -199,3 +199,9 @@ def get_agent_registry() -> AgentRegistry:
     if _registry is None:
         _registry = AgentRegistry()
     return _registry
+
+
+def reset_agent_registry():
+    """Reset the registry singleton (useful in tests)."""
+    global _registry
+    _registry = None

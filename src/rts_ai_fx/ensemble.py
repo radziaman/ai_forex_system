@@ -4,10 +4,12 @@ Each expert specializes in a market regime; gating network weights predictions.
 Enhanced with Sharpe-based dynamic weighting and MAML meta-learning (Enhancement #9).
 """
 
+import time
 import numpy as np
 from typing import Any, Dict, List, Optional, Callable, Tuple
 from dataclasses import dataclass, field
 from collections import defaultdict
+from loguru import logger
 
 try:
     import torch
@@ -50,6 +52,14 @@ class MoEEnsemble:
         self.use_maml_adaptation: bool = True
         self._tracker_weight_fn: Optional[Callable] = None
 
+        # ── Expert lockout: auto-disable experts after N consecutive losses ──
+        self.consecutive_losses: Dict[str, int] = defaultdict(int)
+        self._disabled_until: Dict[str, float] = {}
+        self._lockout_threshold: int = 4  # disable after 4 consecutive losses
+        self._lockout_hours: float = 4.0  # disabled for 4 hours
+        self._max_lockout_hours: float = 48.0  # cap at 48 hours
+        self._lockout_multiplier: float = 2.0  # double timeout on re-disable
+
     def set_tracker_weight_fn(self, fn: Callable):
         """Set external weight function from StrategyTracker."""
         self._tracker_weight_fn = fn
@@ -67,6 +77,30 @@ class MoEEnsemble:
             )
         )
         self.elo_ratings.setdefault(name, 1200.0)
+        self.consecutive_losses.setdefault(name, 0)
+        self._disabled_until.setdefault(name, 0.0)
+
+    def record_loss(self, expert_name: str):
+        self.consecutive_losses[expert_name] += 1
+        n_losses = self.consecutive_losses[expert_name]
+        if n_losses >= self._lockout_threshold:
+            factor = self._lockout_multiplier ** (n_losses // self._lockout_threshold)
+            duration = min(
+                self._lockout_hours * factor,
+                self._max_lockout_hours,
+            )
+            self._disabled_until[expert_name] = time.time() + duration * 3600
+            logger.warning(
+                f"Lockout: {expert_name} disabled for {duration:.0f}h "
+                f"({n_losses} consecutive losses)"
+            )
+        else:
+            logger.debug(
+                f"Lockout: {expert_name} loss {n_losses}/{self._lockout_threshold}"
+            )
+
+    def record_win(self, expert_name: str):
+        self.consecutive_losses[expert_name] = 0
 
     def add_foundation_expert(self, registry=None):
         """Add foundation model (TimesFM/MOIRAI) as an ensemble expert."""
@@ -165,6 +199,14 @@ class MoEEnsemble:
         expert_outputs = {}
 
         for expert in self.experts:
+            # Skip disabled experts (auto-lockout after consecutive losses)
+            if expert.name in self._disabled_until:
+                if time.time() < self._disabled_until[expert.name]:
+                    continue
+                # Lockout expired — re-enable and reset counter
+                self._disabled_until[expert.name] = 0.0
+                self.consecutive_losses[expert.name] = 0
+
             try:
                 pred = float(np.array(expert.predict(X_adapted)).flatten()[0])
                 conf = float(np.array(expert.confidence(X_adapted)).flatten()[0])
@@ -268,12 +310,19 @@ class MoEEnsemble:
                 ]
 
     def update_expert_result(self, expert_name: str, pnl: float):
-        """Track expert performance for win rate calculation."""
+        """Track expert performance for win rate calculation.
+
+        Also tracks consecutive losses for auto-lockout and calls
+        ``record_loss`` / ``record_win`` accordingly.
+        """
         # Ensure defaultdict entry exists
         _ = self.expert_win_rates[expert_name]
         self.expert_win_rates[expert_name]["total"] += 1
         if pnl > 0:
             self.expert_win_rates[expert_name]["wins"] += 1
+            self.record_win(expert_name)
+        else:
+            self.record_loss(expert_name)
         # Update Sharpe if we have enough data
         if expert_name in self.expert_returns:
             self.update_sharpe(expert_name, self.expert_returns[expert_name][-20:])

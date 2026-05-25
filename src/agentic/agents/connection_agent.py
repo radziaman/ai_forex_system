@@ -52,8 +52,8 @@ class ConnectionAgent(BaseAgent):
         self._connected = False
         self._retries = 0
         self._max_retries = 10
-        self._base_delay = 1.0
-        self._max_delay = 60.0
+        self._base_delay = 30.0  # Start at 30s to avoid cTrader rate limiting
+        self._max_delay = 300.0  # Max 5 minutes between retries
         self._last_reconnect_ts = 0.0  # Non-blocking timing for reconnect backoff
         self._api_health: Dict[str, Dict] = {}
 

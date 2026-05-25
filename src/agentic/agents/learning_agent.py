@@ -4,11 +4,18 @@ Learning Agent — autonomous model training and adaptation.
 Identity: I am the student. I learn from every trade and adapt our models.
 Purpose: I keep our AI continuously improving by training on new data.
 Autonomy: I independently monitor model performance, detect when retraining is needed, and execute training.  # noqa: E501
+
+Uses OnlineLearner for drift-triggered retraining with model staging,
+validation, and safe deployment. Each symbol gets background training
+that only deploys if the new model is strictly better than the current one.
 """
 
 from __future__ import annotations
 import time
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
+
+import pandas as pd
+from loguru import logger
 
 from agentic.core.base_agent import BaseAgent
 from agentic.core.agent_message import (
@@ -27,12 +34,12 @@ class LearningAgent(BaseAgent):
     Responsibilities:
     - Monitor concept drift signals from DriftMonitor
     - Trigger retraining when drift detected or performance degrades
-    - Manage online learning for PPO agents
+    - Manage online learning for PPO agents via OnlineLearner
     - Coordinate model versioning and registry
     - Warm-start models from latest checkpoints
     """
 
-    def __init__(self):
+    def __init__(self, config: Any = None):
         super().__init__(
             name="learning_agent",
             role="Model Training Manager",
@@ -51,6 +58,35 @@ class LearningAgent(BaseAgent):
         self._retraining_count = 0
         self._last_training_time = 0.0
         self._model_registry = None
+        self._online_learner = None
+        self._feature_pipeline = None
+        self._config = config
+
+        # Initialize OnlineLearner for drift-triggered background retraining
+        try:
+            from training.online_learner import OnlineLearner
+
+            self._online_learner = OnlineLearner(
+                retrain_cooldown_hours=4.0,
+                min_trades_before_retrain=50,
+                notify_callback=self._log_training_notification,
+            )
+            logger.info("OnlineLearner initialized for background retraining")
+        except Exception as e:
+            logger.warning(f"OnlineLearner not available: {e}")
+            self._online_learner = None
+
+        # Initialize shared feature pipeline
+        try:
+            from rts_ai_fx.features_unified import FeaturePipeline
+
+            self._feature_pipeline = FeaturePipeline(
+                lookback=30, timeframes=["1h", "4h"], use_microstructure=True
+            )
+            self._feature_pipeline.load_normalization()
+        except Exception as e:
+            logger.warning(f"Feature pipeline not loaded: {e}")
+            self._feature_pipeline = None
 
         self.subscribe(MessageType.MODEL_UPDATE)
         self.subscribe(MessageType.DIAGNOSTIC_REQUEST)
@@ -72,11 +108,35 @@ class LearningAgent(BaseAgent):
 
     async def perceive(self) -> Dict[str, Any]:
         drift_symbols = self.get_world("signal.drifted_symbols", 0)
+        drifted_list = self.get_world("signal.drifted_list", [])
         performance = self.get_world("performance.stats", {})
         sharpe = performance.get("sharpe", 0)
         n_trades = performance.get("total_trades", 0)
         models_untrained = self.get_world("models.untrained", False)
         time_since_last = time.time() - self._last_training_time
+
+        # Forward drift signals to OnlineLearner for adaptive cooldown logic
+        if self._online_learner and drifted_list:
+            for sym in drifted_list:
+                count = self.get_world(f"signal.drift_count.{sym}", 1)
+                self._online_learner.on_drift_detected(sym, count)
+
+        # Check OnlineLearner for symbols needing retrain
+        ol_ready_symbols: List[str] = []
+        if self._online_learner and self._feature_pipeline:
+            active_symbols = [
+                "EURUSD",
+                "GBPUSD",
+                "USDJPY",
+                "AUDUSD",
+                "USDCAD",
+                "USDCHF",
+                "NZDUSD",
+                "XAUUSD",
+            ]
+            for sym in active_symbols:
+                if self._online_learner.should_retrain(sym, n_trades):
+                    ol_ready_symbols.append(sym)
 
         needs_retrain = (
             drift_symbols > 0
@@ -96,10 +156,16 @@ class LearningAgent(BaseAgent):
             "needs_bootstrap": needs_bootstrap,
             "needs_data_retrain": needs_data_retrain,
             "time_since_last_train": time_since_last,
+            "ol_ready_symbols": ol_ready_symbols,
         }
 
     async def reason(self, perception: Dict[str, Any]) -> Dict[str, Any]:
         actions: Dict[str, Any] = {}
+
+        # OnlineLearner-driven retrain (preferred path)
+        ol_symbols = perception.get("ol_ready_symbols", [])
+        if ol_symbols:
+            actions["online_retrain"] = ol_symbols
 
         if (
             perception.get("needs_retrain")
@@ -116,7 +182,8 @@ class LearningAgent(BaseAgent):
         if perception.get("needs_bootstrap"):
             actions["bootstrap"] = True
 
-        if perception.get("needs_data_retrain"):
+        # Fallback data retrain only when OnlineLearner unavailable
+        if perception.get("needs_data_retrain") and self._online_learner is None:
             actions["data_retrain"] = True
 
         if (
@@ -128,6 +195,21 @@ class LearningAgent(BaseAgent):
         return actions
 
     async def act(self, decision: Dict[str, Any]):
+        # OnlineLearner-driven retrain (background thread, non-blocking)
+        ol_symbols = decision.get("online_retrain", [])
+        if ol_symbols and self._online_learner and self._feature_pipeline:
+            for sym in ol_symbols:
+                self._retraining_count += 1
+                self._last_training_time = time.time()
+                self.log_state(f"OnlineLearner: requesting retrain for {sym}")
+                self._online_learner.request_retrain(
+                    sym,
+                    fetch_data_fn=self._fetch_ohlcv_data,
+                    feature_pipeline=self._feature_pipeline,
+                )
+            return
+
+        # Fallback: direct data retrain (blocking, OnlineLearner unavailable)
         if decision.get("data_retrain"):
             await self._data_retrain()
             return
@@ -260,6 +342,31 @@ class LearningAgent(BaseAgent):
         self.set_world("learning.status", "idle")
         self.set_world("learning.last_training", self._last_training_time)
         self.set_world("learning.retraining_count", self._retraining_count)
+
+    # ── OnlineLearner callbacks ──────────────────────────────────────
+
+    def _fetch_ohlcv_data(self, symbol: str) -> Optional[pd.DataFrame]:
+        """Fetch OHLCV data from world state for OnlineLearner."""
+        try:
+            ohlcv_data = self.get_world("data.ohlcv", {})
+            if isinstance(ohlcv_data, dict):
+                symbol_data = ohlcv_data.get(symbol, {})
+                if isinstance(symbol_data, dict):
+                    df = symbol_data.get("1h")
+                    if df is not None and hasattr(df, "__len__") and len(df) > 200:
+                        logger.info(
+                            f"OnlineLearner: fetched {len(df)} bars for {symbol}"
+                        )
+                        return df
+            return None
+        except Exception as e:
+            logger.warning(f"OnlineLearner: fetch failed for {symbol}: {e}")
+            return None
+
+    def _log_training_notification(self, message: str):
+        """Callback for OnlineLearner deployment notifications."""
+        logger.info(f"OnlineLearner notification: {message}")
+        self.log_state(f"Model deployment: {message}")
 
     async def reflect(self, outcome: Dict[str, Any]):
         self.memory.know("learning.retraining_count", self._retraining_count, ttl=3600)

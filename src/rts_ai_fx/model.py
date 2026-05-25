@@ -171,19 +171,19 @@ class LSTMCNNHybrid:
         instance.build()
 
         try:
-            saved = tf.keras.models.load_model(path, compile=False)
+            import keras
+
+            saved = keras.models.load_model(path, compile=False)
             instance.model = saved
             return instance
         except Exception:
             pass
 
-        # Try loading with safe_mode=False (handles some version diffs)
+        # Try loading via keras directly (handles Keras 3 format conversion)
         try:
-            saved = tf.keras.models.load_model(
-                path,
-                compile=False,
-                safe_mode=False,
-            )
+            import keras
+
+            saved = keras.models.load_model(path, compile=False, safe_mode=False)
             instance.model = saved
             return instance
         except Exception:
@@ -191,11 +191,9 @@ class LSTMCNNHybrid:
 
         # Try rebuilding and transferring weights
         try:
-            saved = tf.keras.models.load_model(
-                path,
-                compile=False,
-                safe_mode=False,
-            )
+            import keras
+
+            saved = keras.models.load_model(path, compile=False, safe_mode=False)
             if instance.model is None:
                 instance.build()
             assert instance.model is not None
@@ -296,5 +294,7 @@ class ProfitabilityClassifier:
         if not TENSORFLOW_AVAILABLE:
             raise ImportError("TensorFlow required")
         instance = cls()
-        instance.model = tf.keras.models.load_model(path)
+        import keras
+
+        instance.model = keras.models.load_model(path)
         return instance

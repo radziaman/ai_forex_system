@@ -102,18 +102,64 @@ async def health():
         / max(state.get("initial_balance", bal), 1)
         * 100
     )
+
+    # System-level health checks
+    from pathlib import Path
+
+    checks = {}
+
+    # Key imports
+    for mod_name in ["numpy", "pandas", "torch", "tensorflow"]:
+        try:
+            __import__(mod_name)
+            checks[mod_name] = True
+        except ImportError:
+            checks[mod_name] = False
+
+    # Config files
+    checks["config.yaml"] = Path("config.yaml").exists()
+    checks[".env"] = Path(".env").exists()
+
+    # Models directory
+    checks["models/"] = Path("models").is_dir()
+
+    # Ensemble config
+    checks["ensemble_config.json"] = Path("models/ensemble_config.json").exists()
+
+    # Feature normalization
+    checks["feature_norm.npz"] = Path("models/feature_norm.npz").exists()
+
+    # Data directory
+    checks["data/"] = Path("data/historical").is_dir()
+
+    ok_count = sum(1 for v in checks.values() if v)
+    fail_count = sum(1 for v in checks.values() if not v)
+
+    if fail_count == 0:
+        sys_status = "ok"
+    elif ok_count > fail_count:
+        sys_status = "degraded"
+    else:
+        sys_status = "failed"
+
     return {
-        "status": "ok" if elapsed < 60 else "stale",
-        "last_update_s": round(elapsed, 1),
-        "clients": len(connected_clients),
-        "trading": state.get("mode", "UNKNOWN"),
-        "balance": round(bal, 2),
-        "equity": round(eq, 2),
-        "drawdown_pct": round(max(dd, 0), 2),
-        "open_positions": pos_count,
-        "total_trades": state.get("total_trades", 0),
-        "win_rate": state.get("win_rate", 0),
-        "regime": state.get("regime", "unknown"),
-        "signal_count": state.get("signal_count", 0),
-        "timestamp": state.get("timestamp", 0),
+        "status": sys_status,
+        "timestamp": time.time(),
+        "version": "4.0.0-agentic",
+        "checks": checks,
+        "summary": {"ok": ok_count, "fail": fail_count},
+        "runtime": {
+            "status": "ok" if elapsed < 60 else "stale",
+            "last_update_s": round(elapsed, 1),
+            "clients": len(connected_clients),
+            "trading": state.get("mode", "UNKNOWN"),
+            "balance": round(bal, 2),
+            "equity": round(eq, 2),
+            "drawdown_pct": round(max(dd, 0), 2),
+            "open_positions": pos_count,
+            "total_trades": state.get("total_trades", 0),
+            "win_rate": state.get("win_rate", 0),
+            "regime": state.get("regime", "unknown"),
+            "signal_count": state.get("signal_count", 0),
+        },
     }

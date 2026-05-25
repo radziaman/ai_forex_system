@@ -90,24 +90,26 @@ class ValidationGate:
         drawdown: float = walk_forward_results.get("max_drawdown", 1.0)
 
         crisis_loss = 0.0
-        for scenario, result in stress_test_results.items():
-            loss = result.get("max_loss", 0.0)
+        for scenario, scenario_result in stress_test_results.items():
+            loss = scenario_result.get("max_loss", 0.0)
             if loss > crisis_loss:
                 crisis_loss = loss
 
-        _check_folds = self._check_min_folds(folds)
+        _check_folds: Optional[ValidationResult] = self._check_min_folds(folds)
         if _check_folds is not None:
             return _check_folds
 
-        _check_sharpe = self._check_sharpe(sharpe)
+        _check_sharpe: Optional[ValidationResult] = self._check_sharpe(sharpe)
         if _check_sharpe is not None:
             return _check_sharpe
 
-        _check_dd = self._check_drawdown(drawdown)
+        _check_dd: Optional[ValidationResult] = self._check_drawdown(drawdown)
         if _check_dd is not None:
             return _check_dd
 
-        _check_stress = self._check_stress_tests(stress_test_results)
+        _check_stress: Optional[ValidationResult] = self._check_stress_tests(
+            stress_test_results
+        )
         if _check_stress is not None:
             return _check_stress
 
@@ -196,8 +198,8 @@ class ValidationGate:
         self, stress_test_results: Dict[str, Dict]
     ) -> Optional[ValidationResult]:
         """Reject if any crisis scenario exceeds the max loss threshold."""
-        for scenario, result in stress_test_results.items():
-            loss = result.get("max_loss", 0.0)
+        for scenario, scenario_data in stress_test_results.items():
+            loss = scenario_data.get("max_loss", 0.0)
             if loss > self.config.crisis_max_loss:
                 result = ValidationResult(
                     model_name="",

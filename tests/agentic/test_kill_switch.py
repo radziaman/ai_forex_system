@@ -64,13 +64,12 @@ class TestSignalAgentKillSwitch:
         from agentic.agents.signal_agent import SignalAgent
 
         agent = SignalAgent(config={})
-        agent._kill_switch_since = None
-        agent._kill_switch_alerted = False
+        agent._kill_switch.clear()
         ws = get_world_state()
         ws.set("risk.kill_switch", True)
 
         assert agent._check_kill_switch() is True
-        assert agent._kill_switch_since is not None
+        assert agent._kill_switch._active_since is not None
 
     def test_publishes_attribution_every_5_trades(self):
         from agentic.agents.signal_agent import SignalAgent

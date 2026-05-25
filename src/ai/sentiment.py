@@ -380,11 +380,11 @@ except ImportError:
 
 
 def get_alternative_data_snapshot(
-    oil_price: float = None,
-    gold_price: float = None,
-    copper_price: float = None,
-    cb_signals: list = None,
-    economic_data: dict = None,
+    oil_price: Optional[float] = None,
+    gold_price: Optional[float] = None,
+    copper_price: Optional[float] = None,
+    cb_signals: Optional[list] = None,
+    economic_data: Optional[dict] = None,
 ) -> Optional[Dict]:
     """Get composite alternative data signal for all FX pairs."""
     if _alt_data_aggregator is None:

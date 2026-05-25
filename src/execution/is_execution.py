@@ -14,7 +14,7 @@ Key features:
 
 import time
 import numpy as np
-from typing import List, Optional, Dict
+from typing import Callable, Dict, List, Optional
 from dataclasses import dataclass
 from enum import Enum
 from loguru import logger
@@ -67,10 +67,10 @@ class ISExecutionEngine:
 
     # Urgency parameters: (aggressive_ratio, n_slices, duration_sec)
     URGENCY_PARAMS = {
-        ExecutionUrgency.LOW: (0.1, 20, 600),
-        ExecutionUrgency.MEDIUM: (0.3, 10, 300),
-        ExecutionUrgency.HIGH: (0.6, 5, 120),
-        ExecutionUrgency.URGENT: (1.0, 1, 10),
+        ExecutionUrgency.LOW: (0.1, 20, 600.0),
+        ExecutionUrgency.MEDIUM: (0.3, 10, 300.0),
+        ExecutionUrgency.HIGH: (0.6, 5, 120.0),
+        ExecutionUrgency.URGENT: (1.0, 1, 10.0),
     }
 
     def __init__(
@@ -197,9 +197,9 @@ class ISExecutionEngine:
     def execute_plan(
         self,
         plan: ExecutionPlan,
-        market_order_fn: callable,
-        limit_order_fn: Optional[callable] = None,
-        price_feed_fn: Optional[callable] = None,
+        market_order_fn: Callable,
+        limit_order_fn: Optional[Callable] = None,
+        price_feed_fn: Optional[Callable] = None,
     ) -> List[SliceExecution]:
         """Execute a planned order schedule.
 
@@ -292,7 +292,7 @@ class ISExecutionEngine:
         impact = self.volatility * (participation**0.5) * 10_000
         # Spread cost for aggressive portion
         spread_cost = (
-            aggressive_ratio * (self.spread / price) * 10_000 if price > 0 else 0
+            aggressive_ratio * (self.spread / price) * 10_000 if price > 0 else 0.0
         )
         # Timing risk
         timing = self.volatility * 10_000 / np.sqrt(n_slices)

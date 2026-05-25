@@ -101,10 +101,10 @@ class AgentBus:
             if agents:
                 message.target_agent = agents[0].name
                 self._stats.routing_count += 1
-                logger.debug(
-                    f"AgentBus: routed {message.msg_type.name} via capability "
-                    f"'{message.target_capability}' → {message.target_agent}"
-                )
+                # Suppress individual routing logs — they fire for every message
+                # (20+ per second for ticks). Use log_once for rate-limited output.
+                # This line intentionally left blank. Routing metrics are tracked
+                # in BusStats.routing_count and BusStats.messages_by_type.
             else:
                 logger.warning(
                     f"AgentBus: no agent with capability '{message.target_capability}'"
@@ -310,6 +310,38 @@ class AgentBus:
         self._dependency_warnings = warnings
         return warnings
 
+    def _scan_file_for_publishers(
+        self,
+        fpath: str,
+        publishers: Dict[MessageType, List[str]],
+        send_pattern,
+        agent_name_override: Optional[str] = None,
+    ):
+        """Scan a single file for self.send(MessageType.XXX) calls.
+
+        Mutates *publishers* in place with any discovered message types.
+        """
+        import os
+
+        try:
+            with open(fpath) as f:
+                content = f.read()
+        except Exception:
+            return
+
+        agent_name = (
+            agent_name_override
+            if agent_name_override
+            else os.path.basename(fpath).replace(".py", "")
+        )
+        matches = send_pattern.findall(content)
+        for type_name in matches:
+            try:
+                msg_type = getattr(MessageType, type_name)
+                publishers.setdefault(msg_type, []).append(agent_name)
+            except (AttributeError, TypeError):
+                continue
+
     def _scan_known_publishers(
         self, agent_names: List[str]
     ) -> Dict[MessageType, List[str]]:
@@ -334,36 +366,17 @@ class AgentBus:
             if not fname.endswith(".py") or fname.startswith("_"):
                 continue
             fpath = os.path.join(agents_dir, fname)
-            try:
-                with open(fpath) as f:
-                    content = f.read()
-            except Exception:
-                continue
-
-            matches = send_pattern.findall(content)
-            for type_name in matches:
-                try:
-                    msg_type = getattr(MessageType, type_name)
-                    agent_name = fname.replace(".py", "")
-                    publishers.setdefault(msg_type, []).append(agent_name)
-                except (AttributeError, TypeError):
-                    continue
+            self._scan_file_for_publishers(fpath, publishers, send_pattern)
 
         # Also scan base_agent.py for publish_status (which sends HEARTBEAT)
         base_path = os.path.join(os.path.dirname(__file__), "base_agent.py")
         if os.path.exists(base_path):
-            try:
-                with open(base_path) as f:
-                    content = f.read()
-                matches = send_pattern.findall(content)
-                for type_name in matches:
-                    try:
-                        msg_type = getattr(MessageType, type_name)
-                        publishers.setdefault(msg_type, []).append("base_agent")
-                    except (AttributeError, TypeError):
-                        pass
-            except Exception:
-                pass
+            self._scan_file_for_publishers(
+                base_path,
+                publishers,
+                send_pattern,
+                agent_name_override="base_agent",
+            )
 
         return publishers
 
@@ -415,3 +428,9 @@ def get_agent_bus(n_workers: int = 2) -> AgentBus:
     if _bus is None:
         _bus = AgentBus(n_workers=n_workers)
     return _bus
+
+
+def reset_agent_bus():
+    """Reset the bus singleton (useful in tests)."""
+    global _bus
+    _bus = None

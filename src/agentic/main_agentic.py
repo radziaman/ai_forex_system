@@ -49,7 +49,7 @@ from agentic.agents.drift_agent import DriftAgent  # noqa: E402
 from agentic.agents.circuit_breaker_agent import CircuitBreakerAgent  # noqa: E402
 from agentic.agents.cost_agent import CostAgent  # noqa: E402
 from agentic.agents.screener_agent import InstrumentScreenerAgent  # noqa: E402
-from agentic.agents.consolidated_agents import AgentSwarm  # noqa: E402
+from agentic.agents.system_health_agent import SystemHealthAgent  # noqa: E402
 
 from data.data_manager import SYMBOLS  # noqa: E402
 
@@ -108,6 +108,19 @@ class AgenticOrchestrator:
     def build_agents(self):
         """Create all 15 autonomous agents with G17 supervisor hierarchy."""
 
+        # ── Register core services in the DI container ──
+        from .core.service_container import get_container
+
+        container = get_container()
+        from data.data_manager import DataManager
+
+        dm = DataManager(historical_path=self.config.data.historical_path)
+        container.register("data_manager", dm)
+        from rts_ai_fx.ensemble import MoEEnsemble
+
+        ensemble = MoEEnsemble()
+        container.register("ensemble", ensemble)
+
         # Shared config knowledge
         for k, v in [
             ("config.max_positions", self.config.trading.max_positions),
@@ -125,7 +138,7 @@ class AgenticOrchestrator:
 
         # ── Tier 1: Data & Intelligence (supervisor: master_agent) ──
 
-        self.data_agent = DataAgent(self.config)
+        self.data_agent = DataAgent(self.config, container=container)
         self.data_agent.consciousness.identity.purpose = (
             "I ingest market data from all sources, maintain OHLCV across 5 timeframes, "  # noqa: E501
             "detect and heal data gaps, and publish fresh features when bars close."
@@ -141,7 +154,7 @@ class AgenticOrchestrator:
         self.regime_agent.consciousness.identity.purpose = "I detect market hidden state via HMM: trending, ranging, volatile, or crisis."  # noqa: E501
         self.agents.append(self.regime_agent)
 
-        self.signal_agent = SignalAgent(self.config)
+        self.signal_agent = SignalAgent(self.config, container=container)
         self.signal_agent.consciousness.identity.purpose = "I fuse PPO, LSTM-CNN, rule-based experts into high-conviction signals via MoE ensemble."  # noqa: E501
         self.agents.append(self.signal_agent)
 
@@ -167,7 +180,11 @@ class AgenticOrchestrator:
         # ── Tier 3: Execution (supervisor: master_agent) ──
 
         self.execution_agent = ExecutionAgent(
-            self.config, self.secrets, self.initial_balance
+            self.config,
+            self.secrets,
+            self.initial_balance,
+            mode=self.mode,
+            container=container,
         )
         self.execution_agent.consciousness.identity.purpose = (
             "I send approved orders to the broker and stream live ticks back to data_agent. "  # noqa: E501
@@ -203,9 +220,10 @@ class AgenticOrchestrator:
         )
         self.agents.append(self.monitoring_agent)
 
-        self.learning_agent = LearningAgent()
+        self.learning_agent = LearningAgent(config=self.config)
         self.learning_agent.consciousness.identity.purpose = (
-            "I monitor for drift and trigger retraining when performance degrades."
+            "I monitor for drift and trigger retraining when performance degrades. "
+            "Uses OnlineLearner for background retraining with model staging."
         )
         self.agents.append(self.learning_agent)
 
@@ -214,6 +232,17 @@ class AgenticOrchestrator:
             "I persist system state with integrity checks for crash recovery."
         )
         self.agents.append(self.memory_agent)
+
+        # ── System Health Agent (mathematical integrity monitor) ──
+        # Runs on 60s loop checking pipeline dims, model weights, ensemble,
+        # data freshness, connection health. Publishes system.health_score.
+        self.system_health_agent = SystemHealthAgent()
+        self.system_health_agent.consciousness.identity.purpose = (
+            "I monitor the mathematical integrity of the entire system: "
+            "feature dimensions, model weights, ensemble health, data freshness. "
+            "I publish a composite health score and alert on degradation."
+        )
+        self.agents.append(self.system_health_agent)
 
         # ── Tier 6: Specialized Services (supervisor: master_agent) ──
 
@@ -381,51 +410,6 @@ class AgenticOrchestrator:
         logger.info("")
 
 
-def bootstrap_consolidated_agents(config: dict) -> AgentSwarm:
-    """Initialize the 6-agent consolidated swarm from configuration."""
-    swarm = AgentSwarm()
-
-    # Wire up data manager
-    from data.data_manager import DataManager  # noqa: E402
-
-    dm = DataManager(config.get("data", {}))
-    swarm.data.set_data_manager(dm)
-
-    # Wire up risk manager
-    from risk.manager import RiskManager, RiskParameters  # noqa: E402
-
-    params = RiskParameters(**config.get("risk", {}))
-    rm = RiskManager(params)
-    swarm.risk_manager.set_risk_manager(rm)
-
-    # Wire up execution
-    from execution.engine import ExecutionEngine  # noqa: E402
-
-    engine = ExecutionEngine(None, rm, dm, mode=config.get("mode", "PAPER"))
-    swarm.execution.set_execution_engine(engine)
-
-    # Wire up signal engine
-    from rts_ai_fx.ensemble import MoEEnsemble  # noqa: E402
-
-    ensemble = MoEEnsemble()
-    swarm.signal_engine.set_ensemble(ensemble)
-
-    # Wire up learning
-    from training.online_learner import OnlineLearner  # noqa: E402
-
-    learner = OnlineLearner()
-    swarm.learning.set_online_learner(learner)
-
-    from training.model_registry import ModelRegistry  # noqa: E402
-
-    registry = ModelRegistry()
-    swarm.learning.set_model_registry(registry)
-
-    swarm.start_all()
-    logger.info("Consolidated agent swarm bootstrapped successfully")
-    return swarm
-
-
 def cmd_status():
     """Print agentic system status."""
     config = AppConfig.from_yaml("config.yaml")
@@ -438,7 +422,8 @@ def cmd_status():
     logger.info(f"World state variables: {len(orch.world.snapshot())}")
 
 
-def main():
+def _parse_args():
+    """Parse command-line arguments."""
     import argparse
 
     parser = argparse.ArgumentParser(
@@ -451,11 +436,6 @@ def main():
     parser.add_argument("--capital", type=float, default=100_000.0)
     parser.add_argument("--mode", choices=["paper", "live", "dry-run"], default="paper")
     parser.add_argument("--status", action="store_true", help="Print system status")
-    parser.add_argument(
-        "--consolidated",
-        action="store_true",
-        help="Use 6-agent consolidated architecture instead of 20-agent swarm",
-    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -472,39 +452,27 @@ def main():
         default=0,
         help="Auto-shutdown after N seconds (0 = no limit)",
     )
+    return parser.parse_args()
 
-    args = parser.parse_args()
 
-    if args.status:
-        cmd_status()
-        return
-
+def _init_system(args):
+    """Initialize config, secrets, and trading mode from parsed args."""
     config = AppConfig.from_yaml(args.config)
     secrets = Secrets()
     mode = "dry-run" if args.dry_run else args.mode
+    return config, secrets, mode
 
-    if args.consolidated:
-        logger.info("Booting consolidated 6-agent architecture...")
-        swarm = bootstrap_consolidated_agents({"mode": mode, "data": {}, "risk": {}})
-        logger.info("Consolidated agents running. Press Ctrl+C to stop.")
-        try:
-            import asyncio
 
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_forever()
-        except KeyboardInterrupt:
-            swarm.stop_all()
-        return
-
+def _run_orchestrator_mode(config, secrets, mode, capital, simulate, timeout):
+    """Boot the full 20-agent orchestrator with signal handling and event loop."""
     orch = AgenticOrchestrator(
         config,
         secrets,
         mode=mode,
-        initial_balance=args.capital,
+        initial_balance=capital,
     )
-    orch.simulation_mode = args.simulate
-    orch.timeout = args.timeout
+    orch.simulation_mode = simulate
+    orch.timeout = timeout
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -523,6 +491,20 @@ def main():
         loop.run_until_complete(orch.stop())
     finally:
         loop.close()
+
+
+def main():
+    args = _parse_args()
+
+    if args.status:
+        cmd_status()
+        return
+
+    config, secrets, mode = _init_system(args)
+
+    _run_orchestrator_mode(
+        config, secrets, mode, args.capital, args.simulate, args.timeout
+    )
 
 
 if __name__ == "__main__":

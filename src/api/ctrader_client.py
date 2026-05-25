@@ -3,8 +3,10 @@ cTrader Open API Client — Async-safe SSL+Protobuf with retry, Level II DOM, an
 """
 
 import ssl
+import socket
 import asyncio
 import time
+import functools
 import logging
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Callable, Any, List
@@ -243,6 +245,7 @@ class CtraderClient:
         # multiple sequential depth subscriptions without collision.
         self._pending_responses: Dict[Any, asyncio.Future] = {}
         self._next_id = 0
+        self._start_lock: Optional[asyncio.Lock] = None  # Created lazily in start()
 
         # Heartbeat health tracking
         self._heartbeat_ok = 0
@@ -256,35 +259,80 @@ class CtraderClient:
         self.on_depth_update: Optional[Callable] = None  # Callback for DOM updates
         self.on_disconnect: Optional[Callable] = None  # Called when connection drops
         self._listener_task: Optional[asyncio.Task] = None
+        self._listener_phase: int = 0  # Atomic phase counter for listener lifecycle
         self._heartbeat_task: Optional[asyncio.Task] = None
 
         # Asset ID → currency name mapping (populated by _fetch_asset_list)
         self._asset_id_to_currency: Dict[int, str] = {}
-        # Spot price tracking
+        # Spot price tracking (authoritative price source)
         self._subscribed_spots: Dict[int, bool] = {}
         self._last_spot_prices: Dict[int, Dict[str, float]] = {}
-        # Correction factor: depth_price → spot_price multiplier per symbol
-        # Used in _handle_depth_event to fix mis-scaled depth prices.
-        self._depth_correction: Dict[int, float] = {}
         # Position cache (populated by reconcile)
         self._cached_positions: List[Dict] = []
 
     async def start(self) -> bool:
+        """Connect and authenticate to cTrader.
+
+        Safe to call in ANY state:
+        - Already connected → returns True immediately
+        - Partially connected → full disconnect then reconnect
+        - Disconnected → normal connect flow
+
+        Returns True if fully connected and listening.
+        """
+        # Serialize concurrent start() calls to prevent races.
+        # The background _connect_and_subscribe() task from _on_start()
+        # can race with AGENT_DIRECTIVE-triggered _reconnect() calls,
+        # both trying to auth against the same StreamReader.
+        if self._start_lock is None:
+            self._start_lock = asyncio.Lock()
+        async with self._start_lock:
+            return await self._start_impl()
+
+    async def _start_impl(self) -> bool:
+        """Internal start implementation (serialized by _start_lock)."""
+        # Idempotent: if already connected and listening, skip.
+        if self._is_connected and self._listener_task and not self._listener_task.done():
+            return True
+
         try:
             if not _HAS_PROTOBUF:
-                logger.warning("ctrader_open_api not installed, using simulation")
-                return self._start_simulation()
+                logger.warning("ctrader_open_api not installed, no trading possible")
+                return False
+
+            # Always fully disconnect before connecting — ensures no stale
+            # reader, writer, or listener tasks remain to race against the
+            # new connection.  Without this, old listeners can leave zombie
+            # _waiters on StreamReaders that crash new listeners with:
+            #   "readexactly() called while another coroutine is
+            #    already waiting for incoming data"
+            await self._full_disconnect()
+
             if not await self._connect():
-                logger.warning("cTrader connection failed, using simulation")
-                return self._start_simulation()
+                logger.warning("cTrader SSL connection failed")
+                return False
             if not await self._auth_application():
-                logger.warning("App auth failed, using simulation")
-                await self.disconnect()
-                return self._start_simulation()
+                logger.warning("cTrader application auth failed")
+                await self._full_disconnect()
+                return False
             if not await self._auth_account():
-                logger.warning("Account auth failed, using simulation")
-                await self.disconnect()
-                return self._start_simulation()
+                logger.warning("cTrader account auth failed — attempting token refresh")
+                await self._full_disconnect()
+                # Token might be expired — refresh and retry once
+                token_refreshed = await self._refresh_access_token()
+                if token_refreshed:
+                    if not await self._connect():
+                        return False
+                    if not await self._auth_application():
+                        await self._full_disconnect()
+                        return False
+                    if not await self._auth_account():
+                        logger.warning("Account auth still failed after token refresh")
+                        await self._full_disconnect()
+                        return False
+                else:
+                    logger.warning("Token refresh failed — will retry on next cycle")
+                    return False
 
             # Start background listener BEFORE fetching account info.
             # This is critical: after account auth, the server may push
@@ -295,16 +343,26 @@ class CtraderClient:
             # which routes events to handlers and resolves futures.
             self._is_connected = True
             # Start background listener for DOM and other events.
-            # CRITICAL: await the cancelled old listener to avoid a race
-            # where the old listener is still in readexactly() when the
-            # new one starts reading from the same StreamReader.
+            # Phase lock: incrementing the counter causes any old listener
+            # (still running after cancellation) to exit on its next loop
+            # iteration, BEFORE it tries to read from the StreamReader.
+            # This eliminates the race where two listeners read concurrently.
+            self._listener_phase += 1
+            current_phase = self._listener_phase
+            # At this point _full_disconnect() already cleaned up any old
+            # listener, but we keep the guard for defense-in-depth.
             if self._listener_task and not self._listener_task.done():
                 self._listener_task.cancel()
                 try:
                     await self._listener_task
                 except (asyncio.CancelledError, Exception):
                     pass
-            self._listener_task = asyncio.create_task(self._background_listener())
+                self._listener_task = None
+                # CRITICAL: yield so StreamReader's _waiter fully cleans up
+                await asyncio.sleep(0)
+            self._listener_task = asyncio.create_task(
+                self._background_listener(phase=current_phase)
+            )
             # Start heartbeat sender (required by cTrader — every 10s)
             if self._heartbeat_task and not self._heartbeat_task.done():
                 self._heartbeat_task.cancel()
@@ -323,8 +381,53 @@ class CtraderClient:
             logger.info("cTrader client connected, authenticated, and listening")
             return True
         except Exception as e:
-            logger.warning(f"cTrader start failed: {e}, using simulation")
-            return self._start_simulation()
+            logger.warning(f"cTrader start failed: {e}")
+            return False
+
+    async def _full_disconnect(self):
+        """Complete teardown: stop listeners, close socket, reset state.
+        
+        Unlike disconnect(), this is guaranteed to fully clean up regardless
+        of current connection state.  Safe to call multiple times.
+        """
+        self._is_connected = False
+        self._listener_phase += 1
+        self._authenticated = False
+        self._subscribed_depth.clear()
+        self._subscribed_spots.clear()
+        self._account_info = None
+        self._pending_responses.clear()
+        
+        # Cancel listener and heartbeat tasks
+        for task_name in ("_listener_task", "_heartbeat_task"):
+            task = getattr(self, task_name, None)
+            if task and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+                setattr(self, task_name, None)
+        
+        # Yield to let StreamReader clean up stale _waiter before close
+        await asyncio.sleep(0)
+        
+        # Close the socket
+        if self._writer:
+            try:
+                self._writer.close()
+                await self._writer.wait_closed()
+            except Exception:
+                pass
+        self._writer = None
+        self._reader = None
+        
+        # Reset heartbeat health
+        self._heartbeat_ok = 0
+        self._heartbeat_fail = 0
+        self._last_heartbeat_ts = 0.0
+        
+        logger.debug("cTrader client fully disconnected")
 
     def _start_simulation(self) -> bool:
         self._simulation = True
@@ -344,17 +447,31 @@ class CtraderClient:
         return True
 
     async def _connect(self) -> bool:
+        """Connect to cTrader server via SSL in a thread pool.
+
+        Running the SSL handshake in a thread pool completely isolates it
+        from asyncio event-loop congestion. This avoids ConnectionResetError
+        caused by delayed SSL handshakes when 21 agents share the loop.
+        """
         try:
-            context = ssl.create_default_context()
-            context.minimum_version = ssl.TLSVersion.TLSv1_2
-            self._reader, self._writer = await asyncio.wait_for(
-                asyncio.open_connection(self.host, self.port, ssl=context),
-                timeout=10,
+            loop = asyncio.get_running_loop()
+
+            def _do_connect():
+                context = ssl.create_default_context()
+                context.minimum_version = ssl.TLSVersion.TLSv1_2
+                sock = socket.create_connection((self.host, self.port), timeout=60)
+                ssock = context.wrap_socket(sock, server_hostname=self.host)
+                ssock.setblocking(False)
+                return ssock
+
+            ssock = await loop.run_in_executor(None, _do_connect)
+            self._reader, self._writer = await asyncio.open_connection(
+                host=None, port=None, ssl=None, sock=ssock
             )
-            logger.info("Connected via async SSL")
+            logger.info("Connected via thread-pool SSL")
             return True
         except Exception as e:
-            logger.warning(f"SSL connection failed: {e}")
+            logger.warning(f"SSL connection failed: {type(e).__name__}: {e}")
             return False
 
     async def _send_msg(
@@ -419,23 +536,41 @@ class CtraderClient:
         auth_req = ProtoOAApplicationAuthReq()
         auth_req.clientId = self.app_id
         auth_req.clientSecret = self.app_secret
-        if not await self._send_msg(2100, auth_req):
+        sent = await self._send_msg(2100, auth_req)
+        if not sent:
+            logger.warning("App auth: send failed")
             return False
         response = await self._recv_msg()
-        return bool(response and response.payloadType == 2101)
+        if response is None:
+            logger.warning("App auth: no response")
+            return False
+        if response.payloadType != 2101:
+            logger.warning(f"App auth: unexpected response type {response.payloadType}")
+            return False
+        return True
 
     async def _refresh_access_token(self) -> bool:
         """Refresh the access token using the refresh token from environment."""
         try:
             import requests as http_requests
 
-            # Load refresh token from env
+            # Load refresh token from env — search common locations
             import os, re
 
-            env_path = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"
-            )
-            if not os.path.exists(env_path):
+            env_path = None
+            for candidate in [
+                os.path.join(os.getcwd(), ".env"),
+                os.path.join(
+                    os.path.dirname(os.path.abspath(__file__)), "..", "..", ".env"
+                ),
+                os.path.expanduser("~/.env"),
+            ]:
+                candidate = os.path.normpath(candidate)
+                if os.path.exists(candidate):
+                    env_path = candidate
+                    break
+
+            if env_path is None:
                 logger.warning("Cannot refresh token: .env not found")
                 return False
 
@@ -448,17 +583,31 @@ class CtraderClient:
                 return False
 
             refresh_token = match.group(1)
-            resp = http_requests.post(
-                "https://openapi.ctrader.com/apps/token",
-                data={
-                    "grant_type": "refresh_token",
-                    "refresh_token": refresh_token,
-                    "client_id": self.app_id,
-                    "client_secret": self.app_secret,
-                },
-                timeout=30,
+            loop = asyncio.get_running_loop()
+            resp = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    functools.partial(
+                        http_requests.post,
+                        "https://openapi.ctrader.com/apps/token",
+                        data={
+                            "grant_type": "refresh_token",
+                            "refresh_token": refresh_token,
+                            "client_id": self.app_id,
+                            "client_secret": self.app_secret,
+                        },
+                        timeout=10,
+                    ),
+                ),
+                timeout=15,
             )
 
+            if resp.status_code == 429:
+                logger.warning(
+                    f"Token refresh rate-limited (429). "
+                    f"Will retry on next reconnect attempt."
+                )
+                return False
             if resp.status_code != 200:
                 logger.warning(f"Token refresh failed: {resp.status_code}")
                 return False
@@ -755,23 +904,12 @@ class CtraderClient:
             return False
 
     async def disconnect(self):
-        self._is_connected = False
-        self._authenticated = False
-        self._subscribed_depth.clear()
-        self._account_info = None  # Force refresh on next start()
-        self._pending_responses.clear()  # Clean up stale futures
-        if self._listener_task and not self._listener_task.done():
-            self._listener_task.cancel()
-        if self._heartbeat_task and not self._heartbeat_task.done():
-            self._heartbeat_task.cancel()
-        if self._writer:
-            try:
-                self._writer.close()
-                await self._writer.wait_closed()
-            except Exception:
-                pass
-            self._writer = None
-            self._reader = None
+        """Disconnect from cTrader and clean up.
+        
+        Delegates to _full_disconnect() for consistent teardown.
+        Safe to call multiple times.
+        """
+        await self._full_disconnect()
         logger.info("cTrader client disconnected")
 
     def is_connected(self) -> bool:
@@ -923,9 +1061,13 @@ class CtraderClient:
 
     async def start_background_listener(self):
         """Start background listener for async events (Depth, Spot, etc.)."""
-        asyncio.create_task(self._background_listener())
+        self._listener_phase += 1
+        current_phase = self._listener_phase
+        # Yield to let any old listener's stale _waiter clean up
+        await asyncio.sleep(0)
+        asyncio.create_task(self._background_listener(phase=current_phase))
 
-    async def _background_listener(self):
+    async def _background_listener(self, phase: int):
         """Continuously read messages and dispatch to handlers.
 
         On connection loss, sets _is_connected = False and fires the
@@ -933,22 +1075,27 @@ class CtraderClient:
         The existing reconnect infrastructure (ConnectionAgent →
         ExecutionAgent._reconnect) handles full reconnection + resubscription.
 
-        CancelledError handling (CRITICAL):
-          When start() cancels the OLD listener during a reconnect, the
-          cancellation is ASYNCHRONOUS — the old task's cleanup code still
-          runs after start() returns and after the new listener started.
+        Phase-based lifecycle (CRITICAL):
+          A ``phase`` integer is received at creation time.  Before each
+          iteration the method checks whether ``self._listener_phase`` still
+          matches — if a newer listener has been started (phase was
+          incremented), this task exits cleanly WITHOUT touching the
+          StreamReader.  This eliminates the race where a cancelled old
+          listener's ``readexactly()`` resurfaces after a new listener
+          already started reading from the same StreamReader.
 
-          We use a PER-TASK flag (_was_cancelled) to distinguish:
-            - CancelledError → reconnect in progress → DON'T fire on_disconnect
-            - Other Exception → genuine connection loss → DO fire on_disconnect
-
-          Without this flag, the old listener's cleanup would fire on_disconnect
-          after the new connection is already established, falsely reporting
-          a disconnect and triggering a reconnect loop.
+          The ``was_cancelled`` flag tracks ONLY ``CancelledError`` (explicit
+          task cancellation), not stale-phase exit — both suppress the
+          ``on_disconnect`` callback during reconnect scenarios.
         """
         was_cancelled = False
 
         while self._is_connected and self._reader:
+            # Phase check: if a newer listener started, exit immediately
+            # without touching the StreamReader.
+            if phase != self._listener_phase:
+                break
+
             try:
                 length_bytes = await asyncio.wait_for(
                     self._reader.readexactly(4), timeout=30
@@ -963,6 +1110,13 @@ class CtraderClient:
             except asyncio.TimeoutError:
                 # Normal: no message within 30s keepalive window
                 continue
+            except ssl.SSLWantReadError:
+                # Non-blocking SSL needs retry — yield and try again
+                await asyncio.sleep(0.01)
+                continue
+            except ssl.SSLWantWriteError:
+                await asyncio.sleep(0.01)
+                continue
             except asyncio.CancelledError:
                 # Task was cancelled during graceful shutdown (reconnect).
                 # DO NOT fire on_disconnect — the new listener owns the
@@ -971,13 +1125,21 @@ class CtraderClient:
                 break
             except RuntimeError as e:
                 if "already waiting for incoming data" in str(e):
-                    # Race condition during reconnect: the old listener was
-                    # cancelled but its readexactly() hadn't fully released
-                    # the StreamReader before the new listener started.
-                    # Exit silently — the new listener handles everything.
-                    was_cancelled = True
-                    break
-                logger.warning(f"Background listener runtime error: {e}")
+                    # Race during reconnect: a previous listener's
+                    # readexactly() left a stale _waiter on the reader.
+                    # This happens when asyncio's StreamReader doesn't
+                    # clear its internal waiter synchronously after a
+                    # CancelledError during readexactly().  Yield and
+                    # retry once — the stale waiter should resolve.
+                    logger.debug(
+                        "Listener race (stale _waiter) — retrying once"
+                    )
+                    await asyncio.sleep(0)
+                    continue
+                logger.warning(
+                    f"Background listener disconnected: {type(e).__name__}: {e}",
+                    exc_info=True,
+                )
                 break
             except Exception as e:
                 # Connection lost, stream error, protocol error, etc.
@@ -1154,43 +1316,27 @@ class CtraderClient:
             md.spread = (md.ask - md.bid) if (md.ask and md.bid) else 0.0
             md.volume = sum(b.size for b in md.bids) + sum(a.size for a in md.asks)
 
-            # Spot-price-based depth correction
-            # ----------------------------------------
-            # Depth events use _price_divisor to guess the raw→decimal scaling,
-            # which can be wrong for some symbols (e.g. XAUUSD where none of
-            # the standard power-of-10 divisors give ~$2000).  Spot events
-            # carry moneyDigits → exact scaling → correct prices.
+            # Spot events are the authoritative price source
+            # ------------------------------------------------
+            # cTrader depth events and spot events both use a divisor of
+            # 100000 (see _price_divisor).  However, depth events do NOT
+            # carry moneyDigits, so the divisor is always a flat guess.
+            # Spot events DO carry moneyDigits → exact scaling.
             #
             # Strategy:
-            #   1. Compare depth bid to last-known spot bid.
-            #   2. If ratio is off by >10%, compute and cache a correction
-            #      factor for this symbol.
-            #   3. Apply the cached correction factor (default 1.0 = no-op)
-            #      to every price level in the order book.
+            #   - If we have a cached spot price for this symbol, skip the
+            #     depth event entirely.  The spot event handler will fire
+            #     on_market_data with the correct bid/ask prices.
+            #   - If no spot price is available (e.g. during initial connect),
+            #     use the raw depth prices ÷ 100000 as a fallback.  No
+            #     correction factor is applied — the divisor is already correct.
             spot = self._last_spot_prices.get(symbol_id)
-            if spot and spot["bid"] > 0 and md.bid > 0:
-                ratio = md.bid / spot["bid"]
-                if not (0.9 <= ratio <= 1.1):
-                    corr = spot["bid"] / md.bid
-                    self._depth_correction[symbol_id] = corr
-                    logger.info(
-                        f"Depth correction for {symbol}: × {corr:.4f} "
-                        f"(depth={md.bid:.2f}, spot={spot['bid']:.2f})"
-                    )
-                elif ratio >= 0.99 and ratio <= 1.01:
-                    # Prices are already aligned — clear any stale correction
-                    self._depth_correction.pop(symbol_id, None)
-
-            # Apply cached correction to all depth levels
-            corr = self._depth_correction.get(symbol_id, 1.0)
-            if corr != 1.0:
-                for level in md.bids:
-                    level.price *= corr
-                for level in md.asks:
-                    level.price *= corr
-                md.bid *= corr
-                md.ask *= corr
-                md.spread = md.ask - md.bid
+            if spot and spot["bid"] > 0:
+                logger.debug(
+                    f"Skipping depth event for {symbol}, "
+                    f"using spot price {spot['bid']:.5f}"
+                )
+                return
 
             # Notify callbacks
             if self.on_depth_update:
@@ -1531,16 +1677,13 @@ class CtraderClient:
     def _price_divisor(symbol: str, raw: float) -> float:
         """Return the divisor for cTrader price scaling.
 
-        Per the official cTrader Open API documentation, ALL prices in
-        depth events, spot events, and trendbar messages are stored in
-        '1/100,000' format.  The divisor is ALWAYS 100000 for every
-        symbol type (forex, metals, crypto, indices, etc.).
+        Per cTrader Open API docs, ALL prices (depth, spot, trendbar) use
+        '1/100,000' format — divisor is ALWAYS 100000 for every symbol type.
+        See https://help.ctrader.com/open-api/symbol-data/
 
-        Reference:
-        https://help.ctrader.com/open-api/symbol-data/
-          - Depth quotes: "divide it by 100000"
-          - Live quotes:  "divide it by 100000"
-          - Trendbars:    "divide it by 100000"
+        Note: ``symbol`` and ``raw`` are unused (kept for API compatibility
+        with callers that pass them).  Unlike spot events which carry
+        moneyDigits, depth events always need the flat 100000 divisor.
         """
         return 100000.0
 

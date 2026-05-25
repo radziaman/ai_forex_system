@@ -39,6 +39,11 @@ except ImportError:
 # Default FX market graph: nodes and their connections
 # Each node is a symbol. Edges exist if pairs share a base/quote currency
 # or have known economic linkages.
+#
+# Full FX market graph: includes non-traded pairs (EURJPY, GBPJPY, AUDJPY)
+# for cross-asset relationship completeness. The GNN models ALL relationships
+# even for pairs not directly traded — their embeddings still encode useful
+# triangular arbitrage and regime information.
 SYMBOL_NODES = [
     "EURUSD",
     "GBPUSD",
@@ -61,23 +66,23 @@ SYMBOL_NODES = [
 # Connections based on shared currencies and economic links
 FX_EDGES = [
     # EUR pairs
-    (0, 1),
-    (0, 4),
-    (0, 6),
-    (0, 2),
-    (0, 12),  # EURUSD with GBP, CAD, CHF, JPY, EURJPY
+    (0, 1),  # EURUSD – GBPUSD
+    (0, 4),  # EURUSD – USDCAD
+    (0, 6),  # EURUSD – NZDUSD
+    (0, 2),  # EURUSD – USDJPY
+    (0, 12),  # EURUSD – EURJPY  (index 12 = EURJPY, cross-rate via shared EUR)
     # GBP pairs
-    (1, 4),
-    (1, 2),
-    (1, 13),  # GBPUSD with CAD, JPY, GBPJPY
+    (1, 4),  # GBPUSD – USDCAD
+    (1, 2),  # GBPUSD – USDJPY
+    (1, 13),  # GBPUSD – GBPJPY  (index 13 = GBPJPY, cross-rate via shared GBP)
     # USD pairs
-    (2, 3),
-    (2, 5),
-    (2, 14),  # USDJPY with AUD, CHF, AUDJPY
+    (2, 3),  # USDJPY – AUDUSD
+    (2, 5),  # USDJPY – USDCHF
+    (2, 14),  # USDJPY – AUDJPY  (index 14 = AUDJPY, cross-rate via shared JPY)
     # Commodity currencies
-    (3, 4),
-    (3, 6),
-    (3, 14),  # AUD with NZD, CAD, AUDJPY
+    (3, 4),  # AUDUSD – USDCAD
+    (3, 6),  # AUDUSD – NZDUSD
+    (3, 14),  # AUDUSD – AUDJPY  (index 14 = AUDJPY, cross-rate via shared AUD)
     (4, 6),
     (4, 7),  # CAD with NZD, XAU (oil-gold link)
     # Safe havens

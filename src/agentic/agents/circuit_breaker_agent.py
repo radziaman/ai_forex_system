@@ -30,28 +30,41 @@ class CircuitBreakerAgent(BaseAgent):
         from risk.circuit_breaker import CircuitBreaker
 
         self._breaker = CircuitBreaker()
-        self.log_state("Circuit breaker active — monitoring all symbols")
+        self.log_state("Circuit breaker active — monitoring active symbols")
+        self._consecutive_wins = 0
+        self._consecutive_losses = 0
+
+        self.subscribe(MessageType.SIGNAL_GENERATED)
+        self.subscribe(MessageType.RISK_ALERT)
+        self.subscribe(MessageType.DIAGNOSTIC_REQUEST)
 
     async def perceive(self) -> Dict[str, Any]:
-        if not self._breaker:
-            return {"skip": True}
+        performance = self.get_world("performance.stats", {})
+        total_trades = performance.get("total_trades", 0)
+        sharpe = performance.get("sharpe", 0)
+        max_dd = self.get_world("config.max_drawdown", 0.05)
+        drawdown = performance.get("max_drawdown_pct", 0)
 
-        # Skip circuit breaker checks when market is closed
-        from data.market_session import MarketSession
+        # Circuit breaker: halt all trading on critical conditions
+        drawdown_halt = drawdown > max_dd and total_trades > 10
 
-        if not MarketSession.is_market_open():
-            return {"skip": True, "reason": "market_closed"}
-
-        halted_symbols = []
+        # Only monitor actively traded symbols — major FX + XAUUSD
+        ACTIVE_SYMBOLS = [
+            "EURUSD",
+            "GBPUSD",
+            "USDJPY",
+            "AUDUSD",
+            "USDCAD",
+            "USDCHF",
+            "NZDUSD",
+            "XAUUSD",
+        ]
         market_healthy = True
-        from data.data_manager import SYMBOLS
-
-        for sym in SYMBOLS:
+        halted_symbols = []
+        for sym in ACTIVE_SYMBOLS:
             bid = self.get_world(f"data.bid.{sym}", 0)
             ask = self.get_world(f"data.ask.{sym}", 0)
             if bid > 0 and ask > 0:
-                if bid <= 0 or ask <= 0:
-                    continue
                 tick = {"bid": bid, "ask": ask, "price": (bid + ask) / 2.0, "volume": 0}
                 should_halt, reason, snapshot = self._breaker.check_market_health(
                     sym, tick

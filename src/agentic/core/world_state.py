@@ -191,3 +191,9 @@ def get_world_state() -> WorldState:
     if _world is None:
         _world = WorldState()
     return _world
+
+
+def reset_world_state():
+    """Reset the world state singleton (useful in tests)."""
+    global _world
+    _world = None

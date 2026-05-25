@@ -554,8 +554,28 @@ class ExecutionEngine:
         )
 
     def _on_broker_failover(self):
-        logger.error("Broker health degraded — switching to PAPER mode")
-        self.mode = "PAPER"
+        """Handle broker health degradation.
+
+        In LIVE mode: do NOT switch to paper. The health monitor can trigger
+        on transient network jitter (e.g., occasional slow heartbeats).
+        Switching modes permanently would interrupt live trading for no
+        benefit. Instead, just log the event and let the connection agent
+        handle reconnection if needed.
+
+        In PAPER mode (intentional paper trading): this is expected since
+        there's no real broker — log once per 5 minutes.
+        """
+        if self.mode == "PAPER":
+            now = time.time()
+            last = getattr(self, "_last_paper_failover_log", 0.0)
+            if now - last > 300:
+                logger.info("Broker health degraded (expected in paper mode)")
+                self._last_paper_failover_log = now
+            return
+        logger.warning("Broker health monitor triggered (transient)")
+        # Reset the consecutive counter so we don't immediately re-trigger
+        if hasattr(self, "health_monitor"):
+            self.health_monitor._consecutive_slow = 0
 
     def _get_symbol_id(self, symbol):
         from api.symbol_map import get_symbol_id

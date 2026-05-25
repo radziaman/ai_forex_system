@@ -1,3 +1,13 @@
+"""
+DEPRECATED: This legacy 222-feature engine is replaced by FeaturePipeline
+in rts_ai_fx/features_unified.py (49 features).
+Kept for reference — will be removed in next major version.
+
+Rationale: The 49-dim pipeline is required by PPO regime agents which
+are hardcoded to state_dim=49. Extending to 222+ features would require
+retraining all PPO models, TFT models, and LSTM models.
+"""
+
 import numpy as np
 
 try:

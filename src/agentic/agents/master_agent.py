@@ -108,6 +108,15 @@ class MasterAgent(BaseAgent):
             actions["run_diagnostics"] = True
             self._last_diagnostics = time.time()
 
+        # Incorporate system health score from SystemHealthAgent
+        system_health = self.get_world("system.health_score", 1.0)
+        if system_health < 0.7:
+            self._system_health = min(self._system_health, system_health)
+            self.log_state(
+                f"SystemHealthAgent reports degraded integrity: {system_health:.2f}",
+                "warning",
+            )
+
         # Update global health from performance
         perf = self.get_world("performance.stats", {})
         if perf.get("sharpe", 0) < -1.0:
@@ -190,6 +199,8 @@ class MasterAgent(BaseAgent):
                     "total_agents": registry.health_report()["total"],
                     "errors_logged": len(self._error_log),
                     "pending_approvals": len(self._pending_approvals),
+                    "system_health_score": self.get_world("system.health_score", 1.0),
+                    "system_health_checks": self.get_world("system.health_checks", {}),
                 },
                 target=message.source_agent,
             )

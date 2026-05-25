@@ -213,13 +213,8 @@ class InstrumentScreenerAgent(BaseAgent):
                 score = self._screen_instrument(ticker, info)
                 if score:
                     results.append(score)
-                    self.log_state(
-                        f"{'✅' if score.edge_detected else '  '} {ticker}: "
-                        f"Sharpe={score.mom5_sharpe:.3f} PF={score.mom5_pf:.2f} "
-                        f"Score={score.composite_score:.3f} -> {score.recommendation}"
-                    )
-            except Exception as e:
-                self.log_state(f"Failed to screen {ticker}: {e}", "warning")
+            except Exception:
+                pass
 
         # Sort by composite score descending
         results.sort(key=lambda r: r.composite_score, reverse=True)
@@ -270,20 +265,18 @@ class InstrumentScreenerAgent(BaseAgent):
         self.set_world("screening.last_scan", time.time())
         self.set_world("screening.symbols_scanned", len(self.instrument_universe))
 
-        self.log_state(
-            f"Cross-asset data: {len(cross_asset_prices)} instruments updated"
-        )
         tradeable = (
             [r.to_dict() for r in self._all_results if r.edge_detected]
             if self._all_results
             else []
         )
-        for inst in tradeable:
-            self.log_state(
-                f"  ✅ TRADEABLE: {inst['ticker']} ({inst['name']}) — "
-                f"Sharpe={inst['mom5_sharpe']:.2f} PF={inst['mom5_pf']:.2f} "
-                f"Strategy: {inst['optimal_lookback']}d momentum"
-            )
+        n_buys = sum(
+            1 for t in tradeable if t.get("recommendation") in ("BUY", "STRONG_BUY")
+        )
+        self.log_state(
+            f"Screened {len(cross_asset_prices)} instruments: "
+            f"{len(tradeable)} tradeable ({n_buys} buy signals)"
+        )
 
         self._tradeable_instruments = tradeable
 

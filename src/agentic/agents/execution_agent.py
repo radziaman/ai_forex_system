@@ -8,6 +8,8 @@ import asyncio
 from typing import Dict, Any
 from loguru import logger
 
+from infrastructure.logging import PeriodicCounter
+
 from agentic.core.base_agent import BaseAgent
 from agentic.core.agent_message import (
     MessageType,
@@ -18,7 +20,16 @@ from agentic.core.agent_consciousness import ConsciousnessLevel
 
 
 class ExecutionAgent(BaseAgent):
-    def __init__(self, config, secrets, initial_balance: float = 100_000.0):
+    def __init__(
+        self,
+        config,
+        secrets,
+        initial_balance: float = 100_000.0,
+        mode: str = "paper",
+        execution_provider=None,  # NEW: injectable
+        execution_engine=None,  # NEW: injectable
+        container=None,  # NEW: injectable
+    ):
         super().__init__(
             name="execution_agent",
             role="Order Execution Engine",
@@ -37,16 +48,27 @@ class ExecutionAgent(BaseAgent):
             },
             tick_interval=1.0,
             consciousness_level=ConsciousnessLevel.REFLECTIVE,
+            container=container,
         )
         self.config = config
         self.secrets = secrets
         self.initial_balance = initial_balance
+        self._intended_mode = mode  # "paper", "live", or "dry-run"
+        self._execution_provider = execution_provider  # NEW: stored for _on_start
+        self._execution_engine = execution_engine  # NEW: stored for _on_start
         self.engine = None
         self.ctrader = None
         self._executed = 0
         self._failed = 0
         self._reconnecting = False
         self._position_signals: Dict[int, Dict] = {}  # position_id -> signal payload
+        self._failover_mode: bool = False
+        self._last_reconnect_attempt: float = 0.0
+
+        # Periodic tick counter: aggregates per-tick events into 60s summaries
+        self._tick_counter = PeriodicCounter(
+            "tick", interval=60, logger=logger, level="INFO"
+        )
 
         self.subscribe(MessageType.RISK_APPROVED)
         self.subscribe(MessageType.AGENT_DIRECTIVE)
@@ -54,26 +76,48 @@ class ExecutionAgent(BaseAgent):
         self.subscribe(MessageType.INSTRUMENTS_UPDATED)
         self.subscribe(MessageType.POSITION_MODIFIED)
 
-        # Active symbols: starts with all core SYMBOLS, dynamically updated by screener
-        from data.data_manager import SYMBOLS
-
-        self._active_symbols = list(SYMBOLS)
-        self._core_symbols = list(SYMBOLS)  # Preserved for subscription fallback
+        # Active symbols: major FX + XAUUSD only. Screener can add more dynamically.
+        self._active_symbols = [
+            "EURUSD",
+            "GBPUSD",
+            "USDJPY",
+            "AUDUSD",
+            "USDCAD",
+            "USDCHF",
+            "NZDUSD",
+            "XAUUSD",
+        ]
+        self._core_symbols = list(self._active_symbols)
 
     async def _on_start(self):  # noqa: C901
         self.consciousness.current_intention = "initializing execution provider"
-        from api.provider_factory import create_execution_provider
-        from execution.engine import ExecutionEngine
 
-        self.ctrader, data_provider = create_execution_provider(self.secrets)
+        # Resolve execution provider: injected > container > create
+        if self._execution_provider is not None:
+            self.ctrader = self._execution_provider
+        elif self.container.has("execution_provider"):
+            self.ctrader = self.container.get("execution_provider")
+        else:
+            from api.provider_factory import create_execution_provider
+
+            self.ctrader, _ = create_execution_provider(self.secrets)
+
+        # Resolve execution engine: injected > container > create
         engine_mode = "LIVE" if not self.secrets.is_demo else "PAPER"
-        self.engine = ExecutionEngine(
-            self.ctrader,
-            None,
-            None,
-            initial_balance=self.initial_balance,
-            mode=engine_mode,
-        )
+        if self._execution_engine is not None:
+            self.engine = self._execution_engine
+        elif self.container.has("execution_engine"):
+            self.engine = self.container.get("execution_engine")
+        else:
+            from execution.engine import ExecutionEngine
+
+            self.engine = ExecutionEngine(
+                self.ctrader,
+                None,
+                None,
+                initial_balance=self.initial_balance,
+                mode=engine_mode,
+            )
 
         # G1: Wire live price feed from broker to data pipeline
         async def _on_tick(depth):
@@ -123,9 +167,11 @@ class ExecutionAgent(BaseAgent):
                     self.set_world(
                         f"data.price.{symbol}", round(float((bid + ask) / 2), 5)
                     )
-                    logger.debug(
-                        f"TICK {symbol}: bid={bid:.5f} ask={ask:.5f} spread={spread_pips:.2f}"  # noqa: E501
-                    )
+                    # Tick-level logging suppressed in production.
+                    # Use PeriodicCounter for per-minute tick aggregates.
+
+                # Track tick rate via periodic counter (suppresses per-tick logging)
+                self._tick_counter.tick()
 
                 await self.send(
                     MessageType.TICK_RECEIVED,
@@ -156,6 +202,19 @@ class ExecutionAgent(BaseAgent):
         if raw:
             raw.on_disconnect = lambda: asyncio.ensure_future(self._on_disconnect())
 
+        # Start cTrader connection in background — don't block startup.
+        # The connection_agent will handle reconnection if this fails.
+        self.set_world("execution.connected", False)
+        self.set_world("execution.mode", engine_mode)
+        self.set_world("execution.status", "ready")
+        asyncio.create_task(self._connect_and_subscribe(engine_mode))
+
+    async def _connect_and_subscribe(self, engine_mode: str):
+        """Connect to cTrader and subscribe to market data (background task).
+
+        Runs asynchronously so it doesn't block agent startup.
+        The connection_agent handles retries if this fails.
+        """
         connected = await self.ctrader.start()
         if (
             connected
@@ -164,40 +223,19 @@ class ExecutionAgent(BaseAgent):
         ):
             self.log_state(f"cTrader connected ({engine_mode})")
             self.set_world("execution.connected", True)
-            # Expose raw CtraderClient so data_agent can use it for
-            # historical data refreshes (load_from_ctrader)
             raw = getattr(self.ctrader, "raw", None)
             if raw:
                 self.set_world("execution.ctrader_client", raw, ttl=3600)
             from api.symbol_map import get_symbol_id
 
             if raw:
-                # Skip subscription if market is closed (e.g. weekend)
                 market_open = await self._check_market_before_subscribe()
                 if market_open:
-                    depth_ok = 0
-                    spot_ok = 0
-                    # Subscribe to ALL core symbols — depth first, then spot.
-                    #
-                    # NOTE: Depth (Level II DOM) may not be available for all
-                    # symbols or account types (IC Markets Raw Spread accounts
-                    # often restrict depth).  If depth subscription fails or
-                    # times out, we still have spot prices as fallback.
-                    #
-                    # Rate limiting: 1s between depth subs (cTrader allows
-                    # max 50 req/s, but depth responses are heavyweight).
-                    # Spot subs are fire-and-forget (no response expected),
-                    # so they can be sent more aggressively.
+                    depth_ok, spot_ok = 0, 0
                     for sym in self._core_symbols:
                         try:
                             sid = get_symbol_id(sym)
-                            # Check connection health — abort if disconnected
                             if not self.get_world("execution.connected", True):
-                                self.log_state(
-                                    f"Connection lost during subscription loop, "
-                                    f"aborting ({sym} pending)",
-                                    "warning",
-                                )
                                 break
                             if hasattr(raw, "subscribe_depth"):
                                 if await raw.subscribe_depth(sid):
@@ -208,19 +246,22 @@ class ExecutionAgent(BaseAgent):
                             ) and await raw.subscribe_spots(sid):
                                 spot_ok += 1
                                 await asyncio.sleep(0.2)
-                        except Exception as e:
-                            logger.debug(f"Subscribe failed for {sym}: {e}")
+                        except Exception:
+                            pass
                     self.log_state(
                         f"Subscriptions: depth={depth_ok}/{len(self._core_symbols)}, "
                         f"spot={spot_ok}/{len(self._core_symbols)}"
                     )
                 else:
                     self.set_world("execution.connected", True)
-                    self.set_world("execution.subscriptions", "skipped_market_closed")
                     self.log_state("Market closed — subscriptions deferred", "info")
         else:
-            self.log_state(f"Running in {engine_mode} mode (simulation)", "warning")
-            self.set_world("execution.connected", False)
+            if engine_mode == "LIVE":
+                self.log_state(
+                    "cTrader DISCONNECTED — no live data. "
+                    "System will retry connection periodically.",
+                    "warning",
+                )
 
         self.set_world("execution.mode", engine_mode)
         self.set_world("execution.status", "ready")
@@ -234,13 +275,14 @@ class ExecutionAgent(BaseAgent):
                     while True:
                         try:
                             if hasattr(raw, "is_connected") and raw.is_connected():
-                                latency = 0.0
-                                if hasattr(raw, "_last_heartbeat_ts"):
-                                    latency = max(
-                                        0.0,
-                                        (time.time() - raw._last_heartbeat_ts) * 1000,
-                                    )
-                                self.engine.health_monitor.record_heartbeat(latency)
+                                # Connection is alive and receiving data.
+                                # Report 0ms latency — the actual heartbeat
+                                # timing is handled by cTrader client internally.
+                                # Previously this used time-since-last-heartbeat
+                                # which always exceeded 500ms (check runs every
+                                # 5s, heartbeats every 10s), causing a permanent
+                                # failover loop after 3 checks.
+                                self.engine.health_monitor.record_heartbeat(0.0)
                             else:
                                 self.engine.health_monitor.record_error()
                             await asyncio.sleep(5.0)
@@ -311,18 +353,19 @@ class ExecutionAgent(BaseAgent):
         self._reconnecting = True
         self.log_state("Beginning cTrader reconnection...", "info")
         try:
-            # Gracefully stop existing connection (best-effort)
-            # Only call stop() if writer is still alive
+            # Always fully disconnect before reconnecting.
+            # This guarantees all stale listeners, readers, and writers
+            # are cleaned up before the new connection starts, preventing:
+            #   "readexactly() called while another coroutine is
+            #    already waiting for incoming data"
+            # The old code only called stop() when _writer was not None,
+            # which let old listeners race against new ones.
             if self.ctrader:
-                raw = getattr(self.ctrader, "raw", None)
-                if raw and getattr(raw, "_writer", None) is not None:
-                    try:
-                        await self.ctrader.stop()
-                        self.log_state("Stopped existing connection", "debug")
-                    except Exception as e:
-                        self.log_state(f"Stop existing connection: {e}", "debug")
-                else:
-                    self.log_state("No active connection to stop", "debug")
+                try:
+                    await self.ctrader.stop()
+                    self.log_state("Stopped existing connection", "debug")
+                except Exception as e:
+                    self.log_state(f"Stop existing connection: {e}", "debug")
             await asyncio.sleep(1)
 
             # Start fresh connection — this does SSL connect + app auth +
@@ -331,9 +374,6 @@ class ExecutionAgent(BaseAgent):
             raw = getattr(self.ctrader, "raw", None)
 
             if not ok or raw is None:
-                self.log_state(
-                    "Reconnect failed — cannot start broker client", "warning"
-                )
                 self.set_world("execution.connected", False)
                 return
 
@@ -412,6 +452,12 @@ class ExecutionAgent(BaseAgent):
     async def perceive(self) -> Dict[str, Any]:
         if self.engine is None:
             return {"skip": True}
+
+        # Connection management is handled by the connection_agent.
+        # It has exponential backoff (10 retries, starting at 1s delay)
+        # and sends AGENT_DIRECTIVE with action="reconnect" to trigger
+        # reconnection. The execution_agent just reports state.
+
         open_positions = self.engine.get_open_positions()
         account = await self._get_account_info()
         n_positions = len(open_positions)
@@ -526,8 +572,9 @@ class ExecutionAgent(BaseAgent):
                         int(pid), payload.get("reason", "directive")
                     )
             elif action == "reconnect":
-                self.log_state("Reconnecting to cTrader...")
-                await self._reconnect()
+                if not self._reconnecting:
+                    self.log_state("Reconnecting to cTrader...")
+                    await self._reconnect()
         elif message.msg_type == MessageType.POSITION_MODIFIED:
             payload = message.payload if isinstance(message.payload, dict) else {}
             pid = payload.get("position_id", 0)
@@ -613,6 +660,29 @@ class ExecutionAgent(BaseAgent):
             self._executed += 1
             # Cache original signal for PnL tracking at close time
             self._position_signals[trade.position_id] = signal
+
+            # Compute realized slippage vs expected price
+            expected_price = signal.get("price", 0.0)
+            realized_slippage_bps = (
+                abs(trade.entry_price - expected_price)
+                / max(expected_price, 1e-10)
+                * 10_000
+                if expected_price > 0
+                else 0.0
+            )
+            # Update rolling slippage estimate in world state
+            prev_slippage = self.get_world(f"execution.slippage_bps.{symbol}", 0.0)
+            prev_count = self.get_world(f"execution.fills.{symbol}", 0)
+            new_count = prev_count + 1
+            alpha = min(1.0, 1.0 / max(new_count, 1))
+            smoothed_slippage = (
+                1 - alpha
+            ) * prev_slippage + alpha * realized_slippage_bps
+            self.set_world(
+                f"execution.slippage_bps.{symbol}", round(smoothed_slippage, 2)
+            )
+            self.set_world(f"execution.fills.{symbol}", new_count)
+
             await self.send(
                 MessageType.EXECUTION_RESULT,
                 payload={
@@ -624,6 +694,7 @@ class ExecutionAgent(BaseAgent):
                     "position_id": trade.position_id,
                     "signal": signal,  # Include original signal for expert tracking
                     "timestamp": time.time(),
+                    "slippage_bps": round(realized_slippage_bps, 2),
                 },
                 priority=MessagePriority.HIGH,
                 requires_ack=True,

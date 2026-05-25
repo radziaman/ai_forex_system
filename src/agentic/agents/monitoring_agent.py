@@ -16,6 +16,7 @@ from agentic.core.agent_message import (
     MessageType,
 )
 from agentic.core.agent_consciousness import ConsciousnessLevel
+from infrastructure.logging import SystemHeartbeat
 
 # ── Alert severity levels ──
 ALERT_CRITICAL = "CRITICAL"
@@ -85,6 +86,9 @@ class MonitoringAgent(BaseAgent):
         self._last_summary_date: int = 0
         self._daily_trades: List[Dict] = []
         self._daily_alerts: List[str] = []
+
+        # Structured system heartbeat (5-min interval, JSON format)
+        self._heartbeat = SystemHeartbeat(interval=300, logger=logger)
 
         self.subscribe(MessageType.AGENT_HEARTBEAT)
         self.subscribe(MessageType.RISK_ALERT)
@@ -182,6 +186,9 @@ class MonitoringAgent(BaseAgent):
                 self._send_alert(
                     f"Sharpe ratio {s} below 0.5", ALERT_HIGH, CATEGORY_PERFORMANCE
                 )
+
+        # Structured system heartbeat (5-min interval, JSON format)
+        self._heartbeat.emit(self.get_world)
 
     async def reflect(self, outcome: Dict[str, Any]):
         pass
@@ -289,9 +296,13 @@ class MonitoringAgent(BaseAgent):
         regime = self.get_world("regime.current", "?")
         positions = self.get_world("account.open_positions", 0)
         perf = self.get_world("performance.stats", {})
-        sharpe = perf.get("sharpe", 0)
-        pnl = perf.get("total_pnl", 0)
-        footer = f"\n\U0001f4c8 {positions} pos | Sharpe {sharpe:.2f} | PnL ${pnl:+.2f} | {regime}"  # noqa: E501
+        n_trades = perf.get("total_trades", 0)
+        if n_trades > 0:
+            sharpe = perf.get("sharpe", 0)
+            pnl = perf.get("total_pnl", 0)
+            footer = f"\n\U0001f4c8 {positions} pos | Sharpe {sharpe:.2f} | PnL ${pnl:+.2f} | {regime}"  # noqa: E501
+        else:
+            footer = f"\n\U0001f4c8 {positions} pos | Sharpe N/A | PnL N/A | {regime}"
 
         full_text = f"{header}\n{text}{footer}"
         self._safe_telegram(full_text, level, category)

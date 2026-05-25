@@ -15,7 +15,7 @@ from typing import Dict, List, Optional, Callable
 import numpy as np
 from loguru import logger
 
-from .llm_brain import LLMBrain, LLMReflection
+from .llm_brain import SignalHeuristics, LLMReflection
 
 
 class ReflectionLoop:
@@ -27,12 +27,12 @@ class ReflectionLoop:
 
     def __init__(
         self,
-        llm_brain: Optional[LLMBrain] = None,
+        heuristics: Optional[SignalHeuristics] = None,
         trade_window: int = 50,
         min_trades_for_reflection: int = 10,
         on_reflection: Optional[Callable[[LLMReflection], None]] = None,
     ):
-        self.brain = llm_brain or LLMBrain()
+        self.heuristics = heuristics or SignalHeuristics()
         self.trade_window = trade_window
         self.min_trades = min_trades_for_reflection
         self._on_reflection = on_reflection
@@ -63,7 +63,7 @@ class ReflectionLoop:
         )
 
         performance = {"total_trades": total, "wins": wins, "sharpe": sharpe}
-        reflection = self.brain.reflect_on_trades(self._trade_buffer, performance)
+        reflection = self.heuristics.reflect_on_trades(self._trade_buffer, performance)
 
         self._reflection_count += 1
         self._last_reflection_time = time.time()

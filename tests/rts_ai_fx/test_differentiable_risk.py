@@ -1,6 +1,5 @@
 """Tests for differentiable risk-constrained optimization."""
 
-import numpy as np
 import pytest
 from rts_ai_fx.differentiable_risk import (
     SoftSigmoidProjection,

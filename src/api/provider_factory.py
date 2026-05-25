@@ -27,7 +27,7 @@ class CtraderExecutionAdapter(ExecutionProvider):
             app_id=secrets.ctrader_app_id,
             app_secret=secrets.ctrader_app_secret,
             access_token=secrets.ctrader_access_token,
-            account_id=secrets.ctrader_account_id,
+            account_id=int(secrets.ctrader_account_id),
             demo=secrets.is_demo,
         )
         self._client.on_market_data = self._on_market_data
@@ -66,57 +66,48 @@ class CtraderExecutionAdapter(ExecutionProvider):
             return None
         return AccountInfo(
             account_id=str(info.ctid_trader_account_id),
-            balance=info.balance,
-            equity=info.equity,
-            margin=info.margin,
-            free_margin=info.free_margin,
+            balance=float(info.balance),
+            equity=float(info.equity),
+            margin=float(info.margin),
+            free_margin=float(info.free_margin),
             currency="USD",
             broker="IC Markets (cTrader)",
         )
 
     async def place_order(self, order: OrderRequest) -> Optional[OrderResult]:
-        from api.ctrader_client import TradeOrder
-
         from api.symbol_map import get_symbol_id
 
-        trade_order = TradeOrder(
-            symbol=order.symbol,
-            symbol_id=get_symbol_id(order.symbol),
-            side=order.side,
-            order_type=order.order_type,
-            volume=int(order.volume),
-            price=order.price,
-            sl=order.stop_loss,
-            tp=order.take_profit,
+        sid = get_symbol_id(order.symbol)
+        result = await self._client.open_position(
+            symbol_id=sid,
+            order_type=order.side,
+            volume=order.volume,
+            stop_loss_price=order.stop_loss or 0.0,
+            take_profit_price=order.take_profit or 0.0,
+            comment="RTS Agentic",
         )
-        result = await self._client.place_order(trade_order)
         if result is None:
             return None
-        or_ = OrderResult(
-            order_id=str(result.order_id),
-            position_id=str(result.position_id),
-            status=result.status,
-            filled_price=result.filled_price,
+        return OrderResult(
+            order_id=str(result.get("orderId", 0)),
+            position_id=str(result.get("positionId", 0)),
+            status=(
+                "FILLED" if result.get("executionType") == "ORDER_FILLED" else "PENDING"
+            ),
+            filled_price=float(result.get("price", 0)),
             filled_volume=order.volume,
-            error=result.error,
+            error="",
         )
-        if self.on_order_update:
-            self.on_order_update(or_)
-        return or_
 
     async def close_position(self, position_id: str) -> Optional[OrderResult]:
         try:
             pid = int(position_id) if position_id.isdigit() else 0
-            positions = (
-                self._client.get_open_positions()
-                if hasattr(self._client, "get_open_positions")
-                else []
-            )
-            found = any(str(p.get("position_id", "")) == position_id for p in positions)
-            if found:
-                return OrderResult(
-                    order_id="0", position_id=position_id, status="FILLED"
-                )
+            if pid > 0:
+                ok = await self._client.close_position(pid, volume=0)
+                if ok:
+                    return OrderResult(
+                        order_id="0", position_id=position_id, status="FILLED"
+                    )
         except Exception as e:
             import logging
 
@@ -124,9 +115,7 @@ class CtraderExecutionAdapter(ExecutionProvider):
         return OrderResult(order_id="0", position_id=position_id, status="FILLED")
 
     async def get_positions(self) -> list:
-        if hasattr(self._client, "get_open_positions"):
-            return self._client.get_open_positions()
-        return []
+        return await self._client.get_open_positions()
 
     def is_connected(self) -> bool:
         return self._client.is_connected()

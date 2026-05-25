@@ -1,4 +1,10 @@
 """
+DEPRECATED: This consolidated agent architecture is replaced by the 20-agent
+full agentic system in agentic/core/ and agentic/agents/.
+Kept for reference only — will be removed in next major version.
+"""
+
+"""
 Consolidated Agent Architecture — 6 agents instead of 20.
 
 Reduces AgentBus communication overhead while maintaining all functionality.
@@ -6,7 +12,7 @@ Reduces AgentBus communication overhead while maintaining all functionality.
 Agent responsibilities:
   1. Orchestrator    — scheduling, state management, human-in-loop, error escalation
   2. SignalEngine    — feature pipeline -> ensemble -> signal (pure function, stateless)
-   3. RiskManager  — all risk checks (RiskAgent + AdaptiveRisk + CircuitBreaker)
+  3. RiskManager  — all risk checks (RiskAgent + AdaptiveRisk + CircuitBreaker)
   4. ExecutionManager — execution + position management + cost tracking + reconciliation
   5. LearningManager  — drift detection, retraining, model registry, champion/challenger
   6. DataManager      — market data ingestion, connectivity, health monitoring

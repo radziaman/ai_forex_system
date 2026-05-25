@@ -40,8 +40,24 @@ for name, cfg in REGIME_CONFIGS.items():
         f"clip={cfg.clip_range:.2f}"
     )
 
-# Build and check agents
-rs = RegimeSpecialistSystem(state_dim=49, n_actions=5)
+# Determine expected state_dim from the actual feature pipeline
+from rts_ai_fx.features_unified import (  # noqa: E402
+    EXPECTED_FEATURE_DIM as CANONICAL_FEATURE_DIM,
+    FeaturePipeline,
+)
+
+fp_check = FeaturePipeline(lookback=30, timeframes=["1h"])
+loaded = fp_check.load_normalization()
+n_features_from_pipeline = len(fp_check._feature_cols) if fp_check._feature_cols else 0
+# PPO state_dim = 1 (price) + n_features
+expected_ppo_dim = 1 + (
+    n_features_from_pipeline if n_features_from_pipeline > 0 else CANONICAL_FEATURE_DIM
+)
+print(f"\n  Canonical feature dim: {CANONICAL_FEATURE_DIM}")
+print(f"  Feature pipeline dim (from disk): {n_features_from_pipeline}")
+print(f"  PPO state_dim: {expected_ppo_dim}")
+
+rs = RegimeSpecialistSystem(state_dim=expected_ppo_dim, n_actions=5)
 n_loaded = len([a for a in rs.agents.values() if a is not None])
 print(f"\n  Agents loaded: {n_loaded}/4")
 for name, agent in rs.agents.items():
@@ -61,7 +77,7 @@ for name, agent in rs.agents.items():
 
 # Test inference
 print("\n[3] PPO INFERENCE TEST")
-test_state = np.random.randn(49).astype(np.float32)
+test_state = np.random.randn(expected_ppo_dim).astype(np.float32)
 for name, agent in rs.agents.items():
     if agent:
         t0 = time.time()
@@ -144,7 +160,7 @@ class MetaNet(nn.Module):
             nn.LayerNorm(32),
             nn.LeakyReLU(),
             nn.Dropout(0.15),
-            nn.Linear(32, 5),
+            nn.Linear(32, 4),  # 4 regime classes
         )
 
     def forward(self, x):
@@ -153,7 +169,7 @@ class MetaNet(nn.Module):
 
 ml = MetaNet()
 total = sum(p.numel() for p in ml.parameters())
-print("  Architecture: 16->128->64->32->5")
+print("  Architecture: 16->128->64->32->4")
 print(f"  Total params: {total:,}")
 if os.path.exists("models/meta_learner.pt"):
     ckpt = torch.load("models/meta_learner.pt", map_location="cpu")
@@ -174,8 +190,6 @@ else:
 
 # 6. Feature pipeline normalization
 print("\n[7] FEATURE PIPELINE")
-from rts_ai_fx.features_unified import FeaturePipeline  # noqa: E402
-
 fp = FeaturePipeline(lookback=30, timeframes=["1h", "4h"])
 loaded = fp.load_normalization()
 n_features = len(fp._feature_cols) if fp._feature_cols else 0
@@ -192,26 +206,62 @@ for key in sorted(fp._means.keys()):
 print("\n[8] DIMENSIONAL CONSISTENCY")
 dims = {
     "Feature pipeline output": n_features,
-    "PPO state_dim": 49,
-    "LSTM n_features": 49,
+    "Canonical expected dim": CANONICAL_FEATURE_DIM,
+    "PPO state_dim": expected_ppo_dim,
+    "LSTM n_features": CANONICAL_FEATURE_DIM,
     "LSTM lookback": 30,
     "Feature lookback (config)": 30,
 }
 for name, dim in dims.items():
     print(f"  {name:<35} {dim}")
-if n_features > 0 and n_features != 49:
-    issues.append(f"Feature pipeline outputs {n_features} dims but PPO expects 49")
-    print(f"  >> MISMATCH: features={n_features} vs PPO=49")
+if n_features > 0 and n_features != CANONICAL_FEATURE_DIM:
+    issues.append(
+        f"Feature pipeline outputs {n_features} dims "
+        f"but canonical expected is {CANONICAL_FEATURE_DIM}"
+    )
+    print(
+        f"  >> MISMATCH: features={n_features} vs " f"canonical={CANONICAL_FEATURE_DIM}"
+    )
 elif n_features == 0:
     print("  >> Feature pipeline not fitted yet (will adapt at runtime)")
+elif n_features == CANONICAL_FEATURE_DIM:
+    print("  >> Dimensions match — all systems aligned")
 
 # 9. Ensemble readiness
 print("\n[9] ENSEMBLE READINESS")
 from rts_ai_fx.ensemble import MoEEnsemble  # noqa: E402
+import json  # noqa: E402
 
 ensemble = MoEEnsemble()
-print(f"  Experts registered: {len(ensemble.experts)}")
-print(f"  Elo ratings: {len(ensemble.elo_ratings)}")
+_cfg_path = "models/ensemble_config.json"
+if os.path.exists(_cfg_path):
+    try:
+        with open(_cfg_path) as _f:
+            cfg = json.load(_f)
+        for expert_cfg in cfg.get("experts", []):
+            ensemble.add_expert(
+                name=expert_cfg["name"],
+                predict_fn=lambda X: 0.0,  # dummy — real loading happens at runtime
+                confidence_fn=lambda X: 0.5,
+                regime=expert_cfg.get("regime", "ranging"),
+            )
+            ensemble.elo_ratings[expert_cfg["name"]] = expert_cfg.get("elo", 1200.0)
+        print(
+            f"  Config loaded: {len(cfg['experts'])} experts from ensemble_config.json"
+        )
+    except Exception as e:
+        print(f"  Config load FAILED: {e}")
+
+# Show runtime state
+n_experts = len(ensemble.experts)
+n_elos = len(ensemble.elo_ratings)
+print(f"  Experts registered: {n_experts}")
+print(f"  Elo ratings: {n_elos}")
+if n_experts > 0:
+    top_experts = sorted(ensemble.elo_ratings.items(), key=lambda x: -x[1])[:5]
+    print("  Top 5 Elo ratings:")
+    for name, elo in top_experts:
+        print(f"    {name:<25} {elo:.0f}")
 print(f"  Sharpe weighting enabled: {ensemble.use_sharpe_weighting}")
 
 # Summary

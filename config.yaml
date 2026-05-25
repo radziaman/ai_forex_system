@@ -95,9 +95,7 @@ ai:
 # Features
 features:
   timeframes:
-    - "15m"
     - "1h"
-    - "4h"
   lookback: 30
   use_microstructure: true
   use_cross_asset: false

@@ -1,28 +1,16 @@
 """
-LLM Brain — lightweight reasoning layer for the agentic swarm.
+Signal Heuristics — lightweight heuristic reasoning for trading signals.
 
-Provides structured reasoning about trading signals using an LLM.
-The LLM does NOT generate signals — it REASONS about signals from
-the existing ML ensemble (PPO, LSTM-CNN, TFT, etc.).
-
-Key capabilities:
-  - Signal synthesis: given expert predictions, produce a consolidated view
-  - Context-aware filtering: check regime, sentiment, economic calendar
-  - Natural language explanations: every trade has a readable "why"
-  - Self-reflection: review past trades, suggest improvements
-
-Design philosophy:
-  - LLM is OPTIONAL — system runs fully without it
-  - LLM is a FILTER — it can only reject trades, not create them
-  - LLM output is STRUCTURED JSON — easy to parse and validate
+Replaces the LLMBrain abstraction — the LLM integration was never
+implemented and this module only used its heuristic fallback.
+Designed to be kept simple; if LLM integration is desired later,
+add it as a separate service, not embedded here.
 """
 
-import json
 import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
 from enum import Enum
-from loguru import logger
 
 
 class LLMDecision(Enum):
@@ -34,7 +22,7 @@ class LLMDecision(Enum):
 
 @dataclass
 class LLMTradePlan:
-    """Structured output from the LLM reasoning engine."""
+    """Structured output from the reasoning engine."""
 
     decision: LLMDecision
     confidence: float  # 0.0 to 1.0
@@ -70,32 +58,16 @@ class LLMReflection:
     strategy_adjustments: Dict[str, Any] = field(default_factory=dict)
 
 
-class LLMBrain:
-    """Lightweight LLM reasoning engine for trading decisions.
+class SignalHeuristics:
+    """Lightweight heuristic reasoning about trading signals.
 
-    Uses a local or API-based LLM to provide strategic reasoning.
-    Designed to be optional — the system runs fully without it.
-
-    The reasoning is done via structured JSON prompts:
-      1. Build context (regime, signals, positions, calendar)
-      2. Send to LLM as structured prompt
-      3. Parse JSON response into LLMTradePlan
+    Replaces the LLMBrain abstraction — the LLM integration was never
+    implemented and this module only used its heuristic fallback.
+    Designed to be kept simple; if LLM integration is desired later,
+    add it as a separate service, not embedded here.
     """
 
-    def __init__(
-        self,
-        model_name: str = "local",
-        api_key: Optional[str] = None,
-        use_llm: bool = False,  # DISABLED by default — opt-in
-    ):
-        self.model_name = model_name
-        self.api_key = api_key
-        self.use_llm = use_llm
-        self._conversation_history: List[Dict] = []
-        self._max_history = 50
-        self._reflection_history: List[LLMReflection] = []
-
-    def reason_about_signal(
+    def evaluate_signal(
         self,
         symbol: str,
         direction: str,
@@ -105,49 +77,14 @@ class LLMBrain:
         open_positions: List[Dict],
         market_context: Optional[Dict] = None,
     ) -> LLMTradePlan:
-        """Reason about whether to take a trading signal.
+        """Evaluate a trading signal using heuristic rules.
 
-        When LLM is disabled (default), uses a simple heuristic:
-          - High confidence + favorable regime → approve
-          - Conflicting experts → hold
-          - Too many open positions → reject
-          - Market context flags (NFP, etc.) → reject
+        Performs the following checks:
+          - Conflicting expert signals -> reduce volume
+          - Near economic events -> hold
+          - Too many open positions -> reject
+          - Otherwise -> approve with volume modifier
         """
-        if not self.use_llm:
-            return self._heuristic_reason(
-                symbol,
-                direction,
-                confidence,
-                regime,
-                ensemble_breakdown,
-                open_positions,
-                market_context,
-            )
-
-        # When LLM is enabled, construct a structured prompt
-        prompt = self._build_signal_prompt(
-            symbol,
-            direction,
-            confidence,
-            regime,
-            ensemble_breakdown,
-            open_positions,
-            market_context,
-        )
-        response = self._call_llm(prompt)
-        return self._parse_llm_response(response)
-
-    def _heuristic_reason(
-        self,
-        symbol: str,
-        direction: str,
-        confidence: float,
-        regime: str,
-        ensemble_breakdown: Dict[str, Dict],
-        open_positions: List[Dict],
-        market_context: Optional[Dict] = None,
-    ) -> LLMTradePlan:
-        """Fallback heuristic when LLM is disabled."""
         risk_flags = []
         volume_mod = 1.0
 
@@ -174,7 +111,8 @@ class LLMBrain:
                 volume_mod *= 0.3
                 reasoning = (
                     f"HOLD {symbol}: Near economic calendar event. "
-                    f"Confidence {confidence:.0%} too uncertain to trade through news."
+                    f"Confidence {confidence:.0%} too uncertain to "
+                    f"trade through news."
                 )
                 return LLMTradePlan(
                     decision=LLMDecision.HOLD,
@@ -243,15 +181,13 @@ class LLMBrain:
         if total < 10:
             suggestions.append("Insufficient trade data for meaningful reflection")
 
-        reflection = LLMReflection(
+        return LLMReflection(
             total_trades=total,
             win_rate=win_rate,
             sharpe=sharpe,
             assessment=self._assess_performance(win_rate, sharpe, total),
             suggestions=suggestions,
         )
-        self._reflection_history.append(reflection)
-        return reflection
 
     def _assess_performance(self, win_rate: float, sharpe: float, trades: int) -> str:
         if trades < 10:
@@ -264,71 +200,3 @@ class LLMBrain:
             return "Negative Sharpe — strategy losing money, consider pausing"
         else:
             return "Below expectations — review entry timing and risk management"
-
-    def _build_signal_prompt(
-        self,
-        symbol: str,
-        direction: str,
-        confidence: float,
-        regime: str,
-        ensemble_breakdown: Dict,
-        open_positions: List[Dict],
-        market_context: Optional[Dict] = None,
-    ) -> str:
-        """Build structured prompt for LLM reasoning."""
-        return json.dumps(
-            {
-                "task": "evaluate_trading_signal",
-                "symbol": symbol,
-                "proposed_action": direction,
-                "ml_confidence": confidence,
-                "regime": regime,
-                "expert_breakdown": {
-                    k: {
-                        "prediction": v.get("prediction", 0),
-                        "weight": v.get("weight", 1),
-                    }
-                    for k, v in ensemble_breakdown.items()
-                },
-                "open_positions": [
-                    {
-                        "symbol": p.get("symbol"),
-                        "direction": p.get("direction"),
-                        "pnl": p.get("unrealized_pnl", 0),
-                    }
-                    for p in open_positions
-                ],
-                "market_context": market_context or {},
-            }
-        )
-
-    def _call_llm(self, prompt: str) -> Dict:
-        """Call the LLM API with a structured prompt.
-
-        Override this method to integrate with OpenAI, Llama, etc.
-        Currently returns a default approval response.
-        """
-        logger.debug(f"LLM call (model={self.model_name}): {prompt[:100]}...")
-        # Default response when LLM is not connected
-        return {
-            "decision": "approve",
-            "confidence": 0.7,
-            "reasoning": "Default approval — LLM not configured.",
-            "risk_flags": [],
-            "volume_modifier": 1.0,
-        }
-
-    def _parse_llm_response(self, response: Dict) -> LLMTradePlan:
-        """Parse structured LLM response into LLMTradePlan."""
-        decision_str = response.get("decision", "hold")
-        try:
-            decision = LLMDecision(decision_str)
-        except ValueError:
-            decision = LLMDecision.HOLD
-        return LLMTradePlan(
-            decision=decision,
-            confidence=response.get("confidence", 0.5),
-            reasoning=response.get("reasoning", "No reasoning provided."),
-            risk_flags=response.get("risk_flags", []),
-            suggested_volume_modifier=response.get("volume_modifier", 1.0),
-        )

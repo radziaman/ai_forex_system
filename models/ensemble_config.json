@@ -1,0 +1,175 @@
+{
+  "n_experts": 28,
+  "experts": [
+    {
+      "name": "ppo_trending",
+      "regime": "trending",
+      "elo": 1400.0
+    },
+    {
+      "name": "ppo_ranging",
+      "regime": "ranging",
+      "elo": 1400.0
+    },
+    {
+      "name": "ppo_volatile",
+      "regime": "volatile",
+      "elo": 1400.0
+    },
+    {
+      "name": "ppo_crisis",
+      "regime": "crisis",
+      "elo": 1400.0
+    },
+    {
+      "name": "lstm_EURUSD",
+      "regime": "trending",
+      "elo": 1300.0
+    },
+    {
+      "name": "lstm_GBPUSD",
+      "regime": "trending",
+      "elo": 1300.0
+    },
+    {
+      "name": "lstm_USDJPY",
+      "regime": "trending",
+      "elo": 1300.0
+    },
+    {
+      "name": "lstm_AUDUSD",
+      "regime": "trending",
+      "elo": 1300.0
+    },
+    {
+      "name": "lstm_USDCAD",
+      "regime": "trending",
+      "elo": 1300.0
+    },
+    {
+      "name": "lstm_USDCHF",
+      "regime": "trending",
+      "elo": 1300.0
+    },
+    {
+      "name": "lstm_NZDUSD",
+      "regime": "trending",
+      "elo": 1300.0
+    },
+    {
+      "name": "lstm_XAUUSD",
+      "regime": "trending",
+      "elo": 1300.0
+    },
+    {
+      "name": "xgb_EURUSD",
+      "regime": "ranging",
+      "elo": 1250.0
+    },
+    {
+      "name": "xgb_GBPUSD",
+      "regime": "ranging",
+      "elo": 1250.0
+    },
+    {
+      "name": "xgb_USDJPY",
+      "regime": "ranging",
+      "elo": 1250.0
+    },
+    {
+      "name": "xgb_AUDUSD",
+      "regime": "ranging",
+      "elo": 1250.0
+    },
+    {
+      "name": "xgb_USDCAD",
+      "regime": "ranging",
+      "elo": 1250.0
+    },
+    {
+      "name": "xgb_USDCHF",
+      "regime": "ranging",
+      "elo": 1250.0
+    },
+    {
+      "name": "xgb_NZDUSD",
+      "regime": "ranging",
+      "elo": 1250.0
+    },
+    {
+      "name": "xgb_XAUUSD",
+      "regime": "ranging",
+      "elo": 1250.0
+    },
+    {
+      "name": "clf_EURUSD",
+      "regime": "ranging",
+      "elo": 1150.0
+    },
+    {
+      "name": "clf_GBPUSD",
+      "regime": "ranging",
+      "elo": 1150.0
+    },
+    {
+      "name": "clf_USDJPY",
+      "regime": "ranging",
+      "elo": 1150.0
+    },
+    {
+      "name": "clf_AUDUSD",
+      "regime": "ranging",
+      "elo": 1150.0
+    },
+    {
+      "name": "clf_USDCAD",
+      "regime": "ranging",
+      "elo": 1150.0
+    },
+    {
+      "name": "clf_USDCHF",
+      "regime": "ranging",
+      "elo": 1150.0
+    },
+    {
+      "name": "clf_NZDUSD",
+      "regime": "ranging",
+      "elo": 1150.0
+    },
+    {
+      "name": "clf_XAUUSD",
+      "regime": "ranging",
+      "elo": 1150.0
+    }
+  ],
+  "elo_ratings": {
+    "ppo_trending": 1400.0,
+    "ppo_ranging": 1400.0,
+    "ppo_volatile": 1400.0,
+    "ppo_crisis": 1400.0,
+    "lstm_EURUSD": 1300.0,
+    "lstm_GBPUSD": 1300.0,
+    "lstm_USDJPY": 1300.0,
+    "lstm_AUDUSD": 1300.0,
+    "lstm_USDCAD": 1300.0,
+    "lstm_USDCHF": 1300.0,
+    "lstm_NZDUSD": 1300.0,
+    "lstm_XAUUSD": 1300.0,
+    "xgb_EURUSD": 1250.0,
+    "xgb_GBPUSD": 1250.0,
+    "xgb_USDJPY": 1250.0,
+    "xgb_AUDUSD": 1250.0,
+    "xgb_USDCAD": 1250.0,
+    "xgb_USDCHF": 1250.0,
+    "xgb_NZDUSD": 1250.0,
+    "xgb_XAUUSD": 1250.0,
+    "clf_EURUSD": 1150.0,
+    "clf_GBPUSD": 1150.0,
+    "clf_USDJPY": 1150.0,
+    "clf_AUDUSD": 1150.0,
+    "clf_USDCAD": 1150.0,
+    "clf_USDCHF": 1150.0,
+    "clf_NZDUSD": 1150.0,
+    "clf_XAUUSD": 1150.0
+  }
+}

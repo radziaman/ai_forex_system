@@ -71,33 +71,7 @@ disable_error_code = [
 # Also suppress type-checking-only noise from pandas/numpy stubs
 [[tool.mypy.overrides]]
 module = ["agentic.agents.*"]
-disable_error_code = ["unused-coroutine", "operator", "call-overload", "union-attr", "arg-type"]
-
-# Suppress numpy/pandas ExtensionArray noise in data/scripts files
-[[tool.mypy.overrides]]
-module = [
-    "rts_ai_fx.features_unified",
-    "scripts.*",
-    "data.*",
-    "validation.*",
-    "training.*",
-    "risk.*",
-    "execution.*",
-    "api.*",
-]
-disable_error_code = [
-    "operator",
-    "call-overload",
-    "arg-type",
-    "return-value",
-    "index",
-    "no-any-return",
-    "var-annotated",
-    "assignment",
-    "union-attr",
-    "dict-item",
-    "attr-defined",
-]
+disable_error_code = ["unused-coroutine", "operator", "call-overload", "union-attr", "arg-type", "attr-defined"]
 
 [tool.pytest.ini_options]
 filterwarnings = [

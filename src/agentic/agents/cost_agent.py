@@ -8,6 +8,19 @@ from agentic.core.agent_consciousness import ConsciousnessLevel
 from execution.cost_model import CostModel
 
 
+# Only monitor symbols we actively trade — major FX + XAUUSD
+ACTIVE_SYMBOLS = [
+    "EURUSD",
+    "GBPUSD",
+    "USDJPY",
+    "AUDUSD",
+    "USDCAD",
+    "USDCHF",
+    "NZDUSD",
+    "XAUUSD",
+]
+
+
 class CostAgent(BaseAgent):
     def __init__(self):
         super().__init__(
@@ -26,6 +39,8 @@ class CostAgent(BaseAgent):
         )
         self._cost_model = None
         self._spread_warnings: Dict[str, float] = {}
+        # Rate-limit wide-spread alerts: one per symbol per 300s
+        self._alert_cooldowns: Dict[str, float] = {}
 
     async def _on_start(self):
         self._cost_model = CostModel()
@@ -34,10 +49,9 @@ class CostAgent(BaseAgent):
     async def perceive(self) -> Dict[str, Any]:
         if not self._cost_model:
             return {"skip": True}
-        from data.data_manager import SYMBOLS
 
         warnings = {}
-        for sym in SYMBOLS:
+        for sym in ACTIVE_SYMBOLS:
             bid = self.get_world(f"data.bid.{sym}", 0)
             ask = self.get_world(f"data.ask.{sym}", 0)
             if bid > 0 and ask > 0:
@@ -56,23 +70,31 @@ class CostAgent(BaseAgent):
 
     async def act(self, decision: Dict[str, Any]):
         if decision.get("alert_wides"):
+            now = time.time()
             for sym, spread in decision["alert_wides"].items():
-                if (
-                    sym not in self._spread_warnings
-                    or abs(self._spread_warnings[sym] - spread) > 0.5
-                ):
-                    self._spread_warnings[sym] = spread
-                    await self.send(
-                        MessageType.RISK_ALERT,
-                        payload={
-                            "type": "wide_spread",
-                            "symbol": sym,
-                            "spread_pips": spread,
-                            "timestamp": time.time(),
-                            "reason": f"wide_spread_{sym}_{spread:.1f}pips",
-                        },
-                        priority=MessagePriority.LOW,
-                    )
+                # Rate limit: one alert per symbol per 300s (5 min)
+                last_alert = self._alert_cooldowns.get(sym, 0.0)
+                if now - last_alert < 300:
+                    continue
+
+                # Only alert if spread changed significantly from last warning
+                last_spread = self._spread_warnings.get(sym)
+                if last_spread is not None and abs(last_spread - spread) <= 2.0:
+                    continue
+
+                self._spread_warnings[sym] = spread
+                self._alert_cooldowns[sym] = now
+                await self.send(
+                    MessageType.RISK_ALERT,
+                    payload={
+                        "type": "wide_spread",
+                        "symbol": sym,
+                        "spread_pips": round(spread, 1),
+                        "timestamp": now,
+                        "reason": f"wide_spread_{sym}_{spread:.1f}pips",
+                    },
+                    priority=MessagePriority.LOW,
+                )
 
     async def estimate_cost(
         self, symbol: str, direction: str, volume: float, price: float, atr: float = 0.0
