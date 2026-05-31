@@ -28,6 +28,9 @@ from pipeline.risk_manager import RiskManager  # noqa: E402
 from pipeline.execution_manager import ExecutionManager  # noqa: E402
 from pipeline.learning_manager import LearningManager
 from pipeline.attribution_manager import AttributionManager  # noqa: E402
+from pipeline.health_monitor import HealthMonitor  # noqa: E402
+from pipeline.symbol_discovery import SymbolDiscovery  # noqa: E402
+from pipeline.strategy_discovery import StrategyDiscovery  # noqa: E402
 
 
 HELP = """
@@ -71,12 +74,48 @@ async def main(config, secrets, mode="paper"):
     )
     ctx.attribution_manager = attribution_manager
 
+    # ================================================================
+    # Autonomous capability modules
+    # ================================================================
+
+    # Self-healing: monitors module heartbeats, auto-recovers crashes
+    health_monitor = HealthMonitor(
+        event_bus=bus,
+        check_interval=10.0,
+        heartbeat_timeout=30.0,
+        max_failures=3,
+    )
+    ctx.health_monitor = health_monitor
+
+    # Auto-symbol discovery: scans candidates, picks best by liquidity
+    symbol_discovery = SymbolDiscovery(
+        event_bus=bus,
+        data_manager=data_manager,
+        max_symbols=11,
+        scan_interval=3600.0,
+        warmup_ticks=100,
+    )
+    ctx.symbol_discovery = symbol_discovery
+
+    # Auto-strategy discovery: parameter sweeps, promotes winners
+    strategy_discovery = StrategyDiscovery(
+        event_bus=bus,
+        expert_registry=getattr(signal_engine, 'expert_registry', None),
+        min_eval_trades=20,
+        sharpe_threshold=1.0,
+        win_rate_threshold=0.55,
+    )
+    ctx.strategy_discovery = strategy_discovery
+
     # Register modules with orchestrator
     orchestrator.register_module("signal_engine", signal_engine)
     orchestrator.register_module("risk_manager", risk_manager)
     orchestrator.register_module("execution_manager", execution_manager)
     orchestrator.register_module("learning_manager", learning_manager)
     orchestrator.register_module("attribution_manager", attribution_manager)
+    orchestrator.register_module("health_monitor", health_monitor)
+    orchestrator.register_module("symbol_discovery", symbol_discovery)
+    orchestrator.register_module("strategy_discovery", strategy_discovery)
 
     # Config hot-reload watcher (opt-out via config)
     if getattr(config, "enable_config_watch", True):

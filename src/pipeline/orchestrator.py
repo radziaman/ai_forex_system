@@ -68,9 +68,13 @@ class Orchestrator:
         logger.info("[orchestrator] All modules stopped")
 
     async def _health_loop(self) -> None:
-        """Periodic health check every 60s."""
+        """Periodic health check every 60s. Also emits heartbeats for HealthMonitor."""
         while self._running:
             await asyncio.sleep(60)
+            # Emit heartbeats for all registered modules (consumed by HealthMonitor)
+            for name in list(self._modules.keys()):
+                await self.bus.emit("module_heartbeat", module=name, status="running")
+
             alive_count = 0
             for name, module in self._modules.items():
                 if hasattr(module, "is_alive"):

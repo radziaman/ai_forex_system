@@ -29,3 +29,6 @@ class PipelineContext:
     risk_manager_service: Optional[Any] = None
     execution_engine: Optional[Any] = None
     attribution_manager: Optional[Any] = None
+    health_monitor: Optional[Any] = None
+    symbol_discovery: Optional[Any] = None
+    strategy_discovery: Optional[Any] = None
