@@ -63,7 +63,7 @@ class ExecutionManager:
         self._initialized = False
         self._position_counter: int = 0
         self._positions: Dict[int, ManagedPosition] = {}
-        self._mode: str = "PAPER"
+        self._mode: str = mode
 
         # Position agent state
         self._trailing_state: Dict[int, Dict] = {}
@@ -101,7 +101,7 @@ class ExecutionManager:
         trading_config = getattr(self.config, "trading", self.config)
         self._mode = getattr(trading_config, "mode", "PAPER")
 
-        if self._engine is None and self._mode != "PAPER":
+        if self._engine is None and self._mode.upper() != "PAPER":
             try:
                 from execution.engine import ExecutionEngine
 
@@ -591,6 +591,11 @@ class ExecutionManager:
     def is_alive(self) -> bool:
         """Whether the execution manager is initialized."""
         return self._initialized
+
+    @property
+    def mode(self) -> str:
+        """Current execution mode (paper/live)."""
+        return self._mode
 
     @property
     def open_positions(self) -> List[ManagedPosition]:

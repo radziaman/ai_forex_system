@@ -11,6 +11,7 @@ from .event_bus import EventBus
 from .health_monitor import HealthMonitor
 from .symbol_discovery import SymbolDiscovery
 from .strategy_discovery import StrategyDiscovery
+from .checkpoint_manager import CheckpointManager
 from .pipeline_context import PipelineContext
 
 __all__ = [
@@ -24,5 +25,6 @@ __all__ = [
     "HealthMonitor",
     "SymbolDiscovery",
     "StrategyDiscovery",
+    "CheckpointManager",
     "PipelineContext",
 ]

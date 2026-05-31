@@ -32,3 +32,4 @@ class PipelineContext:
     health_monitor: Optional[Any] = None
     symbol_discovery: Optional[Any] = None
     strategy_discovery: Optional[Any] = None
+    checkpoint_manager: Optional[Any] = None

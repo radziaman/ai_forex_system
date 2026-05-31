@@ -100,12 +100,26 @@ async def main(config, secrets, mode="paper"):
     # Auto-strategy discovery: parameter sweeps, promotes winners
     strategy_discovery = StrategyDiscovery(
         event_bus=bus,
-        expert_registry=getattr(signal_engine, 'expert_registry', None),
+        expert_registry=getattr(signal_engine, "expert_registry", None),
         min_eval_trades=20,
         sharpe_threshold=1.0,
         win_rate_threshold=0.55,
     )
     ctx.strategy_discovery = strategy_discovery
+
+    # State checkpointing: periodic save for crash recovery
+    # Ensemble is lazily loaded by SignalEngine — CheckpointManager
+    # will call ensemble.save_state() on each checkpoint cycle
+    from pipeline.checkpoint_manager import CheckpointManager
+
+    checkpoint_manager = CheckpointManager(
+        event_bus=bus,
+        pipeline_ctx=ctx,  # Lazily resolves ensemble via ctx
+        checkpoint_dir="data/checkpoints",
+        save_interval=60.0,
+        auto_load=True,
+    )
+    ctx.checkpoint_manager = checkpoint_manager
 
     # Register modules with orchestrator
     orchestrator.register_module("signal_engine", signal_engine)
@@ -116,6 +130,7 @@ async def main(config, secrets, mode="paper"):
     orchestrator.register_module("health_monitor", health_monitor)
     orchestrator.register_module("symbol_discovery", symbol_discovery)
     orchestrator.register_module("strategy_discovery", strategy_discovery)
+    orchestrator.register_module("checkpoint_manager", checkpoint_manager)
 
     # Config hot-reload watcher (opt-out via config)
     if getattr(config, "enable_config_watch", True):
