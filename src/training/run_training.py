@@ -16,7 +16,7 @@ from typing import Optional
 import numpy as np
 from loguru import logger
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
+# Run with: pip install -e . && python -m src.training.run_training
 
 import pandas as pd  # noqa: E402
 import tensorflow as tf  # noqa: E402

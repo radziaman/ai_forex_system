@@ -58,7 +58,7 @@ class RiskManager:
         self.total_trades = 0
         self.wins = 0
         self.losses = 0
-        self.trade_history = []
+        self.trade_history: List[TradeRecord] = []
         # Fix 2: Per-symbol price history for VaR instead of shared single list
         self._price_history: Dict[str, List[float]] = {}
         self._var_lookback = 60

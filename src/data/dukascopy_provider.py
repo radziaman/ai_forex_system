@@ -6,16 +6,14 @@ Free tick data since 2003 via HTTP API. Uses cloudscraper to bypass Cloudflare.
 import asyncio
 import struct
 import lzma
-import logging
 from datetime import datetime, timedelta, timezone
 from typing import List, Callable
 from pathlib import Path
+from loguru import logger
 
 import cloudscraper
 
 from api.base import DataProvider, PriceTick, OHLCV
-
-logger = logging.getLogger(__name__)
 
 DUKASCOPE_SYMBOLS = {
     "EURUSD": "EURUSD",

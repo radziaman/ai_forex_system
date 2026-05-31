@@ -19,8 +19,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from loguru import logger
 
-from agentic.core.agent_bus import get_agent_bus
-from agentic.core.agent_message import MessageType
+from pipeline.event_bus import EventBus
 
 app = FastAPI(title="RTS: Agentic FX System Elite Dashboard", version="4.1")
 
@@ -55,8 +54,8 @@ dashboard_state: Dict[str, Any] = {
 
 @app.on_event("startup")
 async def startup():
-    """Start background task that bridges AgentBus to WebSocket clients."""
-    asyncio.create_task(_bridge_agent_bus_to_dashboard())
+    """Start background task that bridges EventBus to WebSocket clients."""
+    asyncio.create_task(_bridge_event_bus_to_dashboard())
 
 
 @app.on_event("shutdown")
@@ -171,40 +170,38 @@ async def websocket_endpoint(ws: WebSocket):
             connected_clients.remove(ws)
 
 
-async def _bridge_agent_bus_to_dashboard():
-    """Listen to AgentBus messages and update dashboard state.
+async def _bridge_event_bus_to_dashboard():
+    """Listen to EventBus messages and update dashboard state.
 
-    Runs in the background, subscribing to key message types and
+    Runs in the background, subscribing to key event types and
     updating dashboard_state + broadcasting to WebSocket clients.
     """
     try:
-        bus = get_agent_bus()
+        bus = EventBus()
 
         # Define handlers
 
-        async def on_tick(msg):
+        async def on_tick(**data):
             """Update market data on tick."""
-            payload = msg.payload if isinstance(msg.payload, dict) else {}
-            symbol = payload.get("symbol", "")
-            bid = payload.get("bid", 0)
-            ask = payload.get("ask", 0)
+            symbol = data.get("symbol", "")
+            bid = data.get("bid", 0)
+            ask = data.get("ask", 0)
             if symbol and bid > 0:
                 dashboard_state.setdefault("market_data", {})
                 dashboard_state["market_data"].setdefault("prices", {})
                 dashboard_state["market_data"]["prices"][symbol] = (bid + ask) / 2
                 dashboard_state["market_data"]["spread"] = round(ask - bid, 5)
 
-        async def on_position_opened(msg):
+        async def on_position_opened(**data):
             """Update open positions list."""
-            payload = msg.payload if isinstance(msg.payload, dict) else {}
             pos = {
-                "symbol": payload.get("symbol", ""),
-                "direction": payload.get("direction", ""),
-                "volume": payload.get("volume", 0),
-                "entry_price": payload.get("entry", 0),
-                "sl": payload.get("sl_price", 0),
-                "tp": payload.get("tp_price", 0),
-                "position_id": payload.get("position_id", 0),
+                "symbol": data.get("symbol", ""),
+                "direction": data.get("direction", ""),
+                "volume": data.get("volume", 0),
+                "entry_price": data.get("entry", 0),
+                "sl": data.get("sl_price", 0),
+                "tp": data.get("tp_price", 0),
+                "position_id": data.get("position_id", 0),
                 "timestamp": time.time(),
             }
             positions = dashboard_state.get("open_positions", [])
@@ -212,63 +209,58 @@ async def _bridge_agent_bus_to_dashboard():
             dashboard_state["open_positions"] = positions
             dashboard_state["total_trades"] = dashboard_state.get("total_trades", 0) + 1
 
-        async def on_position_closed(msg):
+        async def on_position_closed(**data):
             """Remove from open positions, add to trade history."""
-            payload = msg.payload if isinstance(msg.payload, dict) else {}
-            pid = payload.get("position_id", 0)
-            pnl = payload.get("pnl", 0)
-            # Remove from open positions
+            pid = data.get("position_id", 0)
+            pnl = data.get("pnl", 0)
             positions = dashboard_state.get("open_positions", [])
             dashboard_state["open_positions"] = [
                 p for p in positions if p.get("position_id") != pid
             ]
-            # Add to trade history
             history = dashboard_state.get("trade_history", [])
             history.append(
                 {
                     "position_id": pid,
                     "pnl": pnl,
-                    "reason": payload.get("reason", ""),
+                    "reason": data.get("reason", ""),
                     "timestamp": time.time(),
                 }
             )
-            dashboard_state["trade_history"] = history[-500:]  # Keep last 500
+            dashboard_state["trade_history"] = history[-500:]
 
-        async def on_signal(msg):
+        async def on_signal(**data):
             """Update signal count."""
             dashboard_state["signal_count"] = dashboard_state.get("signal_count", 0) + 1
 
-        async def on_heartbeat(msg):
-            """Update agent health."""
-            payload = msg.payload if isinstance(msg.payload, dict) else {}
-            agent = msg.source_agent
+        async def on_heartbeat(**data):
+            """Update module health."""
+            source = data.get("source", "unknown")
             dashboard_state.setdefault("agent_health", {})
-            dashboard_state["agent_health"][agent] = {
-                "status": payload.get("status", "unknown"),
-                "health": payload.get("health", 1.0),
+            dashboard_state["agent_health"][source] = {
+                "status": data.get("status", "unknown"),
+                "health": data.get("health", 1.0),
                 "last_seen": time.time(),
             }
 
-        async def on_risk_alert(msg):
+        async def on_risk_alert(**data):
             """Add alert to dashboard."""
-            payload = msg.payload if isinstance(msg.payload, dict) else {}
             alerts = dashboard_state.get("alerts", [])
             alerts.append(
                 {
-                    "type": payload.get("type", "alert"),
-                    "reason": payload.get("reason", ""),
+                    "type": data.get("type", "alert"),
+                    "reason": data.get("reason", ""),
                     "timestamp": time.time(),
                 }
             )
-            dashboard_state["alerts"] = alerts[-100:]  # Keep last 100
+            dashboard_state["alerts"] = alerts[-100:]
 
-        # Subscribe to bus messages
-        bus.subscribe(MessageType.TICK_RECEIVED, on_tick)
-        bus.subscribe(MessageType.POSITION_OPENED, on_position_opened)
-        bus.subscribe(MessageType.POSITION_CLOSED, on_position_closed)
-        bus.subscribe(MessageType.SIGNAL_GENERATED, on_signal)
-        bus.subscribe(MessageType.AGENT_HEARTBEAT, on_heartbeat)
-        bus.subscribe(MessageType.RISK_ALERT, on_risk_alert)
+        # Subscribe to EventBus events
+        bus.on("tick", on_tick)
+        bus.on("position_opened", on_position_opened)
+        bus.on("position_closed", on_position_closed)
+        bus.on("signal_generated", on_signal)
+        bus.on("health_check", on_heartbeat)
+        bus.on("error", on_risk_alert)
 
         # Periodic broadcast loop: every 1s, push state to WebSocket clients
         while True:

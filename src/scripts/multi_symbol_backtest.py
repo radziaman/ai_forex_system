@@ -16,9 +16,7 @@ import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional, Tuple, Callable
 
-_src = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if _src not in sys.path:
-    sys.path.insert(0, _src)
+# Run with: pip install -e . && python -m src.scripts.multi_symbol_backtest
 
 from dataclasses import dataclass  # noqa: E402
 from loguru import logger  # noqa: E402

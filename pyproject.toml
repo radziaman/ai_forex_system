@@ -48,7 +48,7 @@ python_version = "3.9"
 warn_return_any = true
 warn_unused_configs = true
 show_error_codes = true
-exclude = "(.venv|venv|build|\\.eggs|\\.git)"
+exclude = "(_archive/|.venv|venv|build|\\.eggs|\\.git)"
 
 # Suppress low-risk / false-positive categories
 disable_error_code = [
@@ -67,13 +67,8 @@ disable_error_code = [
     "no-redef",          # try/except import fallback patterns
 ]
 
-# Suppress unused-coroutine in agent files (they use self.run() pattern)
-# Also suppress type-checking-only noise from pandas/numpy stubs
-[[tool.mypy.overrides]]
-module = ["agentic.agents.*"]
-disable_error_code = ["unused-coroutine", "operator", "call-overload", "union-attr", "arg-type", "attr-defined"]
-
 [tool.pytest.ini_options]
+norecursedirs = ["_archive", ".venv", "venv", "build", "dist"]
 filterwarnings = [
     "ignore:urllib3 v2 only supports OpenSSL:urllib3.exceptions.NotOpenSSLWarning",
 ]

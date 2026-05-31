@@ -9,7 +9,8 @@ models/feature_norm.npz, and verifies the saved feature count is 49.
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# Run with: pip install -e . && python -m src.scripts.resave_feature_norm
+
 
 import pandas as pd  # noqa: E402
 from loguru import logger  # noqa: E402

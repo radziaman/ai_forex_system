@@ -33,9 +33,7 @@ import pandas as pd  # noqa: E402
 from loguru import logger  # noqa: E402
 
 # ─── Project setup ────────────────────────────────────────────────────────────
-_src_path = str(Path(__file__).resolve().parent.parent)
-if _src_path not in sys.path:
-    sys.path.insert(0, _src_path)
+# Run with: pip install -e . && python -m src.scripts.train_all_models
 
 from rts_ai_fx.model import LSTMCNNHybrid, ProfitabilityClassifier  # noqa: E402
 from rts_ai_fx.features_unified import FeaturePipeline, compute_features  # noqa: E402

@@ -20,7 +20,7 @@ import os
 from pathlib import Path
 from loguru import logger
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
+# Run with: pip install -e . && python -m src.validation.run_validation
 
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402

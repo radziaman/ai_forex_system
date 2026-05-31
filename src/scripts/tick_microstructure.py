@@ -20,9 +20,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from typing import List, Tuple, Dict
 
-_src = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if _src not in sys.path:
-    sys.path.insert(0, _src)
+# Run with: pip install -e . && python -m src.scripts.tick_microstructure
 
 from loguru import logger  # noqa: E402
 

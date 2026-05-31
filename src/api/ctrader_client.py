@@ -7,10 +7,10 @@ import socket
 import asyncio
 import time
 import functools
-import logging
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Callable, Any, List
 from concurrent.futures import ThreadPoolExecutor
+from loguru import logger
 
 try:
     from ctrader_open_api.messages.OpenApiCommonMessages_pb2 import (
@@ -49,8 +49,6 @@ try:
 except ImportError as e:
     print(f"cTrader protobuf import failed: {e}")
     _HAS_PROTOBUF = False
-
-logger = logging.getLogger(__name__)
 
 # Symbol mapping: symbol -> cTrader symbol_id (Open API uses numeric IDs too)
 # ⚠️  VERIFIED from cTrader Symbol Info (Right-click → Symbol Info → FIX Symbol ID)
@@ -292,7 +290,11 @@ class CtraderClient:
     async def _start_impl(self) -> bool:
         """Internal start implementation (serialized by _start_lock)."""
         # Idempotent: if already connected and listening, skip.
-        if self._is_connected and self._listener_task and not self._listener_task.done():
+        if (
+            self._is_connected
+            and self._listener_task
+            and not self._listener_task.done()
+        ):
             return True
 
         try:
@@ -386,7 +388,7 @@ class CtraderClient:
 
     async def _full_disconnect(self):
         """Complete teardown: stop listeners, close socket, reset state.
-        
+
         Unlike disconnect(), this is guaranteed to fully clean up regardless
         of current connection state.  Safe to call multiple times.
         """
@@ -397,7 +399,7 @@ class CtraderClient:
         self._subscribed_spots.clear()
         self._account_info = None
         self._pending_responses.clear()
-        
+
         # Cancel listener and heartbeat tasks
         for task_name in ("_listener_task", "_heartbeat_task"):
             task = getattr(self, task_name, None)
@@ -408,10 +410,10 @@ class CtraderClient:
                 except (asyncio.CancelledError, Exception):
                     pass
                 setattr(self, task_name, None)
-        
+
         # Yield to let StreamReader clean up stale _waiter before close
         await asyncio.sleep(0)
-        
+
         # Close the socket
         if self._writer:
             try:
@@ -421,12 +423,12 @@ class CtraderClient:
                 pass
         self._writer = None
         self._reader = None
-        
+
         # Reset heartbeat health
         self._heartbeat_ok = 0
         self._heartbeat_fail = 0
         self._last_heartbeat_ts = 0.0
-        
+
         logger.debug("cTrader client fully disconnected")
 
     def _start_simulation(self) -> bool:
@@ -905,7 +907,7 @@ class CtraderClient:
 
     async def disconnect(self):
         """Disconnect from cTrader and clean up.
-        
+
         Delegates to _full_disconnect() for consistent teardown.
         Safe to call multiple times.
         """
@@ -1131,9 +1133,7 @@ class CtraderClient:
                     # clear its internal waiter synchronously after a
                     # CancelledError during readexactly().  Yield and
                     # retry once — the stale waiter should resolve.
-                    logger.debug(
-                        "Listener race (stale _waiter) — retrying once"
-                    )
+                    logger.debug("Listener race (stale _waiter) — retrying once")
                     await asyncio.sleep(0)
                     continue
                 logger.warning(
@@ -1256,11 +1256,10 @@ class CtraderClient:
             # unless the payload type actually signals an error (2155+ range).
             # Some unhandled messages are legitimate responses we don't care
             # about (e.g. ProtoOASubscribeDepthQuotesRes routed by clientMsgId).
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(
-                    f"Unhandled message: payloadType={msg.payloadType}, "
-                    f"payload={len(msg.payload)}B"
-                )
+            logger.debug(
+                f"Unhandled message: payloadType={msg.payloadType}, "
+                f"payload={len(msg.payload)}B"
+            )
 
     async def _handle_depth_event(self, msg):
         """Process Level II DOM update from ProtoOADepthEvent."""

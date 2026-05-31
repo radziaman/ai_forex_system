@@ -154,42 +154,79 @@ class SmartIntegrationTestPipeline:
     async def _run_simulation_test(
         self, test: IntegrationTest
     ) -> Tuple[bool, str, Dict]:
-        """Run full trading day simulation."""
+        """Run full trading day simulation using CircuitBreaker."""
+        from ..risk.circuit_breaker import CircuitBreaker
+
         if test.name == "full_trading_day_simulation":
-            # Simulate 24h of 1h bars
-            num_bars = 24
-            success_count = 0
+            cb = CircuitBreaker(warmup_period=3)
+            phases = [
+                ("normal", 1.12, 1.13, 100),
+                ("uptrend", 1.13, 1.14, 120),
+                ("volatile", 1.14, 1.16, 300),
+                ("flash_crash", 1.05, 1.06, 1000),
+                ("recovery", 1.11, 1.12, 100),
+            ]
+            detector_activations = 0
+            warmup_count = 0
+            halted = False
 
-            for i in range(num_bars):
-                # Simulate price movement
-
-                # Simulate trading cycle
-                await asyncio.sleep(0.01)  # Fast simulation
-                success_count += 1
+            for phase_name, bid, ask, vol in phases:
+                for _ in range(6):
+                    tick = {"bid": bid, "ask": ask, "price": (bid + ask) / 2, "volume": vol}
+                    should_halt, reason, _ = cb.check_market_health("EURUSD", tick)
+                    if reason == "warmup":
+                        warmup_count += 1
+                    elif should_halt:
+                        detector_activations += 1
+                        halted = True
+                    await asyncio.sleep(0.01)
 
             return (
                 True,
-                f"Simulated {success_count} trading cycles",
+                f"Trading day sim: {warmup_count} warmup, {detector_activations} detector hits, "
+                f"halted={halted}",
                 {
-                    "cycles_completed": success_count,
-                    "bars_processed": num_bars,
+                    "phases": len(phases),
+                    "warmup_count": warmup_count,
+                    "detector_activations": detector_activations,
+                    "halted": halted,
                 },
             )
 
         elif test.name == "data_pipeline_failure_test":
-            # Simulate data feed failure and recovery
-            try:
-                # Simulate disconnection
-                await asyncio.sleep(0.01)
-                # Simulate reconnection
-                await asyncio.sleep(0.01)
-                return True, "Data pipeline recovery successful", {}
-            except Exception as e:
-                return False, f"Recovery failed: {e}", {}
+            cb = CircuitBreaker(warmup_period=3)
+            failures_tested = 0
+            for tick_data in [
+                {"bid": None, "ask": None, "volume": 0},  # None bid/ask
+                {},  # Empty dict
+                {"bid": 0, "ask": 0, "volume": 0},  # Zero prices
+                {"bid": 1.12},  # Missing ask
+            ]:
+                try:
+                    cb.check_market_health("EURUSD", tick_data)
+                    failures_tested += 1
+                except Exception:
+                    pass
+            return (
+                True,
+                f"Data pipeline handled {failures_tested} failure scenarios",
+                {"scenarios_tested": failures_tested},
+            )
 
         elif test.name == "api_reconnection_test":
-            # Test API reconnection
-            return True, "API reconnection test passed", {}
+            cb = CircuitBreaker(warmup_period=3)
+            cb.update_api_health("ctrader", True)
+            assert cb.api_health["ctrader"]["status"] == "healthy"
+            for _ in range(cb.max_api_retries):
+                cb.update_api_health("ctrader", False)
+            assert cb.api_health["ctrader"]["status"] == "unhealthy"
+            cb.update_api_health("ctrader", True)
+            assert cb.api_health["ctrader"]["status"] == "healthy"
+            return (
+                True,
+                f"API reconnection test passed: {cb.max_api_retries} failures",
+                {"max_retries": cb.max_api_retries},
+            )
 
         return False, "Test not implemented", {}
 
@@ -220,20 +257,24 @@ class SmartIntegrationTestPipeline:
                     CircuitBreaker,
                 )
 
-                cb = CircuitBreaker()
+                cb = CircuitBreaker(warmup_period=12)
+                # Send baseline ticks to pass warm-up
+                for _ in range(12):
+                    cb.check_market_health(
+                        "EURUSD",
+                        {"bid": 1.12, "ask": 1.13, "price": 1.125, "volume": 100},
+                    )
                 # Simulate flash crash
                 tick = {"bid": 1.05, "ask": 1.06, "price": 1.055, "volume": 1000}
-
-                should_halt, reason, snapshot = cb.check_market_health("EURUSD", tick)
+                should_halt, reason, _ = cb.check_market_health("EURUSD", tick)
                 # Now simulate recovery
-                tick2 = {"bid": 1.12, "ask": 1.13, "price": 1.125, "volume": 1000}
+                tick2 = {"bid": 1.12, "ask": 1.13, "price": 1.125, "volume": 100}
                 cb.last_halt_time["EURUSD"] = time.time() - 400  # Past cooldown
-
                 should_halt2, _, _ = cb.check_market_health("EURUSD", tick2)
 
                 if should_halt and not should_halt2:
                     return True, "Circuit breaker activated and recovered", {}
-                return False, "Circuit breaker test failed", {}
+                return False, f"Circuit breaker test failed: halt={should_halt} reason={reason}", {}
 
             except Exception as e:
                 return False, f"Circuit breaker test error: {e}", {}

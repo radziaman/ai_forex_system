@@ -54,6 +54,7 @@ class CircuitBreaker:
         cooldown_seconds: int = 300,  # 5 min cooldown after halt
         api_timeout_seconds: int = 30,  # API timeout before degradation
         max_api_retries: int = 3,
+        warmup_period: int = 50,  # observations needed before detector activation
     ):
         self.price_velocity_threshold = price_velocity_threshold
         self.spread_multiplier_threshold = spread_multiplier_threshold
@@ -83,6 +84,17 @@ class CircuitBreaker:
         self.current_confidence_threshold: float = self.base_confidence_threshold
         self._last_degradation_log: float = 0.0
         self._last_recovery_log: float = 0.0
+
+        # Warm-up period — detectors need minimum data to establish baselines
+        self._warmup_period: int = warmup_period
+        self._observation_count: int = 0
+        self._warmup_logged: bool = False
+        self._warmup_completed_logged: bool = False
+
+    @property
+    def is_warmed_up(self) -> bool:
+        """Return True if the circuit breaker has collected enough baseline data."""
+        return self._observation_count >= self._warmup_period
 
     def check_market_health(  # noqa: C901
         self, symbol: str, tick: Dict
@@ -130,6 +142,27 @@ class CircuitBreaker:
 
         # Update normal levels (rolling average, excluding extremes)
         self._update_normal_levels(symbol)
+
+        # Count valid observations for warm-up (skip when price is zero/invalid)
+        if price > 0:
+            self._observation_count += 1
+
+        # Warm-up period: skip detector checks until enough baseline data
+        if not self.is_warmed_up:
+            if not self._warmup_logged:
+                logger.warning(
+                    f"Circuit breaker warming up: "
+                    f"{self._observation_count}/{self._warmup_period}"
+                )
+                self._warmup_logged = True
+            snapshot.is_healthy = True
+            return False, "warmup", snapshot
+        elif not self._warmup_completed_logged:
+            logger.info(
+                f"Circuit breaker warmed up: "
+                f"{self._observation_count} observations"
+            )
+            self._warmup_completed_logged = True
 
         # Check 1: Price velocity (flash crash detection)
         halt, reason = self._check_price_velocity(symbol, snapshot)

@@ -233,7 +233,7 @@ class AlgoExecutor:
                         weights = recent_volumes / total_vol
                         # Repeat pattern for duration
                         chunks_needed = max(1, int(duration_minutes / 5))
-                        profile = []
+                        profile: List[float] = []
                         while len(profile) < chunks_needed:
                             profile.extend(weights.tolist())
                         return profile[:chunks_needed]

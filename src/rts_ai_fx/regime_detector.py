@@ -30,6 +30,7 @@ class HMMRegimeDetector:
         self.model: Optional[hmm.GaussianHMM] = None
         self.current_regime: Optional[str] = None
         self.regime_history: List[str] = []
+        self._last_prices: List[float] = []
 
     def _extract_features(self, df: pd.DataFrame) -> np.ndarray:
         """Extract features for HMM: returns, volatility, momentum, trend strength.
@@ -157,6 +158,9 @@ class HMMRegimeDetector:
             regime = self.REGIME_NAMES[current_state % len(self.REGIME_NAMES)]
         self.current_regime = regime
         self.regime_history.append(regime)
+        # Store close prices for trend direction calculation
+        if "close" in df.columns:
+            self._last_prices = df["close"].dropna().values.tolist()
         return str(regime)
 
     def _fallback_regime(self, df: pd.DataFrame) -> str:
@@ -386,13 +390,24 @@ class HMMRegimeDetector:
             }
 
     def _get_trend_direction(self) -> int:
-        """Get current trend direction (1 for up, -1 for down)."""
+        """Get current trend direction (1 for up, -1 for down, 0 for neutral).
+
+        When regime is trending, computes the slope of recent close prices
+        to determine direction. Returns -1 for downtrend, 1 for uptrend.
+        """
         if not self.regime_history:
             return 0
-        # Simplified: check last regime
-        if self.regime_history[-1] == "trending":
-            return 1
-        return 0
+        if self.regime_history[-1] != "trending":
+            return 0
+        # Compute slope of recent close prices to determine trend direction
+        if not hasattr(self, '_last_prices') or len(self._last_prices) < 5:
+            return 0
+        prices = self._last_prices
+        n = min(self.lookback, len(prices))
+        y = prices[-n:]
+        x = np.arange(n, dtype=float)
+        slope = np.polyfit(x, y, deg=1)[0]
+        return 1 if slope > 0 else -1
 
 
 class SimpleRegimeDetector:

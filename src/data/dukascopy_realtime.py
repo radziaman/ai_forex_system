@@ -8,14 +8,12 @@ import asyncio
 import aiohttp
 import struct
 import lzma
-import logging
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Callable, Dict
 from pathlib import Path
+from loguru import logger
 
 from api.base import DataProvider, PriceTick, OHLCV
-
-logger = logging.getLogger(__name__)
 
 DUKASCOPE_SYMBOLS = {
     "EURUSD": "EURUSD",

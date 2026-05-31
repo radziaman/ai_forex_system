@@ -9,9 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-_src_path = str(Path(__file__).resolve().parent.parent)
-if _src_path not in sys.path:
-    sys.path.insert(0, _src_path)
+# Run with: pip install -e . && python -m src.scripts.train_meta_learner_only
 
 import numpy as np
 import pandas as pd

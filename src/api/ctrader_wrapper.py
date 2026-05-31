@@ -35,7 +35,6 @@ if platform.system() != "Windows":
         pass  # Already installed or not needed
 
 import time
-import logging
 from typing import Optional, Callable, Dict, Any, List
 
 from twisted.internet import defer, reactor

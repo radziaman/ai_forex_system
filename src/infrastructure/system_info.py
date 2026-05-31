@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 VERSION = "4.0"
 
-from infrastructure.config_v2 import AppConfig  # noqa: E402
+from infrastructure.config import AppConfig  # noqa: E402
 from data.data_manager import SYMBOLS  # noqa: E402
 
 

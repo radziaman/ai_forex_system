@@ -10,7 +10,7 @@ import sys
 import warnings
 import numpy as np
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+# Run with: pip install -e . && python -m src.scripts.train_xgboost
 warnings.filterwarnings("ignore")
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 

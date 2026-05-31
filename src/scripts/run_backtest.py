@@ -21,9 +21,7 @@ import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional, Tuple, Callable
 
-_src = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if _src not in sys.path:
-    sys.path.insert(0, _src)
+# Run with: pip install -e . && python -m src.scripts.run_backtest
 
 from loguru import logger  # noqa: E402
 from rts_ai_fx.features_unified import compute_features  # noqa: E402

@@ -2,8 +2,8 @@
 Provider factory — auto-selects the right execution and data providers based on TRADING_PROVIDER.  # noqa: E501
 """
 
-import logging
 from typing import Tuple, Optional
+from loguru import logger
 
 from infrastructure.secrets import Secrets
 from api.base import (
@@ -13,8 +13,6 @@ from api.base import (
     OrderRequest,
     OrderResult,
 )
-
-logger = logging.getLogger(__name__)
 
 
 class CtraderExecutionAdapter(ExecutionProvider):
@@ -109,9 +107,7 @@ class CtraderExecutionAdapter(ExecutionProvider):
                         order_id="0", position_id=position_id, status="FILLED"
                     )
         except Exception as e:
-            import logging
-
-            logging.getLogger(__name__).warning(f"close_position failed: {e}")
+            logger.warning(f"close_position failed: {e}")
         return OrderResult(order_id="0", position_id=position_id, status="FILLED")
 
     async def get_positions(self) -> list:

@@ -23,9 +23,7 @@ from typing import Dict, List, Optional
 from dataclasses import dataclass, asdict
 from datetime import datetime
 
-_src = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if _src not in sys.path:
-    sys.path.insert(0, _src)
+# Run with: pip install -e . && python -m src.scripts.autonomous_screener
 
 from loguru import logger  # noqa: E402
 

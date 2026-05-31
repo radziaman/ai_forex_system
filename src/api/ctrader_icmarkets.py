@@ -4,14 +4,12 @@ Wraps CtraderClient with dashboard-specific methods.
 """
 
 import time
-import logging
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List
+from loguru import logger
 
 from infrastructure.secrets import Secrets
 from api.ctrader_client import CtraderClient, AccountInfo
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass

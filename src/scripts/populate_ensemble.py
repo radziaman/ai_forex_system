@@ -5,7 +5,8 @@ import sys
 import numpy as np
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# Run with: pip install -e . && python -m src.scripts.populate_ensemble
+
 
 from loguru import logger  # noqa: E402
 from rts_ai_fx.ensemble import MoEEnsemble  # noqa: E402

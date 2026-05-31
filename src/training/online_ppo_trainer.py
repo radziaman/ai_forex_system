@@ -7,7 +7,7 @@ from collections import deque
 import torch
 import torch.nn as nn
 from torch.distributions import Categorical
-from typing import Tuple
+from typing import Dict, Tuple
 from loguru import logger
 
 
@@ -101,7 +101,7 @@ class OnlinePPOTrainer:
             dist = Categorical(probs)
             old_log_probs = dist.log_prob(actions_t)
 
-        losses = {"policy_loss": [], "value_loss": [], "entropy": []}
+        losses: Dict[str, list] = {"policy_loss": [], "value_loss": [], "entropy": []}
 
         for _ in range(n_epochs):
             idx = np.random.permutation(len(states_t))

@@ -22,10 +22,6 @@ from typing import List, Dict, Optional, Callable
 from dataclasses import dataclass
 from loguru import logger
 
-_src = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if _src not in sys.path:
-    sys.path.insert(0, _src)
-
 from api.symbol_map import get_symbol_id
 
 # cTrader protobuf messages

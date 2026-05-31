@@ -4,6 +4,7 @@ Each expert specializes in a market regime; gating network weights predictions.
 Enhanced with Sharpe-based dynamic weighting and MAML meta-learning (Enhancement #9).
 """
 
+import json
 import time
 import numpy as np
 from typing import Any, Dict, List, Optional, Callable, Tuple
@@ -59,6 +60,11 @@ class MoEEnsemble:
         self._lockout_hours: float = 4.0  # disabled for 4 hours
         self._max_lockout_hours: float = 48.0  # cap at 48 hours
         self._lockout_multiplier: float = 2.0  # double timeout on re-disable
+
+        # Trade counting for persistence
+        self.win_counts: Dict[str, int] = defaultdict(int)
+        self.loss_counts: Dict[str, int] = defaultdict(int)
+        self.total_trades: int = 0
 
     def set_tracker_weight_fn(self, fn: Callable):
         """Set external weight function from StrategyTracker."""
@@ -318,10 +324,13 @@ class MoEEnsemble:
         # Ensure defaultdict entry exists
         _ = self.expert_win_rates[expert_name]
         self.expert_win_rates[expert_name]["total"] += 1
+        self.total_trades += 1
         if pnl > 0:
             self.expert_win_rates[expert_name]["wins"] += 1
+            self.win_counts[expert_name] += 1
             self.record_win(expert_name)
         else:
+            self.loss_counts[expert_name] += 1
             self.record_loss(expert_name)
         # Update Sharpe if we have enough data
         if expert_name in self.expert_returns:
@@ -332,17 +341,26 @@ class MoEEnsemble:
         pred: EnsemblePrediction,
         current_price: float,
         min_confidence: float = 0.65,
+        prediction_threshold: Optional[float] = None,
     ) -> Tuple[bool, str, float]:
         """
         Determine if we should trade based on ensemble agreement and confidence.
         Uses weighted majority voting on return-based signals (instrument-agnostic).
+
+        Two-tier decision:
+          Tier 1 (3+ active experts): require buy/sell_ratio > 0.6 majority
+          Tier 2 (1-2 active experts): require confidence >= min_confidence
+                                      and non-zero ensemble price direction
+
+        prediction_threshold: minimum prediction magnitude to consider for voting.
+        If None, defaults to 0.0003 (original hardcoded value).
         """
         if not pred.expert_outputs:
             return False, "HOLD", 0.0
         buy_weight = 0.0
         sell_weight = 0.0
         total_weight = 0.0
-        threshold = 0.0003
+        threshold = 0.0003 if prediction_threshold is None else prediction_threshold
         for name, output in pred.expert_outputs.items():
             w = output["weight"]
             total_weight += w
@@ -352,20 +370,27 @@ class MoEEnsemble:
                 sell_weight += w
         if total_weight == 0:
             return False, "HOLD", 0.0
+
+        n_active = len(pred.expert_outputs)
         buy_ratio = buy_weight / total_weight
         sell_ratio = sell_weight / total_weight
-        if (
-            buy_ratio > 0.6
-            and buy_ratio > sell_ratio
-            and pred.confidence >= min_confidence
-        ):
-            return True, "BUY", buy_ratio
-        elif (
-            sell_ratio > 0.6
-            and sell_ratio > buy_ratio
-            and pred.confidence >= min_confidence
-        ):
-            return True, "SELL", sell_ratio
+
+        # Tier 1: Full majority vote (3+ experts with >60% agreement)
+        if n_active >= 3 and pred.confidence >= min_confidence:
+            if buy_ratio > 0.6 and buy_ratio > sell_ratio:
+                return True, "BUY", buy_ratio
+            if sell_ratio > 0.6 and sell_ratio > buy_ratio:
+                return True, "SELL", sell_ratio
+
+        # Tier 2: Low-expert-count fallback (use ensemble price direction
+        # when confidence is high enough)
+        tier2_conf_threshold = max(min_confidence, 0.55)
+        if pred.confidence >= tier2_conf_threshold:
+            if buy_ratio > sell_ratio and buy_ratio > 0:
+                return True, "BUY", buy_ratio
+            if sell_ratio > buy_ratio and sell_ratio > 0:
+                return True, "SELL", sell_ratio
+
         return False, "HOLD", 0.0
 
     def _calculate_regime_weight(
@@ -397,15 +422,88 @@ class MoEEnsemble:
     def _determine_direction(
         self, ensemble_price: float, confidences: list, weights: np.ndarray
     ) -> str:
-        """Determine direction based on whether prediction is above/below input.
-        Only used as fallback — should_trade() computes direction independently from expert outputs.  # noqa: E501
+        """Determine direction based on weighted ensemble prediction price.
+        Direction follows the sign of the ensemble price (positive → BUY,
+        negative → SELL, zero → HOLD). Confidence gating is handled
+        separately in should_trade().
         """
-        avg_conf = (
-            np.average(confidences, weights=weights) if weights.sum() > 0 else 0.0
-        )
-        if avg_conf > 0.5:
-            return "BUY" if ensemble_price > 0 else "SELL"
+        if ensemble_price > 0:
+            return "BUY"
+        elif ensemble_price < 0:
+            return "SELL"
         return "HOLD"
+
+    def save_state(self, filepath: str = "models/ensemble_state.json") -> bool:
+        """Persist ensemble state to a JSON file.
+
+        Serialises Elo ratings, Sharpe ratios, consecutive losses,
+        lockout timestamps, win/loss counts, and total trades.
+        """
+        from datetime import datetime, timezone
+
+        state = {
+            "elo_ratings": dict(self.elo_ratings),
+            "sharpe_ratios": dict(self.sharpe_ratios),
+            "consecutive_losses": dict(self.consecutive_losses),
+            "_disabled_until": dict(self._disabled_until),
+            "win_counts": dict(self.win_counts),
+            "loss_counts": dict(self.loss_counts),
+            "total_trades": self.total_trades,
+            "saved_at": datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            with open(filepath, "w") as f:
+                json.dump(state, f, indent=2)
+            logger.info(f"Ensemble state saved to {filepath} ({len(state)} keys)")
+            return True
+        except (OSError, IOError) as exc:
+            logger.warning(f"Failed to save ensemble state to {filepath}: {exc}")
+            return False
+
+    def load_state(self, filepath: str = "models/ensemble_state.json") -> bool:
+        """Restore ensemble state from a JSON file.
+
+        Returns True on success, False if the file does not exist or
+        the JSON data is corrupted.  Missing keys are silently defaulted
+        (a warning is logged).
+        """
+        try:
+            with open(filepath, "r") as f:
+                state = json.load(f)
+        except FileNotFoundError:
+            logger.warning(f"Ensemble state file not found: {filepath}")
+            return False
+        except (json.JSONDecodeError, OSError, IOError) as exc:
+            logger.warning(f"Failed to load ensemble state from {filepath}: {exc}")
+            return False
+
+        # ── Restore each known key, defaulting missing ones ──
+        self.elo_ratings = dict(state.get("elo_ratings", {}))
+        self.sharpe_ratios = defaultdict(float, state.get("sharpe_ratios", {}))
+        self.consecutive_losses = defaultdict(int, state.get("consecutive_losses", {}))
+        self._disabled_until = dict(state.get("_disabled_until", {}))
+        self.win_counts = defaultdict(int, state.get("win_counts", {}))
+        self.loss_counts = defaultdict(int, state.get("loss_counts", {}))
+        self.total_trades = int(state.get("total_trades", 0))
+
+        expected_keys = [
+            "elo_ratings",
+            "sharpe_ratios",
+            "consecutive_losses",
+            "_disabled_until",
+            "win_counts",
+            "loss_counts",
+            "total_trades",
+        ]
+        for key in expected_keys:
+            if key not in state:
+                logger.warning(f"Ensemble state missing key '{key}' — using default")
+
+        logger.info(
+            f"Ensemble state loaded from {filepath} "
+            f"({len(self.elo_ratings)} experts, {self.total_trades} trades)"
+        )
+        return True
 
     def update_elo(self, name: str, was_correct: bool, k: Optional[float] = None):
         """Update Elo rating with automatic decay of k-factor.

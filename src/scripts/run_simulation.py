@@ -22,9 +22,7 @@ from typing import Dict, List, Optional
 from dataclasses import dataclass, field, asdict
 from collections import defaultdict
 
-_src = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if _src not in sys.path:
-    sys.path.insert(0, _src)
+# Run with: pip install -e . && python -m src.scripts.run_simulation
 
 from loguru import logger  # noqa: E402
 
@@ -316,48 +314,8 @@ class OffSiteSimulation:
 
     async def run_screener(self):
         """Run the autonomous screener to update tradeable symbols."""
-        try:
-            from agentic.agents.screener_agent import (
-                InstrumentScreenerAgent,
-                INSTRUMENT_UNIVERSE,
-            )
-
-            screener = InstrumentScreenerAgent(scan_interval_hours=24)
-
-            logger.info("Running autonomous screener...")
-            tradeable = []
-
-            # Screen HO=F (Heating Oil) — the current best candidate
-            if "HO=F" in INSTRUMENT_UNIVERSE:
-                score = screener._screen_instrument("HO=F", INSTRUMENT_UNIVERSE["HO=F"])
-                if score and score.edge_detected:
-                    tradeable.append(score.ticker)
-                    logger.info(
-                        f"  ✅ HO=F tradeable: Sharpe={score.mom5_sharpe:.2f} PF={score.mom5_pf:.2f}"  # noqa: E501
-                    )
-
-            # Screen EURUSD for tick-level simulation
-            if "EURUSD=X" in INSTRUMENT_UNIVERSE:
-                score = screener._screen_instrument(
-                    "EURUSD=X", INSTRUMENT_UNIVERSE["EURUSD=X"]
-                )
-                if score:
-                    logger.info(
-                        f"  EURUSD: Sharpe={score.mom5_sharpe:.2f} -> {score.recommendation}"  # noqa: E501
-                    )
-
-            self.trade_symbols = tradeable
-            self._log_event(
-                SimulationLog(
-                    timestamp=time.time(),
-                    event_type="SCREEN",
-                    symbol=", ".join(tradeable) if tradeable else "none",
-                    detail=f"Tradeable instruments: {tradeable}",
-                )
-            )
-
-        except Exception as e:
-            logger.warning(f"Screener failed: {e}")
+        logger.warning("Screener agent not available — skipping instrument screening")
+        return
 
     # ─── Reporting ────────────────────────────────────────────────────────
 

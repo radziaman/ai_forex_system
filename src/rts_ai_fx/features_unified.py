@@ -160,9 +160,6 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.replace([np.inf, -np.inf], np.nan)
     nan_count = df.isna().sum().sum()
     if nan_count > 0:
-        import logging
-
-        logger = logging.getLogger(__name__)
         logger.debug(f"NaN count before fill: {nan_count}")
     df = df.ffill().bfill().fillna(0)
     return df
